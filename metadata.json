@@ -1,0 +1,8 @@
+{
+  "name": "Remix Portal de Desempenho",
+  "description": "A robust, scalable enterprise performance management platform built with modern web technologies for teams and organizational growth.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
