@@ -40,6 +40,12 @@ export const CUSTOMER_TIER_BADGES: Record<
     text: 'text-emerald-800',
     border: 'border-emerald-300',
   },
+  Simples: {
+    label: 'Simples',
+    bg: 'bg-emerald-50',
+    text: 'text-emerald-800',
+    border: 'border-emerald-300',
+  },
   Mediano: {
     label: 'Mediano',
     bg: 'bg-amber-50',
@@ -51,6 +57,12 @@ export const CUSTOMER_TIER_BADGES: Record<
     bg: 'bg-purple-50',
     text: 'text-purple-800',
     border: 'border-purple-300',
+  },
+  Crítico: {
+    label: 'Crítico',
+    bg: 'bg-rose-50',
+    text: 'text-rose-800',
+    border: 'border-rose-300',
   },
 };
 
@@ -354,18 +366,17 @@ export const CharactersManagementView: React.FC = () => {
             <button
               type="button"
               onClick={() => setSelectedCellFilter('all')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer border ${
                 selectedCellFilter === 'all'
-                  ? 'bg-[#0f3e2e] text-white shadow-xs'
-                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  ? 'bg-[#0f3e2e] text-white border-[#0f3e2e] shadow-xs'
+                  : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
               }`}
             >
-              Todas as Células ({characters.length})
+              Todas
             </button>
             {OFFICIAL_CELL_LIST.map((cellKey) => {
               const meta = OFFICIAL_CELLS[cellKey];
               const isSelected = selectedCellFilter === cellKey;
-              const count = characters.filter((c) => (c.cell || 'OPERADORA') === cellKey).length;
 
               return (
                 <button
@@ -375,11 +386,10 @@ export const CharactersManagementView: React.FC = () => {
                   className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer border ${
                     isSelected
                       ? 'bg-[#0f3e2e] text-white border-[#0f3e2e] shadow-xs'
-                      : `${meta.badgeBg} ${meta.badgeText} ${meta.badgeBorder} hover:brightness-95`
+                      : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
                   }`}
-                  title={meta.fullName}
                 >
-                  [{meta.code}] {meta.name} ({count})
+                  {meta.name}
                 </button>
               );
             })}
@@ -408,8 +418,10 @@ export const CharactersManagementView: React.FC = () => {
             >
               <option value="all">Todas as Classificações</option>
               <option value="Iniciante">Iniciante</option>
+              <option value="Simples">Simples</option>
               <option value="Mediano">Mediano</option>
               <option value="Intermediário">Intermediário</option>
+              <option value="Crítico">Crítico</option>
             </select>
             <div className="text-xs text-slate-500 font-medium ml-2">
               {filteredCharacters.length} cliente(s)
@@ -486,10 +498,10 @@ export const CharactersManagementView: React.FC = () => {
                     <div className="flex items-center gap-1.5 flex-wrap justify-end">
                       {/* Badge discreta da Célula no topo do card */}
                       <span
-                        className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-bold border uppercase tracking-wider font-mono ${cellInfo.badgeBg} ${cellInfo.badgeText} ${cellInfo.badgeBorder}`}
-                        title={`Célula de Atendimento: ${cellInfo.fullName}`}
+                        className="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-bold border border-slate-200 bg-slate-50 text-slate-700 uppercase tracking-wider"
+                        title={`Célula de Atendimento: ${cellInfo.name}`}
                       >
-                        [{cellInfo.code}]
+                        {cellInfo.name}
                       </span>
 
                       {/* Badge de Classificação */}
@@ -755,7 +767,7 @@ export const CharactersManagementView: React.FC = () => {
                       const meta = OFFICIAL_CELLS[cellKey];
                       return (
                         <option key={cellKey} value={cellKey}>
-                          [{meta.code}] {meta.name}
+                          {meta.name}
                         </option>
                       );
                     })}
@@ -777,8 +789,10 @@ export const CharactersManagementView: React.FC = () => {
                     className="w-full px-3 py-2 bg-white border border-emerald-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 font-bold text-emerald-900"
                   >
                     <option value="Iniciante">Iniciante</option>
+                    <option value="Simples">Simples</option>
                     <option value="Mediano">Mediano</option>
                     <option value="Intermediário">Intermediário</option>
+                    <option value="Crítico">Crítico</option>
                   </select>
                   <span className="text-[10px] text-emerald-800 mt-0.5 block font-medium">
                     Nível de complexidade de condução do cliente

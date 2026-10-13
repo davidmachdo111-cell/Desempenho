@@ -33,6 +33,9 @@ import {
   UserRole,
   UserStatus,
   normalizePhrases,
+  getCellName,
+  CustomerTier,
+  ExerciseDifficulty,
 } from '../types/portal';
 
 interface MutationResult {
@@ -90,7 +93,7 @@ interface PortalStoreContextValue {
     gender: 'Masculino' | 'Feminino' | 'Outro';
     city: string;
     cardNumber: string;
-    customerTier: 'Iniciante' | 'Mediano' | 'Intermediário';
+    customerTier: CustomerTier;
     serviceContext: string;
     temperament: string;
     objectives: string;
@@ -108,7 +111,7 @@ interface PortalStoreContextValue {
     id?: string;
     title: string;
     cell: OfficialCell; // Célula do Exercício
-    difficulty: 'Iniciante' | 'Mediano' | 'Intermediário';
+    difficulty: ExerciseDifficulty;
     categoryId?: string;
     categoryName?: string;
     scenarioInstructions: string;
@@ -260,18 +263,17 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   }, [currentUserId]);
 
-  // Limpeza preventiva de quaisquer resquícios de mocks legados no localStorage
+  // Inicialização e atualização de dados padrão (versão v6 com base de Laboratório)
   React.useEffect(() => {
     try {
-      if (!localStorage.getItem('portal_clean_mocks_v5')) {
+      if (!localStorage.getItem('portal_clean_mocks_v6')) {
         localStorage.removeItem('portal_characters_store');
         localStorage.removeItem('portal_exercises_store');
         localStorage.removeItem('portal_checklists_store');
-        localStorage.removeItem('portal_collaborators_store');
-        localStorage.removeItem('portal_collaborator_checklists_store');
-        localStorage.removeItem('portal_categories_store');
-        localStorage.removeItem('portal_audit_logs_store');
-        localStorage.setItem('portal_clean_mocks_v5', 'true');
+        localStorage.setItem('portal_characters_store', JSON.stringify(INITIAL_CHARACTERS));
+        localStorage.setItem('portal_exercises_store', JSON.stringify(INITIAL_EXERCISES));
+        localStorage.setItem('portal_checklists_store', JSON.stringify(INITIAL_CHECKLISTS));
+        localStorage.setItem('portal_clean_mocks_v6', 'true');
       }
     } catch {
       // ignore
@@ -294,7 +296,15 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
         const s = localStorage.getItem('portal_cells_store');
         if (s) {
           const parsed = JSON.parse(s);
-          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            return parsed.map((c: Cell) => ({
+              ...c,
+              name: getCellName(c.name),
+              coordinatorName: c.coordinatorName?.includes('Convênio')
+                ? c.coordinatorName.replace('Convênio', 'Operadora')
+                : c.coordinatorName,
+            }));
+          }
         }
       }
     } catch {}
@@ -313,58 +323,66 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const [characters, setCharacters] = useState<Character[]>(() => {
     try {
-      if (localStorage.getItem('portal_clean_mocks_v5')) {
+      if (localStorage.getItem('portal_clean_mocks_v6')) {
         const s = localStorage.getItem('portal_characters_store');
         if (s) {
           const parsed: Character[] = JSON.parse(s);
           return parsed.map((c) => ({
             ...c,
-            cell: c.cell || 'OPERADORA',
+            cell: c.cell || 'LAB',
             typicalPhrases: normalizePhrases(c.typicalPhrases),
           }));
         }
       }
     } catch {}
-    return [];
+    return INITIAL_CHARACTERS;
   });
 
   const [exercises, setExercises] = useState<Exercise[]>(() => {
     try {
-      if (localStorage.getItem('portal_clean_mocks_v5')) {
+      if (localStorage.getItem('portal_clean_mocks_v6')) {
         const s = localStorage.getItem('portal_exercises_store');
         if (s) {
           const parsed: Exercise[] = JSON.parse(s);
           return parsed.map((ex) => ({
             ...ex,
-            cell: ex.cell || 'OPERADORA',
+            cell: ex.cell || 'LAB',
           }));
         }
       }
     } catch {}
-    return [];
+    return INITIAL_EXERCISES;
   });
 
   const [checklists, setChecklists] = useState<Checklist[]>(() => {
     try {
-      if (localStorage.getItem('portal_clean_mocks_v5')) {
+      if (localStorage.getItem('portal_clean_mocks_v6')) {
         const s = localStorage.getItem('portal_checklists_store');
         if (s) {
           const parsed: Checklist[] = JSON.parse(s);
           return parsed.map((chk) => ({
             ...chk,
-            cell: chk.cell || 'OPERADORA',
+            cell: chk.cell || 'LAB',
           }));
         }
       }
     } catch {}
-    return [];
+    return INITIAL_CHECKLISTS;
   });
 
   const [collaborators, setCollaborators] = useState<Collaborator[]>(() => {
     try {
       if (localStorage.getItem('portal_clean_mocks_v5')) {
         const s = localStorage.getItem('portal_collaborators_store');
-        if (s) return JSON.parse(s);
+        if (s) {
+          const parsed = JSON.parse(s);
+          if (Array.isArray(parsed)) {
+            return parsed.map((col: Collaborator) => ({
+              ...col,
+              cellTeam: getCellName(col.cellTeam),
+            }));
+          }
+        }
       }
     } catch {}
     return [];
@@ -1035,7 +1053,7 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
       gender: 'Masculino' | 'Feminino' | 'Outro';
       city: string;
       cardNumber: string;
-      customerTier: 'Iniciante' | 'Mediano' | 'Intermediário';
+      customerTier: CustomerTier;
       serviceContext: string;
       temperament: string;
       objectives: string;
@@ -1239,7 +1257,7 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
       id?: string;
       title: string;
       cell: OfficialCell;
-      difficulty: 'Iniciante' | 'Mediano' | 'Intermediário';
+      difficulty: ExerciseDifficulty;
       categoryId?: string;
       categoryName?: string;
       scenarioInstructions: string;

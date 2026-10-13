@@ -35,6 +35,7 @@ import {
   OfficialCell,
   OFFICIAL_CELLS,
   normalizePhrases,
+  getCellName,
 } from '../../../types/portal';
 import { CUSTOMER_TIER_BADGES } from '../../characters/views/CharactersManagementView';
 import { DIFFICULTY_BADGES } from '../../exercises/views/ExercisesSimulationView';
@@ -389,7 +390,7 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
                     Cargo: <strong>{activeCollaborator.roleTitle}</strong>
                   </span>
                   <span>
-                    Setor/Célula: <strong>{activeCollaborator.cellTeam}</strong>
+                    Setor/Célula: <strong>{getCellName(activeCollaborator.cellTeam)}</strong>
                   </span>
                   {activeCollaborator.registrationCode && (
                     <span className="font-mono bg-slate-100 px-1.5 py-0.5 rounded text-[11px]">
@@ -714,7 +715,7 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
                         </td>
 
                         <td className="px-5 py-4 font-medium text-slate-700">
-                          {col.cellTeam || 'Geral'}
+                          {getCellName(col.cellTeam) || 'Geral'}
                         </td>
 
                         <td className="px-5 py-4">
@@ -982,10 +983,10 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
                               <div className="flex items-center justify-between gap-2">
                                 <div className="flex items-center gap-1.5 flex-wrap">
                                   <span
-                                    className={`text-[9px] font-bold px-2 py-0.5 rounded-md border inline-flex items-center gap-1 ${cellMeta.badgeBg} ${cellMeta.badgeText} ${cellMeta.badgeBorder}`}
+                                    className="text-[9px] font-bold px-2 py-0.5 rounded-md border border-slate-200 bg-slate-50 text-slate-700 inline-flex items-center gap-1"
                                   >
-                                    <Building2 className="w-2.5 h-2.5" />
-                                    <span>[{cellMeta.code}]</span>
+                                    <Building2 className="w-2.5 h-2.5 text-slate-500" />
+                                    <span>{cellMeta.name}</span>
                                   </span>
                                   <span className="font-bold text-emerald-950 text-xs">
                                     {char.name} ({char.age})
@@ -1160,7 +1161,7 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
                     Célula / Equipe
                   </span>
                   <span className="font-medium text-slate-800">
-                    {printReportData.collaborator.cellTeam}
+                    {getCellName(printReportData.collaborator.cellTeam)}
                   </span>
                 </div>
 
@@ -1474,8 +1475,8 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
                     className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 font-medium text-slate-900"
                   >
                     {cells.map((cell) => (
-                      <option key={cell.id} value={cell.name}>
-                        {cell.name}
+                      <option key={cell.id} value={getCellName(cell.name)}>
+                        {getCellName(cell.name)}
                       </option>
                     ))}
                   </select>

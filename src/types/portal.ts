@@ -63,6 +63,33 @@ export interface Category {
 
 export type OfficialCell = 'LAB' | 'IMG' | 'CONSULTA' | 'TERAPIA' | 'OPERADORA';
 
+export const OFFICIAL_CELL_NAMES: Record<OfficialCell, string> = {
+  LAB: 'Laboratório',
+  IMG: 'Imagem',
+  CONSULTA: 'Consultas',
+  TERAPIA: 'Terapias',
+  OPERADORA: 'Operadora',
+};
+
+export const CLEAN_CELL_NAMES: string[] = [
+  'Laboratório',
+  'Imagem',
+  'Consultas',
+  'Terapias',
+  'Operadora',
+];
+
+export function getCellName(cell?: string | null): string {
+  if (!cell) return 'Operadora';
+  if (cell in OFFICIAL_CELL_NAMES) {
+    return OFFICIAL_CELL_NAMES[cell as OfficialCell];
+  }
+  if (cell === 'Consultas Ambulatoriais') return 'Consultas';
+  if (cell === 'Terapias / Tratamentos') return 'Terapias';
+  if (cell === 'Convênio / Planos de Saúde' || cell === 'Convênio' || cell === 'OPERADORA' || cell === 'Operadora') return 'Operadora';
+  return cell;
+}
+
 export interface OfficialCellMetadata {
   code: OfficialCell;
   name: string;
@@ -77,47 +104,47 @@ export const OFFICIAL_CELLS: Record<OfficialCell, OfficialCellMetadata> = {
   LAB: {
     code: 'LAB',
     name: 'Laboratório',
-    fullName: 'LAB (Laboratório)',
+    fullName: 'Laboratório',
     description: 'Exames laboratoriais e análises clínicas',
-    badgeBg: 'bg-blue-50',
-    badgeText: 'text-blue-800',
-    badgeBorder: 'border-blue-300',
+    badgeBg: 'bg-slate-100',
+    badgeText: 'text-slate-700',
+    badgeBorder: 'border-slate-200',
   },
   IMG: {
     code: 'IMG',
     name: 'Imagem',
-    fullName: 'IMG (Imagem)',
+    fullName: 'Imagem',
     description: 'Diagnósticos e exames por imagem',
-    badgeBg: 'bg-indigo-50',
-    badgeText: 'text-indigo-800',
-    badgeBorder: 'border-indigo-300',
+    badgeBg: 'bg-slate-100',
+    badgeText: 'text-slate-700',
+    badgeBorder: 'border-slate-200',
   },
   CONSULTA: {
     code: 'CONSULTA',
-    name: 'Consultas Ambulatoriais',
-    fullName: 'CONSULTA (Consultas Ambulatoriais)',
+    name: 'Consultas',
+    fullName: 'Consultas',
     description: 'Agendamentos e consultas eletivas/ambulatoriais',
-    badgeBg: 'bg-emerald-50',
-    badgeText: 'text-emerald-800',
-    badgeBorder: 'border-emerald-300',
+    badgeBg: 'bg-slate-100',
+    badgeText: 'text-slate-700',
+    badgeBorder: 'border-slate-200',
   },
   TERAPIA: {
     code: 'TERAPIA',
-    name: 'Terapias / Tratamentos',
-    fullName: 'TERAPIA (Terapias / Tratamentos)',
+    name: 'Terapias',
+    fullName: 'Terapias',
     description: 'Terapias contínuas, reabilitação e tratamentos',
-    badgeBg: 'bg-purple-50',
-    badgeText: 'text-purple-800',
-    badgeBorder: 'border-purple-300',
+    badgeBg: 'bg-slate-100',
+    badgeText: 'text-slate-700',
+    badgeBorder: 'border-slate-200',
   },
   OPERADORA: {
     code: 'OPERADORA',
-    name: 'Convênio / Planos de Saúde',
-    fullName: 'OPERADORA (Convênio / Planos de Saúde)',
+    name: 'Operadora',
+    fullName: 'Operadora',
     description: 'Regulação, autorização de guias e SAC operadora',
-    badgeBg: 'bg-amber-50',
-    badgeText: 'text-amber-800',
-    badgeBorder: 'border-amber-300',
+    badgeBg: 'bg-slate-100',
+    badgeText: 'text-slate-700',
+    badgeBorder: 'border-slate-200',
   },
 };
 
@@ -161,8 +188,8 @@ export function normalizePhrases(phrases: string[] | string | undefined | null):
 }
 
 export type Gender = 'Masculino' | 'Feminino' | 'Outro';
-export type CustomerTier = 'Iniciante' | 'Mediano' | 'Intermediário';
-export type ExerciseDifficulty = 'Iniciante' | 'Mediano' | 'Intermediário';
+export type CustomerTier = 'Iniciante' | 'Simples' | 'Mediano' | 'Intermediário' | 'Crítico';
+export type ExerciseDifficulty = 'Iniciante' | 'Simples' | 'Mediano' | 'Intermediário' | 'Crítico';
 
 // 2. characters: Banco de Clientes / Personagens Independentes
 export interface Character {

@@ -442,10 +442,10 @@ export const EvaluationExecutionView: React.FC<EvaluationExecutionViewProps> = (
                 <div className="flex items-center gap-1.5 flex-wrap">
                   {currentExercise.cell && OFFICIAL_CELLS[currentExercise.cell] && (
                     <span
-                      className={`text-[10px] font-bold px-2 py-0.5 rounded-md border inline-flex items-center gap-1 ${OFFICIAL_CELLS[currentExercise.cell].badgeBg} ${OFFICIAL_CELLS[currentExercise.cell].badgeText} ${OFFICIAL_CELLS[currentExercise.cell].badgeBorder}`}
+                      className="text-[10px] font-bold px-2 py-0.5 rounded-md border border-slate-200 bg-slate-50 text-slate-700 inline-flex items-center gap-1"
                     >
-                      <Building2 className="w-3 h-3" />
-                      <span>[{currentExercise.cell}] {OFFICIAL_CELLS[currentExercise.cell].name}</span>
+                      <Building2 className="w-3 h-3 text-slate-500" />
+                      <span>{OFFICIAL_CELLS[currentExercise.cell].name}</span>
                     </span>
                   )}
                   <span className="text-[10px] font-bold text-emerald-800 bg-emerald-50 px-2.5 py-0.5 rounded-full uppercase">
@@ -489,10 +489,10 @@ export const EvaluationExecutionView: React.FC<EvaluationExecutionViewProps> = (
                           <div className="flex items-center justify-between gap-2">
                             <div className="flex items-center gap-1.5 flex-wrap">
                               <span
-                                className={`text-[9px] font-bold px-2 py-0.5 rounded-md border inline-flex items-center gap-1 ${cellMeta.badgeBg} ${cellMeta.badgeText} ${cellMeta.badgeBorder}`}
+                                className="text-[9px] font-bold px-2 py-0.5 rounded-md border border-slate-200 bg-slate-50 text-slate-700 inline-flex items-center gap-1"
                               >
-                                <Building2 className="w-2.5 h-2.5" />
-                                <span>[{cellMeta.code}]</span>
+                                <Building2 className="w-2.5 h-2.5 text-slate-500" />
+                                <span>{cellMeta.name}</span>
                               </span>
                               <span className="font-bold text-emerald-950 text-xs">
                                 {char.name} ({char.age})

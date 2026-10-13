@@ -11,15 +11,17 @@ import {
   UserProfile,
 } from '../types/portal';
 
-// Estado inicial 100% limpo — sem dados falsos ou fictícios
+import { LAB_CHARACTERS, LAB_EXERCISES, LAB_CHECKLISTS } from './labSeedData';
+
+// Base oficial populada com a célula Laboratório completa
 export const INITIAL_CATEGORIES: Category[] = [];
-export const INITIAL_CHARACTERS: Character[] = [];
+export const INITIAL_CHARACTERS: Character[] = LAB_CHARACTERS;
 export const INITIAL_CELLS: Cell[] = [
   {
     id: 'cell-lab',
     code: 'LAB',
     name: 'Laboratório',
-    coordinatorName: 'Coordenação LAB',
+    coordinatorName: 'Coordenação Laboratório',
     hasServiceStandard: true,
     standardDocumentTitle: 'Manual Operacional de Atendimento Laboratorial',
     standardUpdatedAt: '2026-10-13T08:00:00Z',
@@ -28,7 +30,7 @@ export const INITIAL_CELLS: Cell[] = [
     id: 'cell-img',
     code: 'IMG',
     name: 'Imagem',
-    coordinatorName: 'Coordenação IMG',
+    coordinatorName: 'Coordenação Imagem',
     hasServiceStandard: true,
     standardDocumentTitle: 'Diretrizes de Atendimento e Diagnóstico por Imagem',
     standardUpdatedAt: '2026-10-13T08:00:00Z',
@@ -36,8 +38,8 @@ export const INITIAL_CELLS: Cell[] = [
   {
     id: 'cell-consulta',
     code: 'CONSULTA',
-    name: 'Consultas Ambulatoriais',
-    coordinatorName: 'Coordenação Ambulatório',
+    name: 'Consultas',
+    coordinatorName: 'Coordenação Consultas',
     hasServiceStandard: true,
     standardDocumentTitle: 'Procedimento Padrão para Agendamento e Recepção Ambulatorial',
     standardUpdatedAt: '2026-10-13T08:00:00Z',
@@ -45,7 +47,7 @@ export const INITIAL_CELLS: Cell[] = [
   {
     id: 'cell-terapia',
     code: 'TERAPIA',
-    name: 'Terapias / Tratamentos',
+    name: 'Terapias',
     coordinatorName: 'Coordenação Terapias',
     hasServiceStandard: true,
     standardDocumentTitle: 'Protocolo de Acolhimento e Terapias Contínuas',
@@ -54,16 +56,16 @@ export const INITIAL_CELLS: Cell[] = [
   {
     id: 'cell-operadora',
     code: 'OPERADORA',
-    name: 'Convênio / Planos de Saúde',
-    coordinatorName: 'Coordenação Convênios',
+    name: 'Operadora',
+    coordinatorName: 'Coordenação Operadora',
     hasServiceStandard: true,
     standardDocumentTitle: 'Normas de Regulação, Autorização de Guias e SAC Operadora',
     standardUpdatedAt: '2026-10-13T08:00:00Z',
   },
 ];
 export const INITIAL_CRITERIA: Criterion[] = [];
-export const INITIAL_EXERCISES: Exercise[] = [];
-export const INITIAL_CHECKLISTS: Checklist[] = [];
+export const INITIAL_EXERCISES: Exercise[] = LAB_EXERCISES;
+export const INITIAL_CHECKLISTS: Checklist[] = LAB_CHECKLISTS;
 export const INITIAL_COLLABORATORS: Collaborator[] = [];
 export const INITIAL_COLLABORATOR_CHECKLISTS: CollaboratorChecklist[] = [];
 export const INITIAL_AUDIT_LOGS: AuditLogEntry[] = [];

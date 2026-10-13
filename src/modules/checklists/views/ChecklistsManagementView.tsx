@@ -302,18 +302,17 @@ export const ChecklistsManagementView: React.FC = () => {
             <button
               type="button"
               onClick={() => setSelectedCellFilter('all')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer border ${
                 selectedCellFilter === 'all'
-                  ? 'bg-[#0f3e2e] text-white shadow-xs'
-                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  ? 'bg-[#0f3e2e] text-white border-[#0f3e2e] shadow-xs'
+                  : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
               }`}
             >
-              Todas as Células ({checklists.length})
+              Todas
             </button>
             {OFFICIAL_CELL_LIST.map((cellKey) => {
               const meta = OFFICIAL_CELLS[cellKey];
               const isSelected = selectedCellFilter === cellKey;
-              const count = checklists.filter((chk) => (chk.cell || 'OPERADORA') === cellKey).length;
 
               return (
                 <button
@@ -323,11 +322,10 @@ export const ChecklistsManagementView: React.FC = () => {
                   className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer border ${
                     isSelected
                       ? 'bg-[#0f3e2e] text-white border-[#0f3e2e] shadow-xs'
-                      : `${meta.badgeBg} ${meta.badgeText} ${meta.badgeBorder} hover:brightness-95`
+                      : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
                   }`}
-                  title={meta.fullName}
                 >
-                  [{meta.code}] {meta.name} ({count})
+                  {meta.name}
                 </button>
               );
             })}
@@ -403,10 +401,10 @@ export const ChecklistsManagementView: React.FC = () => {
                     <div className="space-y-1.5">
                       <div className="flex items-center gap-1.5 flex-wrap">
                         <span
-                          className={`text-[10px] font-bold px-2 py-0.5 rounded-md border inline-flex items-center gap-1 ${cellMeta.badgeBg} ${cellMeta.badgeText} ${cellMeta.badgeBorder}`}
+                          className="text-[10px] font-bold px-2 py-0.5 rounded-md border border-slate-200 bg-slate-50 text-slate-700 inline-flex items-center gap-1"
                         >
-                          <Building2 className="w-3 h-3" />
-                          <span>[{cellMeta.code}] {cellMeta.name}</span>
+                          <Building2 className="w-3 h-3 text-slate-500" />
+                          <span>{cellMeta.name}</span>
                         </span>
                         <span className="text-[10px] font-bold text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded-full uppercase tracking-wider">
                           {chk.categoryName || 'Atendimento SAC'}
@@ -538,7 +536,7 @@ export const ChecklistsManagementView: React.FC = () => {
                     >
                       {OFFICIAL_CELL_LIST.map((cellKey) => (
                         <option key={cellKey} value={cellKey}>
-                          [{OFFICIAL_CELLS[cellKey].code}] {OFFICIAL_CELLS[cellKey].fullName}
+                          {OFFICIAL_CELLS[cellKey].name}
                         </option>
                       ))}
                     </select>

@@ -39,6 +39,12 @@ export const DIFFICULTY_BADGES: Record<
     text: 'text-emerald-800',
     border: 'border-emerald-300',
   },
+  Simples: {
+    label: 'Simples',
+    bg: 'bg-emerald-50',
+    text: 'text-emerald-800',
+    border: 'border-emerald-300',
+  },
   Mediano: {
     label: 'Mediano',
     bg: 'bg-amber-50',
@@ -51,14 +57,12 @@ export const DIFFICULTY_BADGES: Record<
     text: 'text-purple-800',
     border: 'border-purple-300',
   },
-};
-
-export const FRIENDLY_CELL_LABELS: Record<OfficialCell, string> = {
-  LAB: 'Laboratório',
-  IMG: 'Imagem',
-  CONSULTA: 'Consultas',
-  TERAPIA: 'Terapias',
-  OPERADORA: 'Convênio',
+  Crítico: {
+    label: 'Crítico',
+    bg: 'bg-rose-50',
+    text: 'text-rose-800',
+    border: 'border-rose-300',
+  },
 };
 
 export const ExercisesSimulationView: React.FC = () => {
@@ -266,44 +270,62 @@ export const ExercisesSimulationView: React.FC = () => {
       </div>
 
       {/* Barra de Filtros e Busca */}
-      <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-xs flex flex-col sm:flex-row items-center justify-between gap-3">
-        {/* Campo de Busca */}
-        <div className="relative w-full sm:w-80">
-          <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Buscar por caso, instruções ou dificuldade..."
-            className="w-full pl-9 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500 font-medium"
-          />
-        </div>
-
-        {/* Filtros Padronizados: Célula do Exercício & Dificuldade */}
-        <div className="flex items-center gap-3 w-full sm:w-auto flex-wrap justify-between sm:justify-end">
-          {/* Filtro: Célula do Exercício (Rigorasamente no mesmo padrão do filtro de Dificuldade) */}
+      <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-xs space-y-3">
+        {/* Filtro por Célula (Botões de Filtro / Pills) */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pb-3 border-b border-slate-100">
           <div className="flex items-center gap-2">
-            <span className="text-xs font-medium text-slate-600">Célula:</span>
-            <select
-              value={selectedCellFilter}
-              onChange={(e) => setSelectedCellFilter(e.target.value)}
-              className="text-xs bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-            >
-              <option value="all">Todas as Células ({exercises.length})</option>
-              {OFFICIAL_CELL_LIST.map((cellKey) => {
-                const count = exercises.filter((ex) => (ex.cell || 'OPERADORA') === cellKey).length;
-                const friendlyLabel = FRIENDLY_CELL_LABELS[cellKey] || cellKey;
-                return (
-                  <option key={cellKey} value={cellKey}>
-                    {friendlyLabel} ({count})
-                  </option>
-                );
-              })}
-            </select>
+            <span className="text-xs font-bold text-slate-800 uppercase tracking-wide">
+              Célula:
+            </span>
           </div>
 
-          {/* Filtro: Dificuldade */}
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <button
+              type="button"
+              onClick={() => setSelectedCellFilter('all')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer border ${
+                selectedCellFilter === 'all'
+                  ? 'bg-[#0f3e2e] text-white border-[#0f3e2e] shadow-xs'
+                  : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+              }`}
+            >
+              Todas
+            </button>
+            {OFFICIAL_CELL_LIST.map((cellKey) => {
+              const meta = OFFICIAL_CELLS[cellKey];
+              const isSelected = selectedCellFilter === cellKey;
+              return (
+                <button
+                  key={cellKey}
+                  type="button"
+                  onClick={() => setSelectedCellFilter(cellKey)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer border ${
+                    isSelected
+                      ? 'bg-[#0f3e2e] text-white border-[#0f3e2e] shadow-xs'
+                      : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                  }`}
+                >
+                  {meta.name}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Linha de Busca e Dificuldade */}
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-0.5">
+          <div className="relative w-full sm:w-96">
+            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Buscar por caso, instruções ou dificuldade..."
+              className="w-full pl-9 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500 font-medium"
+            />
+          </div>
+
+          <div className="flex items-center gap-2 w-full sm:w-auto">
             <span className="text-xs font-medium text-slate-600">Dificuldade:</span>
             <select
               value={selectedDifficultyFilter}
@@ -312,13 +334,14 @@ export const ExercisesSimulationView: React.FC = () => {
             >
               <option value="all">Todas as Dificuldades</option>
               <option value="Iniciante">Iniciante</option>
+              <option value="Simples">Simples</option>
               <option value="Mediano">Mediano</option>
               <option value="Intermediário">Intermediário</option>
+              <option value="Crítico">Crítico</option>
             </select>
-          </div>
-
-          <div className="text-xs text-slate-500 font-medium whitespace-nowrap pl-1">
-            {filteredExercises.length} exercício(s)
+            <div className="text-xs text-slate-500 font-medium ml-2">
+              {filteredExercises.length} exercício(s)
+            </div>
           </div>
         </div>
       </div>
@@ -349,10 +372,10 @@ export const ExercisesSimulationView: React.FC = () => {
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex items-center gap-1.5 flex-wrap">
                       <span
-                        className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-bold border uppercase tracking-wider font-mono ${cellInfo.badgeBg} ${cellInfo.badgeText} ${cellInfo.badgeBorder}`}
-                        title={`Célula do Exercício: ${cellInfo.fullName}`}
+                        className="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-bold border border-slate-200 bg-slate-50 text-slate-700 uppercase tracking-wider"
+                        title={`Célula do Exercício: ${cellInfo.name}`}
                       >
-                        [{cellInfo.code}]
+                        {cellInfo.name}
                       </span>
                       <span
                         className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-bold border uppercase tracking-wider whitespace-nowrap ${diffBadge.bg} ${diffBadge.text} ${diffBadge.border}`}
@@ -579,10 +602,10 @@ export const ExercisesSimulationView: React.FC = () => {
                             const charCellInfo = OFFICIAL_CELLS[charCellKey] || OFFICIAL_CELLS['OPERADORA'];
                             return (
                               <span
-                                className={`px-2 py-0.5 rounded-md text-[10px] font-bold border uppercase tracking-wider font-mono ${charCellInfo.badgeBg} ${charCellInfo.badgeText} ${charCellInfo.badgeBorder}`}
-                                title={`Célula de Atendimento: ${charCellInfo.fullName}`}
+                                className="px-2 py-0.5 rounded-md text-[10px] font-bold border border-slate-200 bg-slate-50 text-slate-700 uppercase tracking-wider"
+                                title={`Célula de Atendimento: ${charCellInfo.name}`}
                               >
-                                [{charCellInfo.code}]
+                                {charCellInfo.name}
                               </span>
                             );
                           })()}
@@ -754,7 +777,7 @@ export const ExercisesSimulationView: React.FC = () => {
                       const meta = OFFICIAL_CELLS[cellKey];
                       return (
                         <option key={cellKey} value={cellKey}>
-                          {FRIENDLY_CELL_LABELS[cellKey]} — {meta.fullName}
+                          {meta.name}
                         </option>
                       );
                     })}
@@ -771,8 +794,10 @@ export const ExercisesSimulationView: React.FC = () => {
                     className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 font-bold text-emerald-900"
                   >
                     <option value="Iniciante">Iniciante</option>
+                    <option value="Simples">Simples</option>
                     <option value="Mediano">Mediano</option>
                     <option value="Intermediário">Intermediário</option>
+                    <option value="Crítico">Crítico</option>
                   </select>
                 </div>
               </div>
@@ -814,17 +839,17 @@ export const ExercisesSimulationView: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => setModalCharCellFilter('all')}
-                    className={`px-2 py-0.5 rounded text-[10px] font-bold transition-colors cursor-pointer ${
+                    className={`px-2 py-0.5 rounded text-[10px] font-bold transition-colors cursor-pointer border ${
                       modalCharCellFilter === 'all'
-                        ? 'bg-[#0f3e2e] text-white'
-                        : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-100'
+                        ? 'bg-[#0f3e2e] text-white border-[#0f3e2e]'
+                        : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-100'
                     }`}
                   >
-                    Todas ({characters.length})
+                    Todas
                   </button>
                   {OFFICIAL_CELL_LIST.map((cKey) => {
+                    const meta = OFFICIAL_CELLS[cKey];
                     const isSel = modalCharCellFilter === cKey;
-                    const cCount = characters.filter((c) => (c.cell || 'OPERADORA') === cKey).length;
                     return (
                       <button
                         key={cKey}
@@ -836,7 +861,7 @@ export const ExercisesSimulationView: React.FC = () => {
                             : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-100'
                         }`}
                       >
-                        {FRIENDLY_CELL_LABELS[cKey]} ({cCount})
+                        {meta.name}
                       </button>
                     );
                   })}
@@ -887,9 +912,9 @@ export const ExercisesSimulationView: React.FC = () => {
 
                           <div className="flex items-center gap-1 shrink-0">
                             <span
-                              className={`text-[9px] font-bold px-1.5 py-0.5 rounded border uppercase font-mono ${charCellInfo.badgeBg} ${charCellInfo.badgeText} ${charCellInfo.badgeBorder}`}
+                              className="text-[9px] font-bold px-1.5 py-0.5 rounded border border-slate-200 bg-slate-50 text-slate-700 uppercase"
                             >
-                              [{charCellInfo.code}]
+                              {charCellInfo.name}
                             </span>
                             <span
                               className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full border ${tierBadge.bg} ${tierBadge.text} ${tierBadge.border}`}
