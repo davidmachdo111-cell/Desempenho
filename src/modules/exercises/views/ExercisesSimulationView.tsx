@@ -53,6 +53,14 @@ export const DIFFICULTY_BADGES: Record<
   },
 };
 
+export const FRIENDLY_CELL_LABELS: Record<OfficialCell, string> = {
+  LAB: 'Laboratório',
+  IMG: 'Imagem',
+  CONSULTA: 'Consultas',
+  TERAPIA: 'Terapias',
+  OPERADORA: 'Convênio',
+};
+
 export const ExercisesSimulationView: React.FC = () => {
   const {
     exercises,
@@ -257,67 +265,45 @@ export const ExercisesSimulationView: React.FC = () => {
         )}
       </div>
 
-      {/* Barra de Filtros: Células & Dificuldade */}
-      <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-xs space-y-3">
-        {/* Filtro de Células Operacionais */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pb-3 border-b border-slate-100">
-          <div className="flex items-center gap-2">
-            <Building2 className="w-4 h-4 text-emerald-700 shrink-0" />
-            <span className="text-xs font-bold text-slate-800 uppercase tracking-wide">
-              Célula do Exercício:
-            </span>
-          </div>
-
-          <div className="flex items-center gap-1.5 flex-wrap">
-            <button
-              type="button"
-              onClick={() => setSelectedCellFilter('all')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                selectedCellFilter === 'all'
-                  ? 'bg-[#0f3e2e] text-white shadow-xs'
-                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-              }`}
-            >
-              Todas as Células ({exercises.length})
-            </button>
-            {OFFICIAL_CELL_LIST.map((cellKey) => {
-              const meta = OFFICIAL_CELLS[cellKey];
-              const isSelected = selectedCellFilter === cellKey;
-              const count = exercises.filter((ex) => (ex.cell || 'OPERADORA') === cellKey).length;
-
-              return (
-                <button
-                  key={cellKey}
-                  type="button"
-                  onClick={() => setSelectedCellFilter(cellKey)}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer border ${
-                    isSelected
-                      ? 'bg-[#0f3e2e] text-white border-[#0f3e2e] shadow-xs'
-                      : `${meta.badgeBg} ${meta.badgeText} ${meta.badgeBorder} hover:brightness-95`
-                  }`}
-                  title={meta.fullName}
-                >
-                  [{meta.code}] {meta.name} ({count})
-                </button>
-              );
-            })}
-          </div>
+      {/* Barra de Filtros e Busca */}
+      <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-xs flex flex-col sm:flex-row items-center justify-between gap-3">
+        {/* Campo de Busca */}
+        <div className="relative w-full sm:w-80">
+          <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Buscar por caso, instruções ou dificuldade..."
+            className="w-full pl-9 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500 font-medium"
+          />
         </div>
 
-        {/* Linha de Busca e Dificuldade */}
-        <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-0.5">
-          <div className="relative w-full sm:w-96">
-            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Buscar por caso, instruções ou dificuldade..."
-              className="w-full pl-9 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500 font-medium"
-            />
+        {/* Filtros Padronizados: Célula do Exercício & Dificuldade */}
+        <div className="flex items-center gap-3 w-full sm:w-auto flex-wrap justify-between sm:justify-end">
+          {/* Filtro: Célula do Exercício (Rigorasamente no mesmo padrão do filtro de Dificuldade) */}
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-medium text-slate-600">Célula:</span>
+            <select
+              value={selectedCellFilter}
+              onChange={(e) => setSelectedCellFilter(e.target.value)}
+              className="text-xs bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+            >
+              <option value="all">Todas as Células ({exercises.length})</option>
+              {OFFICIAL_CELL_LIST.map((cellKey) => {
+                const count = exercises.filter((ex) => (ex.cell || 'OPERADORA') === cellKey).length;
+                const friendlyLabel = FRIENDLY_CELL_LABELS[cellKey] || cellKey;
+                return (
+                  <option key={cellKey} value={cellKey}>
+                    {friendlyLabel} ({count})
+                  </option>
+                );
+              })}
+            </select>
           </div>
 
-          <div className="flex items-center gap-2 w-full sm:w-auto">
+          {/* Filtro: Dificuldade */}
+          <div className="flex items-center gap-2">
             <span className="text-xs font-medium text-slate-600">Dificuldade:</span>
             <select
               value={selectedDifficultyFilter}
@@ -329,9 +315,10 @@ export const ExercisesSimulationView: React.FC = () => {
               <option value="Mediano">Mediano</option>
               <option value="Intermediário">Intermediário</option>
             </select>
-            <div className="text-xs text-slate-500 font-medium ml-2">
-              {filteredExercises.length} exercício(s)
-            </div>
+          </div>
+
+          <div className="text-xs text-slate-500 font-medium whitespace-nowrap pl-1">
+            {filteredExercises.length} exercício(s)
           </div>
         </div>
       </div>
@@ -767,7 +754,7 @@ export const ExercisesSimulationView: React.FC = () => {
                       const meta = OFFICIAL_CELLS[cellKey];
                       return (
                         <option key={cellKey} value={cellKey}>
-                          [{meta.code}] {meta.name}
+                          {FRIENDLY_CELL_LABELS[cellKey]} — {meta.fullName}
                         </option>
                       );
                     })}
@@ -836,7 +823,6 @@ export const ExercisesSimulationView: React.FC = () => {
                     Todas ({characters.length})
                   </button>
                   {OFFICIAL_CELL_LIST.map((cKey) => {
-                    const cMeta = OFFICIAL_CELLS[cKey];
                     const isSel = modalCharCellFilter === cKey;
                     const cCount = characters.filter((c) => (c.cell || 'OPERADORA') === cKey).length;
                     return (
@@ -847,10 +833,10 @@ export const ExercisesSimulationView: React.FC = () => {
                         className={`px-2 py-0.5 rounded text-[10px] font-bold transition-colors cursor-pointer border ${
                           isSel
                             ? 'bg-[#0f3e2e] text-white border-[#0f3e2e]'
-                            : `${cMeta.badgeBg} ${cMeta.badgeText} ${cMeta.badgeBorder}`
+                            : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-100'
                         }`}
                       >
-                        [{cMeta.code}] ({cCount})
+                        {FRIENDLY_CELL_LABELS[cKey]} ({cCount})
                       </button>
                     );
                   })}
