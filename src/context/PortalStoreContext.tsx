@@ -25,6 +25,10 @@ import {
   Checklist,
   ChecklistCriterion,
   Collaborator,
+  CollaboratorTrackStep,
+  CollaboratorTrackFilledBy,
+  CollaboratorTrackStepStatus,
+  CollaboratorTrackStepType,
   CollaboratorChecklist,
   CollaboratorStatus,
   CriteriaAnswerSnapshot,
@@ -176,6 +180,27 @@ interface PortalStoreContextValue {
   updateCollaboratorChecklistAssignments: (
     collaboratorId: string,
     checklistIds: string[]
+  ) => Promise<MutationResult>;
+  updateCollaboratorTrack: (
+    collaboratorId: string,
+    steps: CollaboratorTrackStep[]
+  ) => Promise<MutationResult>;
+  addStepToCollaboratorTrack: (
+    collaboratorId: string,
+    step: Omit<CollaboratorTrackStep, 'id' | 'order' | 'status'>
+  ) => Promise<MutationResult>;
+  removeStepFromCollaboratorTrack: (
+    collaboratorId: string,
+    stepId: string
+  ) => Promise<MutationResult>;
+  completeCollaboratorTrackStep: (
+    collaboratorId: string,
+    stepId: string,
+    resultData?: {
+      finalScore?: number | null;
+      collaboratorChecklistId?: string | null;
+      surveyResponseId?: string | null;
+    }
   ) => Promise<MutationResult>;
 
   // 6. Trilhas de Aprendizagem Dinâmicas (CRUD)
@@ -1809,6 +1834,7 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
         cellTeam: payload.cellTeam.trim() || 'Laboratório',
         registrationCode: payload.registrationCode?.trim(),
         learningTrackId: payload.learningTrackId || undefined,
+        track: [],
         status: payload.status || 'novo',
         createdAt: nowIso,
         updatedAt: nowIso,
@@ -2246,6 +2272,36 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
       };
 
       setSurveyResponses((prev) => [newResponse, ...prev]);
+
+      // Sincroniza a etapa correspondente de pesquisa na trilha do colaborador (se houver)
+      setCollaborators((prev) =>
+        prev.map((col) => {
+          if (col.id !== payload.collaboratorId) return col;
+          const currentTrack = col.track || [];
+          const stepIndex = currentTrack.findIndex(
+            (s) => s.type === 'survey' && s.refId === payload.surveyId
+          );
+          if (stepIndex === -1) return col;
+
+          const updatedTrack = currentTrack.map((step, idx) => {
+            if (idx === stepIndex) {
+              return {
+                ...step,
+                status: 'concluido' as const,
+                completedAt: nowIso,
+                surveyResponseId: responseId,
+              };
+            }
+            if (idx === stepIndex + 1 && step.status === 'bloqueado') {
+              return { ...step, status: 'disponivel' as const };
+            }
+            return step;
+          });
+
+          return { ...col, track: updatedTrack, updatedAt: nowIso };
+        })
+      );
+
       appendAudit(
         'Resposta de Pesquisa de Satisfação',
         'Pesquisas',
@@ -2257,6 +2313,178 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
     [surveys, collaborators, currentUser, appendAudit]
   );
 
+  const updateCollaboratorTrack = useCallback(
+    async (collaboratorId: string, steps: CollaboratorTrackStep[]): Promise<MutationResult> => {
+      if (!checkUserPermission(currentUser, 'can_manage_collaborators')) {
+        return { success: false, message: 'Acesso negado para gerenciar a trilha do colaborador.' };
+      }
+
+      const nowIso = new Date().toISOString();
+
+      // Recalcula ordem e status sequencial:
+      // A primeira etapa não-concluída fica 'disponivel', todas as seguintes ficam 'bloqueado'
+      let foundFirstPending = false;
+      const normalizedSteps: CollaboratorTrackStep[] = steps.map((step, idx) => {
+        const order = idx + 1;
+        if (step.status === 'concluido') {
+          return { ...step, order };
+        }
+        if (!foundFirstPending) {
+          foundFirstPending = true;
+          return { ...step, order, status: 'disponivel' as const };
+        }
+        return { ...step, order, status: 'bloqueado' as const };
+      });
+
+      setCollaborators((prev) =>
+        prev.map((c) =>
+          c.id === collaboratorId
+            ? { ...c, track: normalizedSteps, updatedAt: nowIso }
+            : c
+        )
+      );
+
+      // Sincroniza collaboratorChecklists para compatibilidade com avaliações e histórico
+      const checklistSteps = normalizedSteps.filter((s) => s.type === 'checklist');
+      if (checklistSteps.length > 0) {
+        setCollaboratorChecklists((prev) => {
+          const currentCollabChecklists = prev.filter((asg) => asg.collaboratorId === collaboratorId);
+          const others = prev.filter((asg) => asg.collaboratorId !== collaboratorId);
+          
+          const newOrUpdated = checklistSteps.map((step) => {
+            const existing = currentCollabChecklists.find(
+              (asg) => asg.checklistId === step.refId || asg.id === step.collaboratorChecklistId
+            );
+            if (existing) {
+              return {
+                ...existing,
+                status: step.status === 'concluido' ? ('concluido' as const) : ('pendente' as const),
+                finalScore: typeof step.finalScore === 'number' ? step.finalScore : existing.finalScore,
+                completedAt: step.completedAt || existing.completedAt,
+              };
+            }
+            return {
+              id: step.collaboratorChecklistId || `asg-${Date.now()}-${step.order}`,
+              collaboratorId,
+              checklistId: step.refId,
+              status: step.status === 'concluido' ? ('concluido' as const) : ('pendente' as const),
+              finalScore: step.finalScore || null,
+              criteriaAnswers: [],
+              instructorAuxiliarId: null,
+              actorAuxiliarId: null,
+              completedAt: step.completedAt || null,
+              createdAt: nowIso,
+              updatedAt: nowIso,
+            };
+          });
+
+          return [...others, ...newOrUpdated];
+        });
+      }
+
+      appendAudit('Edição da Trilha do Colaborador', 'Trilhas', `Colaborador: ${collaboratorId}`, 'Sucesso');
+      return { success: true, message: 'Trilha do colaborador atualizada com sucesso!' };
+    },
+    [currentUser, appendAudit]
+  );
+
+  const addStepToCollaboratorTrack = useCallback(
+    async (
+      collaboratorId: string,
+      step: Omit<CollaboratorTrackStep, 'id' | 'order' | 'status'>
+    ): Promise<MutationResult> => {
+      const collab = collaborators.find((c) => c.id === collaboratorId);
+      if (!collab) return { success: false, message: 'Colaborador não encontrado.' };
+
+      const currentTrack = collab.track || [];
+      const newStepId = `trk-step-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+      const hasAnyIncomplete = currentTrack.some((s) => s.status !== 'concluido');
+      
+      const newStep: CollaboratorTrackStep = {
+        id: newStepId,
+        type: step.type,
+        title: step.title,
+        refId: step.refId,
+        filledBy: step.filledBy,
+        order: currentTrack.length + 1,
+        status: currentTrack.length === 0 || !hasAnyIncomplete ? 'disponivel' : 'bloqueado',
+        completedAt: null,
+        finalScore: null,
+        collaboratorChecklistId: step.type === 'checklist' ? `asg-${Date.now()}` : undefined,
+      };
+
+      const updatedTrack = [...currentTrack, newStep];
+      return updateCollaboratorTrack(collaboratorId, updatedTrack);
+    },
+    [collaborators, updateCollaboratorTrack]
+  );
+
+  const removeStepFromCollaboratorTrack = useCallback(
+    async (collaboratorId: string, stepId: string): Promise<MutationResult> => {
+      const collab = collaborators.find((c) => c.id === collaboratorId);
+      if (!collab) return { success: false, message: 'Colaborador não encontrado.' };
+
+      const updatedTrack = (collab.track || []).filter((s) => s.id !== stepId);
+      return updateCollaboratorTrack(collaboratorId, updatedTrack);
+    },
+    [collaborators, updateCollaboratorTrack]
+  );
+
+  const completeCollaboratorTrackStep = useCallback(
+    async (
+      collaboratorId: string,
+      stepId: string,
+      resultData?: {
+        finalScore?: number | null;
+        collaboratorChecklistId?: string | null;
+        surveyResponseId?: string | null;
+      }
+    ): Promise<MutationResult> => {
+      const nowIso = new Date().toISOString();
+
+      let targetCollab = collaborators.find((c) => c.id === collaboratorId);
+      if (!targetCollab) {
+        return { success: false, message: 'Colaborador não encontrado.' };
+      }
+
+      const currentTrack = targetCollab.track || [];
+      const stepIndex = currentTrack.findIndex((s) => s.id === stepId);
+      if (stepIndex === -1) {
+        return { success: false, message: 'Etapa não encontrada na trilha do colaborador.' };
+      }
+
+      const updatedTrack = currentTrack.map((step, idx) => {
+        if (idx === stepIndex) {
+          return {
+            ...step,
+            status: 'concluido' as const,
+            completedAt: nowIso,
+            finalScore: typeof resultData?.finalScore === 'number' ? resultData.finalScore : step.finalScore,
+            collaboratorChecklistId: resultData?.collaboratorChecklistId || step.collaboratorChecklistId,
+            surveyResponseId: resultData?.surveyResponseId || step.surveyResponseId,
+          };
+        }
+        // Desbloqueia automaticamente a próxima etapa imediata se estiver bloqueada
+        if (idx === stepIndex + 1 && step.status === 'bloqueado') {
+          return {
+            ...step,
+            status: 'disponivel' as const,
+          };
+        }
+        return step;
+      });
+
+      // Atualiza o colaborador com a nova trilha
+      setCollaborators((prev) =>
+        prev.map((c) => (c.id === collaboratorId ? { ...c, track: updatedTrack, updatedAt: nowIso } : c))
+      );
+
+      appendAudit('Conclusão de Etapa da Trilha', 'Trilhas', `Etapa: ${currentTrack[stepIndex].title}`, 'Sucesso');
+      return { success: true, message: 'Etapa concluída e próxima etapa desbloqueada com sucesso!' };
+    },
+    [collaborators, appendAudit]
+  );
+
   const updateCollaboratorChecklistAssignments = useCallback(
     async (collaboratorId: string, checklistIds: string[]): Promise<MutationResult> => {
       if (!checkUserPermission(currentUser, 'can_manage_collaborators')) {
@@ -2266,12 +2494,10 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
       const nowIso = new Date().toISOString();
 
       setCollaboratorChecklists((prev) => {
-        // Mantém checklists existentes que ainda estão marcados
         const preserved = prev.filter(
           (asg) => asg.collaboratorId !== collaboratorId || checklistIds.includes(asg.checklistId)
         );
 
-        // Adiciona os novos checklists marcados
         const existingChkIds = new Set(
           prev.filter((asg) => asg.collaboratorId === collaboratorId).map((a) => a.checklistId)
         );
@@ -2345,19 +2571,46 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
         )
       );
 
-      if (payload.updateCollaboratorStatus) {
-        setCollaborators((prev) =>
-          prev.map((col) =>
-            col.id === targetAssignment.collaboratorId
-              ? {
-                  ...col,
-                  status: payload.updateCollaboratorStatus!,
-                  updatedAt: nowIso,
-                }
-              : col
-          )
-        );
-      }
+      // Sincroniza a etapa correspondente na trilha individual do colaborador (se existir)
+      setCollaborators((prev) =>
+        prev.map((col) => {
+          if (col.id !== targetAssignment.collaboratorId) return col;
+          const currentTrack = col.track || [];
+          const stepIndex = currentTrack.findIndex(
+            (s) =>
+              s.collaboratorChecklistId === targetAssignment.id ||
+              s.refId === targetAssignment.checklistId
+          );
+          if (stepIndex === -1) {
+            return payload.updateCollaboratorStatus
+              ? { ...col, status: payload.updateCollaboratorStatus, updatedAt: nowIso }
+              : col;
+          }
+
+          const updatedTrack = currentTrack.map((step, idx) => {
+            if (idx === stepIndex) {
+              return {
+                ...step,
+                status: 'concluido' as const,
+                completedAt: nowIso,
+                finalScore: payload.finalScore,
+                collaboratorChecklistId: targetAssignment.id,
+              };
+            }
+            if (idx === stepIndex + 1 && step.status === 'bloqueado') {
+              return { ...step, status: 'disponivel' as const };
+            }
+            return step;
+          });
+
+          return {
+            ...col,
+            track: updatedTrack,
+            status: payload.updateCollaboratorStatus || col.status,
+            updatedAt: nowIso,
+          };
+        })
+      );
 
       // Persistência no Supabase (se configurado)
       if (isSupabaseConfigured) {
@@ -2524,6 +2777,10 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
       createCollaborator,
       updateCollaborator,
       deleteCollaborator,
+      updateCollaboratorTrack,
+      addStepToCollaboratorTrack,
+      removeStepFromCollaboratorTrack,
+      completeCollaboratorTrackStep,
       updateCollaboratorChecklistAssignments,
       createLearningTrack,
       updateLearningTrack,
@@ -2576,6 +2833,10 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
       createCollaborator,
       updateCollaborator,
       deleteCollaborator,
+      updateCollaboratorTrack,
+      addStepToCollaboratorTrack,
+      removeStepFromCollaboratorTrack,
+      completeCollaboratorTrackStep,
       updateCollaboratorChecklistAssignments,
       createLearningTrack,
       updateLearningTrack,

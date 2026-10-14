@@ -24,6 +24,8 @@ import {
   Square,
   Sparkles,
   Download,
+  GraduationCap,
+  Layers,
 } from 'lucide-react';
 import { usePortalStore } from '../../../context/PortalStoreContext';
 import {
@@ -43,6 +45,7 @@ import { CUSTOMER_TIER_BADGES } from '../../characters/views/CharactersManagemen
 import { DIFFICULTY_BADGES } from '../../exercises/views/ExercisesSimulationView';
 import { GuideMirrorModal } from '../../../components/GuideMirrorModal';
 import { downloadGuidePdf, downloadReportPdf } from '../../../lib/downloadHelpers';
+import { CollaboratorTrackBuilder } from '../../tracks/views/CollaboratorTrackBuilder';
 
 const CLEAN_CELL_OPTIONS = ['Laboratório', 'Imagem', 'Consultas', 'Terapias', 'Convênio'];
 
@@ -104,6 +107,7 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
 
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showLinksModal, setShowLinksModal] = useState(false);
+  const [activeCollabViewTab, setActiveCollabViewTab] = useState<'track_builder' | 'checklists' | 'exercises'>('track_builder');
   const [selectedBriefingExercise, setSelectedBriefingExercise] = useState<Exercise | null>(null);
 
   // Modal do Laudo Oficial de Impressão
@@ -239,7 +243,6 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
       roleTitle: newRoleTitle.trim(),
       cellTeam: newCellTeam,
       registrationCode: newRegCode.trim() || undefined,
-      learningTrackId: newLearningTrackId || undefined,
       status: newStatus,
     });
     setIsSubmitting(false);
@@ -375,11 +378,23 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
               <div className="flex items-center gap-2">
                 <button
                   type="button"
+                  onClick={() => setActiveCollabViewTab('track_builder')}
+                  className={`px-3.5 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 cursor-pointer shadow-xs ${
+                    activeCollabViewTab === 'track_builder'
+                      ? 'bg-[#0f3e2e] text-white'
+                      : 'bg-emerald-50 text-emerald-900 border border-emerald-300 hover:bg-emerald-100'
+                  }`}
+                >
+                  <GraduationCap className="w-3.5 h-3.5" />
+                  <span>Configurar Trilha / Linha do Tempo</span>
+                </button>
+                <button
+                  type="button"
                   onClick={openLinksManager}
-                  className="px-3.5 py-1.5 text-xs font-bold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer"
+                  className="px-3.5 py-1.5 text-xs font-bold text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer"
                 >
                   <SlidersHorizontal className="w-3.5 h-3.5" />
-                  <span>Gerenciar Vínculos</span>
+                  <span>Vínculos de Checklists</span>
                 </button>
                 <button
                   type="button"
@@ -437,14 +452,14 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
             {/* Resumo de Avaliações */}
             <div className="flex items-center gap-4 bg-slate-50 p-4 rounded-xl border border-slate-200 shrink-0">
               <div>
-                <div className="text-[11px] text-slate-500 font-medium">Avaliações Vinculadas</div>
-                <div className="text-lg font-bold font-mono text-slate-900">
-                  {activeAssignments.length} checklist(s)
+                <div className="text-[11px] text-slate-500 font-medium">Etapas na Trilha</div>
+                <div className="text-lg font-bold font-mono text-[#0f3e2e]">
+                  {activeCollaborator.track?.length || 0} etapa(s)
                 </div>
               </div>
               <div className="w-px h-8 bg-slate-200" />
               <div>
-                <div className="text-[11px] text-slate-500 font-medium">Exercícios na Trilha</div>
+                <div className="text-[11px] text-slate-500 font-medium">Exercícios Vinculados</div>
                 <div className="text-lg font-bold font-mono text-emerald-800">
                   {activeLinkedExercises.length} caso(s)
                 </div>
@@ -452,11 +467,56 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
             </div>
           </div>
 
-          {/* ========================================================= */}
-          {/* SEÇÃO 1: CHECKLISTS DE AVALIAÇÃO ATRIBUÍDOS AO COLABORADOR */}
-          {/* ========================================================= */}
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
+          {/* Abas de Navegação Interna da Ficha do Colaborador */}
+          <div className="flex items-center gap-2 border-b border-slate-200 pb-px">
+            <button
+              type="button"
+              onClick={() => setActiveCollabViewTab('track_builder')}
+              className={`px-4 py-2.5 text-xs font-bold transition-all border-b-2 cursor-pointer flex items-center gap-2 ${
+                activeCollabViewTab === 'track_builder'
+                  ? 'border-emerald-700 text-emerald-900 bg-emerald-50/50'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <GraduationCap className="w-4 h-4" />
+              <span>Configurar Trilha / Linha do Tempo ({activeCollaborator.track?.length || 0})</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setActiveCollabViewTab('checklists')}
+              className={`px-4 py-2.5 text-xs font-bold transition-all border-b-2 cursor-pointer flex items-center gap-2 ${
+                activeCollabViewTab === 'checklists'
+                  ? 'border-emerald-700 text-emerald-900 bg-emerald-50/50'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <BookOpen className="w-4 h-4" />
+              <span>Avaliações & Checklists Atribuídos ({activeAssignments.length})</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setActiveCollabViewTab('exercises')}
+              className={`px-4 py-2.5 text-xs font-bold transition-all border-b-2 cursor-pointer flex items-center gap-2 ${
+                activeCollabViewTab === 'exercises'
+                  ? 'border-emerald-700 text-emerald-900 bg-emerald-50/50'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <FileText className="w-4 h-4" />
+              <span>Cenários de Simulação ({activeLinkedExercises.length})</span>
+            </button>
+          </div>
+
+          {/* CONTEÚDO DA ABA SELECIONADA */}
+          {activeCollabViewTab === 'track_builder' && (
+            <CollaboratorTrackBuilder collaborator={activeCollaborator} />
+          )}
+
+          {activeCollabViewTab === 'checklists' && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
               <div>
                 <h2 className="text-sm font-bold text-slate-900 flex items-center gap-2">
                   <BookOpen className="w-4 h-4 text-emerald-700" />
@@ -588,11 +648,13 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
               </div>
             )}
           </div>
+          )}
 
           {/* ========================================================= */}
           {/* SEÇÃO 2: EXERCÍCIOS E CLIENTES VINCULADOS (ROTEIRO) */}
           {/* ========================================================= */}
-          <div className="space-y-3 pt-4 border-t border-slate-200">
+          {activeCollabViewTab === 'exercises' && (
+          <div className="space-y-3 pt-4">
             <div>
               <h2 className="text-sm font-bold text-slate-900 flex items-center gap-2">
                 <FileText className="w-4 h-4 text-emerald-700" />
@@ -644,6 +706,7 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
               </div>
             )}
           </div>
+          )}
         </div>
       ) : (
         /* ======================================================== */
@@ -770,6 +833,20 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
 
                         <td className="px-5 py-4 text-slate-600">
                           {(() => {
+                            if (col.track && col.track.length > 0) {
+                              const done = col.track.filter((s) => s.status === 'concluido').length;
+                              return (
+                                <div className="space-y-1">
+                                  <span className="font-semibold text-emerald-950 bg-emerald-50 border border-emerald-300 px-2 py-0.5 rounded-md inline-flex items-center gap-1.5 text-[11px]">
+                                    <GraduationCap className="w-3 h-3 text-emerald-700" />
+                                    <span>{col.track.length} etapa(s) configurada(s)</span>
+                                  </span>
+                                  <div className="text-[10px] text-slate-500 font-medium">
+                                    Progresso: {done} de {col.track.length} ({Math.round((done / col.track.length) * 100)}%)
+                                  </div>
+                                </div>
+                              );
+                            }
                             const track = learningTracks.find(
                               (t) => t.id === col.learningTrackId || t.collaboratorIds.includes(col.id)
                             );
@@ -780,19 +857,7 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
                                 </span>
                               );
                             }
-                            if (assignments.length > 0) {
-                              return (
-                                <span className="font-medium text-slate-800">
-                                  {chk ? chk.title : `${assignments.length} checklist(s)`}
-                                  {assignments.length > 1 && (
-                                    <span className="text-[10px] text-emerald-800 ml-1 font-bold">
-                                      (+{assignments.length - 1})
-                                    </span>
-                                  )}
-                                </span>
-                              );
-                            }
-                            return <span className="text-slate-400 italic">Sem trilha</span>;
+                            return <span className="text-slate-400 italic">Sem trilha configurada</span>;
                           })()}
                         </td>
 
@@ -1665,24 +1730,6 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
                 </div>
               </div>
 
-              {/* Vínculo de Trilha de Aprendizagem (Opcional) */}
-              <div className="space-y-1 pt-2 border-t border-slate-200">
-                <label className="block font-bold text-slate-800">
-                  Matricular na Trilha de Aprendizagem (Opcional)
-                </label>
-                <select
-                  value={newLearningTrackId}
-                  onChange={(e) => setNewLearningTrackId(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 font-medium text-slate-900"
-                >
-                  <option value="">Sem trilha inicial (atribuir posteriormente)</option>
-                  {learningTracks.map((trk) => (
-                    <option key={trk.id} value={trk.id}>
-                      {trk.title} ({trk.cell})
-                    </option>
-                  ))}
-                </select>
-              </div>
 
               <div className="flex justify-end gap-3 pt-3 border-t border-slate-200">
                 <button

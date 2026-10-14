@@ -255,6 +255,24 @@ export interface Checklist {
 // 5. collaborators: Colaboradores em Treinamento
 export type CollaboratorStatus = 'novo' | 'em_treinamento' | 'aprovado' | 'necessita_reforco';
 
+export type CollaboratorTrackStepType = 'checklist' | 'survey';
+export type CollaboratorTrackFilledBy = 'collaborator' | 'evaluator';
+export type CollaboratorTrackStepStatus = 'disponivel' | 'bloqueado' | 'concluido';
+
+export interface CollaboratorTrackStep {
+  id: string; // id único da etapa na trilha
+  type: CollaboratorTrackStepType; // 'checklist' | 'survey'
+  title: string;
+  refId: string; // id do Checklist ou da Survey de referência
+  filledBy: CollaboratorTrackFilledBy; // 'collaborator' | 'evaluator' (default 'collaborator' para checklist, sempre 'collaborator' para survey)
+  order: number; // 1, 2, 3...
+  status: CollaboratorTrackStepStatus; // 'disponivel' | 'bloqueado' | 'concluido'
+  completedAt?: string | null;
+  finalScore?: number | null; // se checklist avaliado
+  collaboratorChecklistId?: string | null; // vínculo se criado em collaborator_checklists
+  surveyResponseId?: string | null; // vínculo se resposta enviada
+}
+
 export interface Collaborator {
   id: string;
   fullName: string;
@@ -262,7 +280,8 @@ export interface Collaborator {
   roleTitle: string;
   cellTeam: string; // nome ou código da célula
   registrationCode?: string;
-  learningTrackId?: string; // vínculo opcional com trilha de aprendizagem
+  learningTrackId?: string; // vínculo opcional/legado com trilha de aprendizagem
+  track?: CollaboratorTrackStep[]; // Trilha de aprendizagem individual e sequencial do colaborador
   status: CollaboratorStatus;
   createdAt: string;
   updatedAt: string;
