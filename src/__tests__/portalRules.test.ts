@@ -208,7 +208,7 @@ export function runPortalRuleTests(): {
     );
   assertScenario(
     10,
-    'Banco de clientes possui dados de convênio e comportamentais completos (nome, carteirinha, classificação, contexto, humor)',
+    'Banco de clientes possui dados de operadora e comportamentais completos (nome, carteirinha, classificação, contexto, humor)',
     allCharactersValid && Boolean(sampleChar.name && sampleChar.cell && sampleChar.customerTier)
   );
 

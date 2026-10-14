@@ -18,8 +18,12 @@ import {
   MapPin,
   ShieldAlert,
   Building2,
+  Download,
+  Eye,
 } from 'lucide-react';
 import { usePortalStore } from '../../../context/PortalStoreContext';
+import { GuideMirrorModal } from '../../../components/GuideMirrorModal';
+import { downloadGuidePdf } from '../../../lib/downloadHelpers';
 import {
   Character,
   Gender,
@@ -88,12 +92,14 @@ export const CharactersManagementView: React.FC = () => {
   const [deleteConfirmModal, setDeleteConfirmModal] = useState<Character | null>(null);
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
-  // Modal para visualização rápida da Guia do Cliente
+  // Modal para visualização e espelho da Guia do Cliente
+  const [mirrorCharacter, setMirrorCharacter] = useState<Character | null>(null);
   const [viewGuideModal, setViewGuideModal] = useState<{
     open: boolean;
     clientName: string;
     guideUrl: string;
     guideName: string;
+    character?: Character;
   } | null>(null);
 
   // Formulário com os campos obrigatórios (incluindo Célula e Falas em tópicos dinâmicos)
@@ -237,7 +243,7 @@ export const CharactersManagementView: React.FC = () => {
       return;
     }
     if (!formData.cardNumber.trim()) {
-      setFeedback({ type: 'error', text: 'Informe o número da carteirinha do convênio.' });
+      setFeedback({ type: 'error', text: 'Informe o número da carteirinha da operadora.' });
       return;
     }
     if (!formData.serviceContext.trim()) {
@@ -513,7 +519,7 @@ export const CharactersManagementView: React.FC = () => {
                     </div>
                   </div>
 
-                  {/* Informações de Convênio: Carteirinha e Cidade */}
+                  {/* Informações da Operadora: Carteirinha e Cidade */}
                   <div className="grid grid-cols-1 gap-1.5 p-3 bg-slate-50 rounded-xl border border-slate-100 text-[11px]">
                     <div className="flex items-center justify-between">
                       <span className="text-slate-500 flex items-center gap-1">
@@ -590,28 +596,33 @@ export const CharactersManagementView: React.FC = () => {
                 <div className="space-y-3 pt-3 border-t border-slate-100">
                   {/* Botão de Guia Anexa */}
                   {char.guideAttachmentUrl ? (
-                    <div className="flex items-center justify-between p-2 bg-slate-50 rounded-lg border border-slate-200 text-xs">
-                      <div className="flex items-center gap-2 truncate pr-2">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between p-2.5 bg-slate-50 rounded-lg border border-slate-200 text-xs gap-2">
+                      <div className="flex items-center gap-2 truncate pr-1">
                         <FileText className="w-4 h-4 text-emerald-700 shrink-0" />
-                        <span className="truncate text-slate-700 font-medium text-[11px]">
+                        <span className="truncate text-slate-700 font-medium text-[11px]" title={char.guideAttachmentName || 'Guia de Atendimento'}>
                           {char.guideAttachmentName || 'Guia de Atendimento'}
                         </span>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setViewGuideModal({
-                            open: true,
-                            clientName: char.name,
-                            guideUrl: char.guideAttachmentUrl!,
-                            guideName: char.guideAttachmentName || 'Guia de Atendimento',
-                          })
-                        }
-                        className="px-2 py-1 text-[11px] font-bold text-emerald-800 bg-emerald-100 hover:bg-emerald-200 rounded transition-colors inline-flex items-center gap-1 cursor-pointer shrink-0"
-                      >
-                        <ExternalLink className="w-3 h-3" />
-                        <span>Abrir Guia</span>
-                      </button>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => setMirrorCharacter(char)}
+                          className="px-2.5 py-1 text-[11px] font-bold text-emerald-800 bg-emerald-100 hover:bg-emerald-200 rounded-lg transition-colors inline-flex items-center gap-1 cursor-pointer"
+                          title="Visualizar espelho da guia"
+                        >
+                          <Eye className="w-3 h-3" />
+                          <span>Visualizar Guia</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => downloadGuidePdf(char)}
+                          className="px-2.5 py-1 text-[11px] font-bold text-white bg-[#064e3b] hover:bg-emerald-900 rounded-lg transition-colors inline-flex items-center gap-1 cursor-pointer shadow-2xs"
+                          title={`Baixar Guia_${char.name.replace(/\s+/g, '_')}.pdf`}
+                        >
+                          <Download className="w-3 h-3 text-emerald-200" />
+                          <span>Baixar PDF</span>
+                        </button>
+                      </div>
                     </div>
                   ) : (
                     <div className="text-[11px] text-slate-400 italic px-1">
@@ -660,7 +671,7 @@ export const CharactersManagementView: React.FC = () => {
                   {modalState.character ? 'Editar Perfil do Cliente' : '+ Novo Cliente Simulado'}
                 </h2>
                 <p className="text-xs text-emerald-200">
-                  Cadastre dados completos de convênio de saúde e anexos de guia para a simulação.
+                  Cadastre dados completos do plano de saúde da operadora e anexos de guia para a simulação.
                 </p>
               </div>
               <button
@@ -1088,6 +1099,12 @@ export const CharactersManagementView: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Espelho Oficial da Guia */}
+      <GuideMirrorModal
+        character={mirrorCharacter}
+        onClose={() => setMirrorCharacter(null)}
+      />
     </div>
   );
 };

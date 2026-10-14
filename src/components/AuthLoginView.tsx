@@ -293,6 +293,11 @@ export const AuthLoginView: React.FC = () => {
                                 Mestre
                               </span>
                             )}
+                            {u.role === 'colaborador' && (
+                              <span className="text-[9px] bg-emerald-100 text-emerald-800 border border-emerald-300 px-1.5 py-0.2 rounded font-bold uppercase">
+                                Colaborador
+                              </span>
+                            )}
                           </div>
                           <div className="text-[10px] text-slate-500 truncate">
                             {isPending ? (
@@ -309,7 +314,13 @@ export const AuthLoginView: React.FC = () => {
                               </span>
                             ) : (
                               <span className="text-slate-600">
-                                Perfil: <strong>{u.role}</strong>
+                                Perfil:{' '}
+                                <strong>
+                                  {u.role === 'colaborador'
+                                    ? 'Colaborador em Treinamento'
+                                    : u.role}
+                                </strong>
+                                {u.department && ` · ${u.department}`}
                               </span>
                             )}
                           </div>

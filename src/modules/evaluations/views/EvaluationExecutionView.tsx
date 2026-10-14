@@ -30,6 +30,8 @@ import {
   normalizePhrases,
 } from '../../../types/portal';
 import { CUSTOMER_TIER_BADGES } from '../../characters/views/CharactersManagementView';
+import { GuideMirrorModal } from '../../../components/GuideMirrorModal';
+import { downloadGuidePdf } from '../../../lib/downloadHelpers';
 
 interface EvaluationExecutionViewProps {
   assignmentId: string;
@@ -53,6 +55,7 @@ export const EvaluationExecutionView: React.FC<EvaluationExecutionViewProps> = (
 
   const isAuxiliar = currentUser?.role === 'auxiliar';
   const canApplyEvaluations = hasPermission('can_apply_evaluations') && !isAuxiliar;
+  const [guideModalChar, setGuideModalChar] = useState<Character | null>(null);
 
   // Localiza a atribuição ativa
   const assignment = useMemo(
@@ -543,16 +546,24 @@ export const EvaluationExecutionView: React.FC<EvaluationExecutionViewProps> = (
                           })()}
 
                           {char.guideAttachmentUrl && (
-                            <div className="pt-1.5">
-                              <a
-                                href={char.guideAttachmentUrl}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="w-full py-2 px-3 bg-white hover:bg-emerald-100 text-emerald-900 font-bold rounded-lg border border-emerald-300 flex items-center justify-center gap-1.5 transition-colors cursor-pointer text-xs"
+                            <div className="pt-2 flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => setGuideModalChar(char)}
+                                className="flex-1 py-1.5 px-2 bg-emerald-100 hover:bg-emerald-200 text-emerald-900 font-bold rounded-lg transition-colors flex items-center justify-center gap-1.5 cursor-pointer text-xs"
                               >
-                                <ExternalLink className="w-3.5 h-3.5 text-emerald-700" />
-                                <span>Abrir Guia Anexa de {char.name.split(' ')[0]}</span>
-                              </a>
+                                <Eye className="w-3.5 h-3.5 text-emerald-700" />
+                                <span>Visualizar Guia</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => downloadGuidePdf(char, currentExercise?.title)}
+                                className="py-1.5 px-2.5 bg-[#064e3b] hover:bg-emerald-900 text-white font-bold rounded-lg transition-colors flex items-center justify-center gap-1.5 cursor-pointer text-xs shadow-2xs"
+                                title={`Baixar Guia_${char.name.replace(/\s+/g, '_')}.pdf`}
+                              >
+                                <Download className="w-3.5 h-3.5 text-emerald-200" />
+                                <span>Baixar PDF</span>
+                              </button>
                             </div>
                           )}
                         </div>
@@ -573,6 +584,13 @@ export const EvaluationExecutionView: React.FC<EvaluationExecutionViewProps> = (
           )}
         </div>
       </div>
+
+      {/* Espelho Oficial da Guia */}
+      <GuideMirrorModal
+        character={guideModalChar}
+        exerciseTitle={currentExercise?.title}
+        onClose={() => setGuideModalChar(null)}
+      />
     </div>
   );
 };

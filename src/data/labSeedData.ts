@@ -85,7 +85,7 @@ export const LAB_CHARACTERS: Character[] = [
       'Identificar exames de autorização imediata versus exames com Diretriz de Utilização Técnica (DUT/genética), orientar a abertura de pedido de autorização e instruir o paciente sobre o kit especial de coleta genética.',
     typicalPhrases: [
       'Estou enviando duas guias. Posso fazer todas no núcleo do Centro de Navegantes na sexta-feira?',
-      'O médico disse que esse painel de genes tem que pedir antes pro convênio, vocês já liberam por aí?',
+      'O médico disse que esse painel de genes tem que pedir antes pra operadora, vocês já liberam por aí?',
     ],
     guideAttachmentUrl: 'https://placehold.co/800x1100/f8fafc/0f172a.png?text=DUAS+GUIAS+-+PATRICIA+SOUZA+DORNELES\\nGuia+1:+FSH,+LH,+Estradiol,+TSH,+T4L\\nGuia+2:+Painel+Genetico+NGS+Cancro+de+Mama/Ovario+Hereditario+(BRCA1/BRCA2+DUT)',
     guideAttachmentName: 'Guias Combinadas - Hormônios e Painel Genético NGS (Patrícia)',
@@ -487,6 +487,7 @@ export const LAB_CHECKLISTS: Checklist[] = [
     id: 'chk-lab-1',
     title: 'Checklist de Avaliação: Agendamento e Jejum Básico - Itajaí',
     cell: 'LAB',
+    categoryName: 'Técnico / Procedimental',
     description:
       'Avaliação técnica e comportamental para conferência de guias ambulatoriais, validação de elegibilidade e orientações de preparo de jejum na célula Laboratório em Itajaí.',
     hasExercises: true,
@@ -506,6 +507,7 @@ export const LAB_CHECKLISTS: Checklist[] = [
     id: 'chk-lab-2',
     title: 'Checklist de Avaliação: Curva Glicêmica Gestacional e Carência',
     cell: 'LAB',
+    categoryName: 'Regulatório / ANS',
     description:
       'Avaliação da precisão técnica na decodificação de pedidos médicos manuscritos obstétricos, checagem de carências contratuais e instrução da Curva Glicêmica (TOTG 75g).',
     hasExercises: true,
@@ -525,6 +527,7 @@ export const LAB_CHECKLISTS: Checklist[] = [
     id: 'chk-lab-3',
     title: 'Checklist de Avaliação: Exames Seriados e Aplicação da RN 566 ANS',
     cell: 'LAB',
+    categoryName: 'Regulatório / ANS',
     description:
       'Avaliação da capacidade de gerenciar exigências de beneficiários críticos, argumentação técnica sobre estabilidade amostral em pool e conformidade regulatória com a RN 566 da ANS.',
     hasExercises: true,
@@ -544,6 +547,7 @@ export const LAB_CHECKLISTS: Checklist[] = [
     id: 'chk-lab-4',
     title: 'Checklist de Avaliação: Multi-solicitação e Painel Genético DUT',
     cell: 'LAB',
+    categoryName: 'Regulatório / ANS',
     description:
       'Avaliação do fluxo de regulação e autorização de exames de genética molecular (NGS / DUT da ANS) versus exames ambulatoriais comuns.',
     hasExercises: true,
@@ -563,6 +567,7 @@ export const LAB_CHECKLISTS: Checklist[] = [
     id: 'chk-lab-5',
     title: 'Checklist de Avaliação: Atendimento Pediátrico Sensorial e TEA',
     cell: 'LAB',
+    categoryName: 'Atendimento Humanizado',
     description:
       'Avaliação de competências comportamentais em acolhimento humanizado, inclusão e atendimento de pacientes com hipersensibilidade sensorial (TEA).',
     hasExercises: true,
@@ -582,6 +587,7 @@ export const LAB_CHECKLISTS: Checklist[] = [
     id: 'chk-lab-6',
     title: 'Checklist de Avaliação: Simulação Multitarefa 2x (PSA e Beta-HCG)',
     cell: 'LAB',
+    categoryName: 'Multitarefa / Agilidade',
     description:
       'Avaliação de agilidade e precisão em atendimento simultâneo de múltiplos canais para orientações preventivas de PSA e urgência em Beta-HCG.',
     hasExercises: true,
@@ -601,6 +607,7 @@ export const LAB_CHECKLISTS: Checklist[] = [
     id: 'chk-lab-7',
     title: 'Checklist de Avaliação: Simulação Multitarefa 2x (Biópsia e ANS Ilhota)',
     cell: 'LAB',
+    categoryName: 'Regulatório / ANS',
     description:
       'Avaliação da gestão simultânea de fluxo anatomopatológico (amostra cirúrgica) e regulação de cobertura territorial em município sem posto próprio.',
     hasExercises: true,
@@ -620,6 +627,7 @@ export const LAB_CHECKLISTS: Checklist[] = [
     id: 'chk-lab-8',
     title: 'Checklist de Avaliação: Gestão de Conflito Crítico - Erro Tasy e Recoleta',
     cell: 'LAB',
+    categoryName: 'Gestão de Conflito / CNV',
     description:
       'Avaliação rigorosa de competências de desescalada de conflito, Comunicação Não-Violenta (CNV), gestão de falha operacional e reparação do dano ao cliente.',
     hasExercises: true,
@@ -639,6 +647,7 @@ export const LAB_CHECKLISTS: Checklist[] = [
     id: 'chk-lab-9',
     title: 'Checklist de Avaliação: Multitarefa 3x (Urina 24h, Domiciliar e CDI Atrasado)',
     cell: 'LAB',
+    categoryName: 'Multitarefa / Procedimental',
     description:
       'Avaliação sob alta carga cognitiva com 3 clientes simultâneos: preparo complexo pré-analítico, regulação de enfermagem domiciliar e cobrança de laudo atrasado.',
     hasExercises: true,
@@ -658,6 +667,7 @@ export const LAB_CHECKLISTS: Checklist[] = [
     id: 'chk-lab-10',
     title: 'Checklist de Avaliação: Alta Pressão 4x com Extrema Sensibilidade Oncológica',
     cell: 'LAB',
+    categoryName: 'Priorização Ética / Crítico',
     description:
       'Avaliação máxima de priorização ética, triagem ágil e condução humanizada sob estresse severo, destacando acolhimento imediato de suspeita de leucemia aguda.',
     hasExercises: true,

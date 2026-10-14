@@ -9,6 +9,9 @@ import {
   INITIAL_COLLABORATORS,
   INITIAL_CRITERIA,
   INITIAL_EXERCISES,
+  INITIAL_LEARNING_TRACKS,
+  INITIAL_SURVEYS,
+  INITIAL_SURVEY_RESPONSES,
   INITIAL_USERS,
 } from '../data/initialPortalData';
 import { checkUserPermission } from '../lib/permissions';
@@ -27,8 +30,13 @@ import {
   CriteriaAnswerSnapshot,
   Criterion,
   Exercise,
+  LearningTrack,
   OfficialCell,
   PermissionKey,
+  Survey,
+  SurveyAnswerItem,
+  SurveyQuestion,
+  SurveyResponse,
   UserProfile,
   UserRole,
   UserStatus,
@@ -36,6 +44,7 @@ import {
   getCellName,
   CustomerTier,
   ExerciseDifficulty,
+  generateCorporateUsername,
 } from '../types/portal';
 
 interface MutationResult {
@@ -75,6 +84,9 @@ interface PortalStoreContextValue {
   checklists: Checklist[];
   collaborators: Collaborator[];
   collaboratorChecklists: CollaboratorChecklist[];
+  learningTracks: LearningTrack[];
+  surveys: Survey[];
+  surveyResponses: SurveyResponse[];
   auditLogs: AuditLogEntry[];
 
   // 1. Categorias Padronizadas
@@ -140,19 +152,24 @@ interface PortalStoreContextValue {
 
   // 5. Colaboradores & Vínculos (CRUD com Edição)
   createCollaborator: (payload: {
-    fullName: string;
+    firstName?: string;
+    lastName?: string;
+    fullName?: string;
+    username?: string;
     roleTitle: string;
     cellTeam: string;
     registrationCode?: string;
-    status: CollaboratorStatus;
+    learningTrackId?: string;
+    status?: CollaboratorStatus;
     initialChecklistIds?: string[];
-  }) => Promise<MutationResult & { collaboratorId?: string }>;
+  }) => Promise<MutationResult & { collaboratorId?: string; username?: string }>;
   updateCollaborator: (payload: {
     id: string;
     fullName: string;
     roleTitle: string;
     cellTeam: string;
     registrationCode?: string;
+    learningTrackId?: string;
     status: CollaboratorStatus;
   }) => Promise<MutationResult>;
   deleteCollaborator: (collaboratorId: string) => Promise<MutationResult>;
@@ -160,6 +177,35 @@ interface PortalStoreContextValue {
     collaboratorId: string,
     checklistIds: string[]
   ) => Promise<MutationResult>;
+
+  // 6. Trilhas de Aprendizagem Dinâmicas (CRUD)
+  createLearningTrack: (payload: {
+    title: string;
+    description: string;
+    cell: string;
+    checklistIds: string[];
+    surveyId?: string;
+    collaboratorIds?: string[];
+  }) => Promise<MutationResult & { trackId?: string }>;
+  updateLearningTrack: (id: string, payload: Partial<LearningTrack>) => Promise<MutationResult>;
+  deleteLearningTrack: (id: string) => Promise<MutationResult>;
+  enrollCollaboratorInTrack: (trackId: string, collaboratorId: string) => Promise<MutationResult>;
+  unenrollCollaboratorFromTrack: (trackId: string, collaboratorId: string) => Promise<MutationResult>;
+
+  // 7. Pesquisas de Satisfação Dinâmicas (CRUD & Respostas)
+  createSurvey: (payload: {
+    title: string;
+    description: string;
+    targetCell?: string;
+    questions: SurveyQuestion[];
+  }) => Promise<MutationResult & { surveyId?: string }>;
+  updateSurvey: (id: string, payload: Partial<Survey>) => Promise<MutationResult>;
+  deleteSurvey: (id: string) => Promise<MutationResult>;
+  submitSurveyResponse: (payload: {
+    surveyId: string;
+    collaboratorId: string;
+    answers: Record<string, SurveyAnswerItem>;
+  }) => Promise<MutationResult>;
 
   // 6. Condução e Execução de Avaliação
   completeEvaluation: (payload: {
@@ -221,6 +267,11 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
             const master = INITIAL_USERS.find((u) => u.username === 'david.furtado');
             if (master) parsed.unshift(master);
           }
+          // Garante que o usuário colaborador de teste lucas.silveira exista para testar o perfil duplo
+          if (!parsed.some((u) => u.username === 'lucas.silveira')) {
+            const demoCollab = INITIAL_USERS.find((u) => u.username === 'lucas.silveira');
+            if (demoCollab) parsed.push(demoCollab);
+          }
           return parsed;
         }
       }
@@ -263,17 +314,19 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   }, [currentUserId]);
 
-  // Inicialização e atualização de dados padrão (versão v6 com base de Laboratório)
+  // Inicialização e atualização de dados padrão (versão v8 com Trilhas e Pesquisas)
   React.useEffect(() => {
     try {
-      if (!localStorage.getItem('portal_clean_mocks_v6')) {
-        localStorage.removeItem('portal_characters_store');
-        localStorage.removeItem('portal_exercises_store');
-        localStorage.removeItem('portal_checklists_store');
-        localStorage.setItem('portal_characters_store', JSON.stringify(INITIAL_CHARACTERS));
-        localStorage.setItem('portal_exercises_store', JSON.stringify(INITIAL_EXERCISES));
-        localStorage.setItem('portal_checklists_store', JSON.stringify(INITIAL_CHECKLISTS));
-        localStorage.setItem('portal_clean_mocks_v6', 'true');
+      if (!localStorage.getItem('portal_clean_mocks_v8')) {
+        localStorage.setItem('portal_learning_tracks_store', JSON.stringify(INITIAL_LEARNING_TRACKS));
+        localStorage.setItem('portal_surveys_store', JSON.stringify(INITIAL_SURVEYS));
+        localStorage.setItem('portal_survey_responses_store', JSON.stringify(INITIAL_SURVEY_RESPONSES));
+        const existingCollabs = localStorage.getItem('portal_collaborators_store');
+        if (!existingCollabs || JSON.parse(existingCollabs).length === 0) {
+          localStorage.setItem('portal_collaborators_store', JSON.stringify(INITIAL_COLLABORATORS));
+          localStorage.setItem('portal_collaborator_checklists_store', JSON.stringify(INITIAL_COLLABORATOR_CHECKLISTS));
+        }
+        localStorage.setItem('portal_clean_mocks_v8', 'true');
       }
     } catch {
       // ignore
@@ -282,12 +335,12 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const [categories, setCategories] = useState<Category[]>(() => {
     try {
-      if (localStorage.getItem('portal_clean_mocks_v5')) {
+      if (localStorage.getItem('portal_clean_mocks_v7')) {
         const s = localStorage.getItem('portal_categories_store');
         if (s) return JSON.parse(s);
       }
     } catch {}
-    return [];
+    return INITIAL_CATEGORIES;
   });
 
   const [cells, setCells] = useState<Cell[]>(() => {
@@ -323,7 +376,7 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const [characters, setCharacters] = useState<Character[]>(() => {
     try {
-      if (localStorage.getItem('portal_clean_mocks_v6')) {
+      if (localStorage.getItem('portal_clean_mocks_v7')) {
         const s = localStorage.getItem('portal_characters_store');
         if (s) {
           const parsed: Character[] = JSON.parse(s);
@@ -340,7 +393,7 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const [exercises, setExercises] = useState<Exercise[]>(() => {
     try {
-      if (localStorage.getItem('portal_clean_mocks_v6')) {
+      if (localStorage.getItem('portal_clean_mocks_v7')) {
         const s = localStorage.getItem('portal_exercises_store');
         if (s) {
           const parsed: Exercise[] = JSON.parse(s);
@@ -356,7 +409,7 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const [checklists, setChecklists] = useState<Checklist[]>(() => {
     try {
-      if (localStorage.getItem('portal_clean_mocks_v6')) {
+      if (localStorage.getItem('portal_clean_mocks_v7')) {
         const s = localStorage.getItem('portal_checklists_store');
         if (s) {
           const parsed: Checklist[] = JSON.parse(s);
@@ -372,40 +425,70 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const [collaborators, setCollaborators] = useState<Collaborator[]>(() => {
     try {
-      if (localStorage.getItem('portal_clean_mocks_v5')) {
-        const s = localStorage.getItem('portal_collaborators_store');
-        if (s) {
-          const parsed = JSON.parse(s);
-          if (Array.isArray(parsed)) {
-            return parsed.map((col: Collaborator) => ({
-              ...col,
-              cellTeam: getCellName(col.cellTeam),
-            }));
-          }
+      const s = localStorage.getItem('portal_collaborators_store');
+      if (s) {
+        const parsed = JSON.parse(s);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed.map((col: Collaborator) => ({
+            ...col,
+            cellTeam: getCellName(col.cellTeam),
+          }));
         }
       }
     } catch {}
-    return [];
+    return INITIAL_COLLABORATORS;
   });
 
   const [collaboratorChecklists, setCollaboratorChecklists] = useState<CollaboratorChecklist[]>(() => {
     try {
-      if (localStorage.getItem('portal_clean_mocks_v5')) {
-        const s = localStorage.getItem('portal_collaborator_checklists_store');
-        if (s) return JSON.parse(s);
+      const s = localStorage.getItem('portal_collaborator_checklists_store');
+      if (s) {
+        const parsed = JSON.parse(s);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
       }
     } catch {}
-    return [];
+    return INITIAL_COLLABORATOR_CHECKLISTS;
+  });
+
+  const [learningTracks, setLearningTracks] = useState<LearningTrack[]>(() => {
+    try {
+      const s = localStorage.getItem('portal_learning_tracks_store');
+      if (s) {
+        const parsed = JSON.parse(s);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {}
+    return INITIAL_LEARNING_TRACKS;
+  });
+
+  const [surveys, setSurveys] = useState<Survey[]>(() => {
+    try {
+      const s = localStorage.getItem('portal_surveys_store');
+      if (s) {
+        const parsed = JSON.parse(s);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {}
+    return INITIAL_SURVEYS;
+  });
+
+  const [surveyResponses, setSurveyResponses] = useState<SurveyResponse[]>(() => {
+    try {
+      const s = localStorage.getItem('portal_survey_responses_store');
+      if (s) {
+        const parsed = JSON.parse(s);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {}
+    return INITIAL_SURVEY_RESPONSES;
   });
 
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>(() => {
     try {
-      if (localStorage.getItem('portal_clean_mocks_v5')) {
-        const s = localStorage.getItem('portal_audit_logs_store');
-        if (s) return JSON.parse(s);
-      }
+      const s = localStorage.getItem('portal_audit_logs_store');
+      if (s) return JSON.parse(s);
     } catch {}
-    return [];
+    return INITIAL_AUDIT_LOGS;
   });
 
   // Persistência local contínua para prevenir perda ou retorno de dados excluídos
@@ -450,6 +533,24 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
       localStorage.setItem('portal_audit_logs_store', JSON.stringify(auditLogs));
     } catch {}
   }, [auditLogs]);
+
+  React.useEffect(() => {
+    try {
+      localStorage.setItem('portal_learning_tracks_store', JSON.stringify(learningTracks));
+    } catch {}
+  }, [learningTracks]);
+
+  React.useEffect(() => {
+    try {
+      localStorage.setItem('portal_surveys_store', JSON.stringify(surveys));
+    } catch {}
+  }, [surveys]);
+
+  React.useEffect(() => {
+    try {
+      localStorage.setItem('portal_survey_responses_store', JSON.stringify(surveyResponses));
+    } catch {}
+  }, [surveyResponses]);
 
   // Sincronização real com banco de dados Supabase (sem fallback para mocks se tabela estiver vazia)
   const fetchAllFromSupabase = useCallback(async () => {
@@ -1652,29 +1753,62 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
   // ==========================================
   const createCollaborator = useCallback(
     async (payload: {
-      fullName: string;
+      firstName?: string;
+      lastName?: string;
+      fullName?: string;
+      username?: string;
       roleTitle: string;
       cellTeam: string;
       registrationCode?: string;
-      status: CollaboratorStatus;
+      learningTrackId?: string;
+      status?: CollaboratorStatus;
       initialChecklistIds?: string[];
-    }): Promise<MutationResult & { collaboratorId?: string }> => {
+    }): Promise<MutationResult & { collaboratorId?: string; username?: string }> => {
       if (!checkUserPermission(currentUser, 'can_manage_collaborators')) {
         return { success: false, message: 'Acesso negado: permissão can_manage_collaborators exigida.' };
       }
 
-      if (!payload.fullName.trim()) {
-        return { success: false, message: 'Nome completo é obrigatório.' };
+      const calculatedFullName =
+        payload.fullName?.trim() ||
+        `${payload.firstName?.trim() || ''} ${payload.lastName?.trim() || ''}`.trim();
+
+      if (!calculatedFullName) {
+        return { success: false, message: 'Nome e sobrenome são obrigatórios.' };
+      }
+
+      // Geração de usuário corporativo único
+      let calculatedUsername =
+        payload.username?.trim().toLowerCase() ||
+        (payload.firstName && payload.lastName
+          ? generateCorporateUsername(payload.firstName, payload.lastName)
+          : generateCorporateUsername(
+              calculatedFullName.split(' ')[0] || '',
+              calculatedFullName.split(' ').slice(1).join(' ')
+            ));
+
+      if (!calculatedUsername) {
+        calculatedUsername = `colab.${Date.now().toString().slice(-4)}`;
+      }
+
+      // Se já existir usuário com mesmo username, adiciona sufixo numérico
+      const existingUsernames = new Set(users.map((u) => u.username.toLowerCase()));
+      let finalUsername = calculatedUsername;
+      let counter = 2;
+      while (existingUsernames.has(finalUsername)) {
+        finalUsername = `${calculatedUsername}${counter}`;
+        counter++;
       }
 
       const nowIso = new Date().toISOString();
       const newCollabId = `col-${Date.now()}`;
       const newCollab: Collaborator = {
         id: newCollabId,
-        fullName: payload.fullName.trim(),
+        fullName: calculatedFullName,
+        username: finalUsername,
         roleTitle: payload.roleTitle.trim() || 'Atendente de Operações',
-        cellTeam: payload.cellTeam.trim() || 'Atendimento Corporativo',
+        cellTeam: payload.cellTeam.trim() || 'Laboratório',
         registrationCode: payload.registrationCode?.trim(),
+        learningTrackId: payload.learningTrackId || undefined,
         status: payload.status || 'novo',
         createdAt: nowIso,
         updatedAt: nowIso,
@@ -1682,7 +1816,60 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
 
       setCollaborators((prev) => [newCollab, ...prev]);
 
-      if (payload.initialChecklistIds && payload.initialChecklistIds.length > 0) {
+      // Criação da conta de usuário corporativo correspondente (Perfil Colaborador)
+      const newUserId = `usr-collab-${Date.now()}`;
+      const newCollabUser: UserProfile = {
+        id: newUserId,
+        username: finalUsername,
+        fullName: calculatedFullName,
+        email: `${finalUsername}@portaldesempenho.corp`,
+        role: 'colaborador',
+        status: 'ativo',
+        canChangePassword: true,
+        isActive: true,
+        password: '',
+        department: payload.cellTeam.trim() || 'Laboratório',
+        collaboratorId: newCollabId,
+        individualPermissions: [],
+        createdAt: nowIso,
+        lastLoginAt: nowIso,
+      };
+      setUsers((prev) => [...prev, newCollabUser]);
+
+      // Se vinculado a uma trilha de aprendizagem, vincula e cria as etapas de checklist
+      if (payload.learningTrackId) {
+        setLearningTracks((prev) =>
+          prev.map((t) =>
+            t.id === payload.learningTrackId
+              ? {
+                  ...t,
+                  collaboratorIds: Array.from(new Set([...t.collaboratorIds, newCollabId])),
+                  updatedAt: nowIso,
+                }
+              : t
+          )
+        );
+
+        const targetTrack = learningTracks.find((t) => t.id === payload.learningTrackId);
+        if (targetTrack && targetTrack.checklistIds.length > 0) {
+          const trackAssignments: CollaboratorChecklist[] = targetTrack.checklistIds.map(
+            (chkId, idx) => ({
+              id: `asg-${Date.now()}-${idx}`,
+              collaboratorId: newCollabId,
+              checklistId: chkId,
+              status: 'pendente',
+              finalScore: null,
+              criteriaAnswers: [],
+              instructorAuxiliarId: null,
+              actorAuxiliarId: null,
+              completedAt: null,
+              createdAt: nowIso,
+              updatedAt: nowIso,
+            })
+          );
+          setCollaboratorChecklists((prev) => [...trackAssignments, ...prev]);
+        }
+      } else if (payload.initialChecklistIds && payload.initialChecklistIds.length > 0) {
         const newAssignments: CollaboratorChecklist[] = payload.initialChecklistIds.map((chkId, idx) => ({
           id: `asg-${Date.now()}-${idx}`,
           collaboratorId: newCollabId,
@@ -1699,10 +1886,21 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
         setCollaboratorChecklists((prev) => [...newAssignments, ...prev]);
       }
 
-      appendAudit('Cadastro de Colaborador', 'Colaboradores', newCollab.fullName, 'Sucesso');
-      return { success: true, message: 'Colaborador cadastrado com sucesso!', collaboratorId: newCollabId };
+      appendAudit(
+        'Cadastro de Colaborador',
+        'Colaboradores',
+        `${newCollab.fullName} (@${finalUsername})`,
+        'Sucesso'
+      );
+
+      return {
+        success: true,
+        message: `Colaborador cadastrado com sucesso! Usuário de acesso: @${finalUsername}`,
+        collaboratorId: newCollabId,
+        username: finalUsername,
+      };
     },
-    [currentUser, appendAudit]
+    [currentUser, users, learningTracks, appendAudit]
   );
 
   const updateCollaborator = useCallback(
@@ -1712,6 +1910,7 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
       roleTitle: string;
       cellTeam: string;
       registrationCode?: string;
+      learningTrackId?: string;
       status: CollaboratorStatus;
     }): Promise<MutationResult> => {
       if (!checkUserPermission(currentUser, 'can_manage_collaborators')) {
@@ -1728,10 +1927,19 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
                 roleTitle: payload.roleTitle.trim(),
                 cellTeam: payload.cellTeam.trim(),
                 registrationCode: payload.registrationCode?.trim(),
+                learningTrackId: payload.learningTrackId,
                 status: payload.status,
                 updatedAt: nowIso,
               }
             : c
+        )
+      );
+
+      setUsers((prev) =>
+        prev.map((u) =>
+          u.collaboratorId === payload.id
+            ? { ...u, fullName: payload.fullName.trim(), department: payload.cellTeam.trim() }
+            : u
         )
       );
 
@@ -1749,10 +1957,304 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
 
       setCollaboratorChecklists((prev) => prev.filter((a) => a.collaboratorId !== collaboratorId));
       setCollaborators((prev) => prev.filter((c) => c.id !== collaboratorId));
+      setLearningTracks((prev) =>
+        prev.map((t) => ({
+          ...t,
+          collaboratorIds: t.collaboratorIds.filter((id) => id !== collaboratorId),
+        }))
+      );
+      setUsers((prev) => prev.filter((u) => u.collaboratorId !== collaboratorId));
       appendAudit('Exclusão de Colaborador', 'Colaboradores', `ID: ${collaboratorId}`, 'Sucesso');
       return { success: true, message: 'Colaborador excluído com sucesso.' };
     },
     [currentUser, appendAudit]
+  );
+
+  // ==========================================
+  // 6. Trilhas de Aprendizagem Dinâmicas (CRUD)
+  // ==========================================
+  const createLearningTrack = useCallback(
+    async (payload: {
+      title: string;
+      description: string;
+      cell: string;
+      checklistIds: string[];
+      surveyId?: string;
+      collaboratorIds?: string[];
+    }): Promise<MutationResult & { trackId?: string }> => {
+      if (!checkUserPermission(currentUser, 'can_manage_checklists') && currentUser?.role !== 'admin') {
+        return { success: false, message: 'Acesso negado: permissão necessária para criar trilhas.' };
+      }
+      if (!payload.title.trim()) {
+        return { success: false, message: 'O título da trilha é obrigatório.' };
+      }
+      const nowIso = new Date().toISOString();
+      const trackId = `track-${Date.now()}`;
+      const newTrack: LearningTrack = {
+        id: trackId,
+        title: payload.title.trim(),
+        description: payload.description.trim(),
+        cell: payload.cell || 'Laboratório',
+        checklistIds: payload.checklistIds || [],
+        surveyId: payload.surveyId || undefined,
+        collaboratorIds: payload.collaboratorIds || [],
+        isActive: true,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+      };
+
+      setLearningTracks((prev) => [newTrack, ...prev]);
+
+      if (payload.collaboratorIds && payload.collaboratorIds.length > 0) {
+        setCollaborators((prev) =>
+          prev.map((col) =>
+            payload.collaboratorIds!.includes(col.id)
+              ? { ...col, learningTrackId: trackId, updatedAt: nowIso }
+              : col
+          )
+        );
+
+        if (payload.checklistIds && payload.checklistIds.length > 0) {
+          const newAssignments: CollaboratorChecklist[] = [];
+          for (const collabId of payload.collaboratorIds) {
+            for (let i = 0; i < payload.checklistIds.length; i++) {
+              const chkId = payload.checklistIds[i];
+              newAssignments.push({
+                id: `asg-${Date.now()}-${collabId}-${i}`,
+                collaboratorId: collabId,
+                checklistId: chkId,
+                status: 'pendente',
+                finalScore: null,
+                criteriaAnswers: [],
+                instructorAuxiliarId: null,
+                actorAuxiliarId: null,
+                completedAt: null,
+                createdAt: nowIso,
+                updatedAt: nowIso,
+              });
+            }
+          }
+          setCollaboratorChecklists((prev) => [...newAssignments, ...prev]);
+        }
+      }
+
+      appendAudit('Criação de Trilha de Aprendizagem', 'Trilhas', newTrack.title, 'Sucesso');
+      return { success: true, message: 'Trilha criada com sucesso!', trackId };
+    },
+    [currentUser, appendAudit]
+  );
+
+  const updateLearningTrack = useCallback(
+    async (id: string, payload: Partial<LearningTrack>): Promise<MutationResult> => {
+      if (!checkUserPermission(currentUser, 'can_manage_checklists') && currentUser?.role !== 'admin') {
+        return { success: false, message: 'Acesso negado: permissão necessária para editar trilhas.' };
+      }
+      const nowIso = new Date().toISOString();
+      setLearningTracks((prev) =>
+        prev.map((t) => (t.id === id ? { ...t, ...payload, updatedAt: nowIso } : t))
+      );
+      appendAudit('Edição de Trilha de Aprendizagem', 'Trilhas', `ID: ${id}`, 'Sucesso');
+      return { success: true, message: 'Trilha atualizada com sucesso!' };
+    },
+    [currentUser, appendAudit]
+  );
+
+  const deleteLearningTrack = useCallback(
+    async (id: string): Promise<MutationResult> => {
+      if (!checkUserPermission(currentUser, 'can_manage_checklists') && currentUser?.role !== 'admin') {
+        return { success: false, message: 'Acesso negado: permissão necessária para excluir trilhas.' };
+      }
+      setLearningTracks((prev) => prev.filter((t) => t.id !== id));
+      setCollaborators((prev) =>
+        prev.map((col) => (col.learningTrackId === id ? { ...col, learningTrackId: undefined } : col))
+      );
+      appendAudit('Exclusão de Trilha de Aprendizagem', 'Trilhas', `ID: ${id}`, 'Sucesso');
+      return { success: true, message: 'Trilha excluída com sucesso!' };
+    },
+    [currentUser, appendAudit]
+  );
+
+  const enrollCollaboratorInTrack = useCallback(
+    async (trackId: string, collaboratorId: string): Promise<MutationResult> => {
+      const nowIso = new Date().toISOString();
+      setLearningTracks((prev) =>
+        prev.map((t) =>
+          t.id === trackId
+            ? {
+                ...t,
+                collaboratorIds: Array.from(new Set([...t.collaboratorIds, collaboratorId])),
+                updatedAt: nowIso,
+              }
+            : t
+        )
+      );
+      setCollaborators((prev) =>
+        prev.map((col) =>
+          col.id === collaboratorId ? { ...col, learningTrackId: trackId, updatedAt: nowIso } : col
+        )
+      );
+
+      const targetTrack = learningTracks.find((t) => t.id === trackId);
+      if (targetTrack && targetTrack.checklistIds.length > 0) {
+        setCollaboratorChecklists((prev) => {
+          const existingChkIds = new Set(
+            prev.filter((c) => c.collaboratorId === collaboratorId).map((c) => c.checklistId)
+          );
+          const newEntries: CollaboratorChecklist[] = targetTrack.checklistIds
+            .filter((chkId) => !existingChkIds.has(chkId))
+            .map((chkId, idx) => ({
+              id: `asg-${Date.now()}-${idx}`,
+              collaboratorId,
+              checklistId: chkId,
+              status: 'pendente',
+              finalScore: null,
+              criteriaAnswers: [],
+              instructorAuxiliarId: null,
+              actorAuxiliarId: null,
+              completedAt: null,
+              createdAt: nowIso,
+              updatedAt: nowIso,
+            }));
+          return [...prev, ...newEntries];
+        });
+      }
+
+      return { success: true, message: 'Colaborador matriculado na trilha com sucesso!' };
+    },
+    [learningTracks]
+  );
+
+  const unenrollCollaboratorFromTrack = useCallback(
+    async (trackId: string, collaboratorId: string): Promise<MutationResult> => {
+      const nowIso = new Date().toISOString();
+      setLearningTracks((prev) =>
+        prev.map((t) =>
+          t.id === trackId
+            ? {
+                ...t,
+                collaboratorIds: t.collaboratorIds.filter((id) => id !== collaboratorId),
+                updatedAt: nowIso,
+              }
+            : t
+        )
+      );
+      setCollaborators((prev) =>
+        prev.map((col) =>
+          col.id === collaboratorId && col.learningTrackId === trackId
+            ? { ...col, learningTrackId: undefined, updatedAt: nowIso }
+            : col
+        )
+      );
+      return { success: true, message: 'Colaborador desmatriculado da trilha.' };
+    },
+    []
+  );
+
+  // ==========================================
+  // 7. Pesquisas de Satisfação Dinâmicas
+  // ==========================================
+  const createSurvey = useCallback(
+    async (payload: {
+      title: string;
+      description: string;
+      targetCell?: string;
+      questions: SurveyQuestion[];
+    }): Promise<MutationResult & { surveyId?: string }> => {
+      if (!checkUserPermission(currentUser, 'can_manage_checklists') && currentUser?.role !== 'admin') {
+        return { success: false, message: 'Acesso negado: permissão necessária para criar pesquisas.' };
+      }
+      if (!payload.title.trim()) {
+        return { success: false, message: 'O título da pesquisa é obrigatório.' };
+      }
+      if (!payload.questions || payload.questions.length === 0) {
+        return { success: false, message: 'Adicione pelo menos 1 pergunta à pesquisa.' };
+      }
+
+      const nowIso = new Date().toISOString();
+      const surveyId = `survey-${Date.now()}`;
+      const newSurvey: Survey = {
+        id: surveyId,
+        title: payload.title.trim(),
+        description: payload.description.trim(),
+        targetCell: payload.targetCell || 'Todas',
+        questions: payload.questions,
+        isActive: true,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+      };
+
+      setSurveys((prev) => [newSurvey, ...prev]);
+      appendAudit('Criação de Pesquisa de Satisfação', 'Pesquisas', newSurvey.title, 'Sucesso');
+      return { success: true, message: 'Pesquisa criada com sucesso!', surveyId };
+    },
+    [currentUser, appendAudit]
+  );
+
+  const updateSurvey = useCallback(
+    async (id: string, payload: Partial<Survey>): Promise<MutationResult> => {
+      if (!checkUserPermission(currentUser, 'can_manage_checklists') && currentUser?.role !== 'admin') {
+        return { success: false, message: 'Acesso negado: permissão necessária para editar pesquisas.' };
+      }
+      const nowIso = new Date().toISOString();
+      setSurveys((prev) =>
+        prev.map((s) => (s.id === id ? { ...s, ...payload, updatedAt: nowIso } : s))
+      );
+      appendAudit('Edição de Pesquisa de Satisfação', 'Pesquisas', `ID: ${id}`, 'Sucesso');
+      return { success: true, message: 'Pesquisa atualizada com sucesso!' };
+    },
+    [currentUser, appendAudit]
+  );
+
+  const deleteSurvey = useCallback(
+    async (id: string): Promise<MutationResult> => {
+      if (!checkUserPermission(currentUser, 'can_manage_checklists') && currentUser?.role !== 'admin') {
+        return { success: false, message: 'Acesso negado: permissão necessária para excluir pesquisas.' };
+      }
+      setSurveys((prev) => prev.filter((s) => s.id !== id));
+      setLearningTracks((prev) =>
+        prev.map((t) => (t.surveyId === id ? { ...t, surveyId: undefined } : t))
+      );
+      appendAudit('Exclusão de Pesquisa de Satisfação', 'Pesquisas', `ID: ${id}`, 'Sucesso');
+      return { success: true, message: 'Pesquisa excluída com sucesso!' };
+    },
+    [currentUser, appendAudit]
+  );
+
+  const submitSurveyResponse = useCallback(
+    async (payload: {
+      surveyId: string;
+      collaboratorId: string;
+      answers: Record<string, SurveyAnswerItem>;
+    }): Promise<MutationResult> => {
+      const targetSurvey = surveys.find((s) => s.id === payload.surveyId);
+      if (!targetSurvey) {
+        return { success: false, message: 'Pesquisa não encontrada.' };
+      }
+
+      const collab = collaborators.find((c) => c.id === payload.collaboratorId);
+      const nowIso = new Date().toISOString();
+      const responseId = `resp-${Date.now()}`;
+      const newResponse: SurveyResponse = {
+        id: responseId,
+        surveyId: payload.surveyId,
+        collaboratorId: payload.collaboratorId,
+        collaboratorName: collab ? collab.fullName : currentUser?.fullName || 'Colaborador',
+        collaboratorUsername: collab ? collab.username || '' : currentUser?.username || '',
+        cellTeam: collab ? collab.cellTeam : currentUser?.department || 'Laboratório',
+        answers: payload.answers,
+        completedAt: nowIso,
+      };
+
+      setSurveyResponses((prev) => [newResponse, ...prev]);
+      appendAudit(
+        'Resposta de Pesquisa de Satisfação',
+        'Pesquisas',
+        `${targetSurvey.title} - ${newResponse.collaboratorName}`,
+        'Sucesso'
+      );
+      return { success: true, message: 'Obrigado! Sua resposta foi registrada com sucesso.' };
+    },
+    [surveys, collaborators, currentUser, appendAudit]
   );
 
   const updateCollaboratorChecklistAssignments = useCallback(
@@ -2006,6 +2508,9 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
       checklists,
       collaborators,
       collaboratorChecklists,
+      learningTracks,
+      surveys,
+      surveyResponses,
       auditLogs,
       createCategory,
       saveCharacter,
@@ -2020,6 +2525,15 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
       updateCollaborator,
       deleteCollaborator,
       updateCollaboratorChecklistAssignments,
+      createLearningTrack,
+      updateLearningTrack,
+      deleteLearningTrack,
+      enrollCollaboratorInTrack,
+      unenrollCollaboratorFromTrack,
+      createSurvey,
+      updateSurvey,
+      deleteSurvey,
+      submitSurveyResponse,
       completeEvaluation,
       updateUserPermissions,
       createNewUser,
@@ -2046,6 +2560,9 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
       checklists,
       collaborators,
       collaboratorChecklists,
+      learningTracks,
+      surveys,
+      surveyResponses,
       auditLogs,
       createCategory,
       saveCharacter,
@@ -2060,6 +2577,15 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
       updateCollaborator,
       deleteCollaborator,
       updateCollaboratorChecklistAssignments,
+      createLearningTrack,
+      updateLearningTrack,
+      deleteLearningTrack,
+      enrollCollaboratorInTrack,
+      unenrollCollaboratorFromTrack,
+      createSurvey,
+      updateSurvey,
+      deleteSurvey,
+      submitSurveyResponse,
       completeEvaluation,
       updateUserPermissions,
       createNewUser,

@@ -9,16 +9,21 @@ import {
   X,
   Sparkles,
   UserCheck,
+  GraduationCap,
+  ClipboardCheck,
 } from 'lucide-react';
 import { usePortalStore } from '../../context/PortalStoreContext';
 import { normalizePhrases } from '../../types/portal';
 
 export type PortalRoute =
   | 'collaborators'
+  | 'tracks'
+  | 'surveys'
   | 'checklists'
   | 'exercises'
   | 'characters'
   | 'admin'
+  | 'my-development'
   | 'evaluation-run';
 
 interface PlatformShellProps {
@@ -42,6 +47,8 @@ export const PlatformShell: React.FC<PlatformShellProps> = ({
     checklists,
     exercises,
     characters,
+    learningTracks,
+    surveys,
   } = usePortalStore();
 
   const [globalSearchQuery, setGlobalSearchQuery] = useState('');
@@ -98,55 +105,96 @@ export const PlatformShell: React.FC<PlatformShellProps> = ({
 
   if (!currentUser) return null;
 
-  // Itens do Menu Lateral
+  const isCollaborator = currentUser.role === 'colaborador';
+
+  // Itens do Menu Lateral (Diferenciados por Perfil: Administrador vs Colaborador)
   const navItems: Array<{
     id: PortalRoute;
     label: string;
     icon: React.ReactNode;
     visible: boolean;
     badgeCount?: number;
-  }> = [
-    {
-      id: 'collaborators',
-      label: 'Colaboradores',
-      icon: <Users className="w-4 h-4" />,
-      visible: true,
-      badgeCount: collaborators.length,
-    },
-    {
-      id: 'checklists',
-      label: 'Checklists',
-      icon: <BookOpen className="w-4 h-4" />,
-      visible: true,
-      badgeCount: checklists.length,
-    },
-    {
-      id: 'exercises',
-      label: 'Exercícios',
-      icon: <FileText className="w-4 h-4" />,
-      visible: true,
-      badgeCount: exercises.length,
-    },
-    {
-      id: 'characters',
-      label: 'Banco de Clientes',
-      icon: <UserCheck className="w-4 h-4" />,
-      visible: true,
-      badgeCount: characters.length,
-    },
-    {
-      id: 'admin',
-      label: 'Administração',
-      icon: <ShieldCheck className="w-4 h-4" />,
-      visible: currentUser.role === 'admin' || hasPermission('users:manage'),
-    },
-  ];
+  }> = isCollaborator
+    ? [
+        {
+          id: 'my-development',
+          label: 'Meu Desenvolvimento',
+          icon: <GraduationCap className="w-4 h-4" />,
+          visible: true,
+        },
+        {
+          id: 'surveys',
+          label: 'Pesquisas de Satisfação',
+          icon: <ClipboardCheck className="w-4 h-4" />,
+          visible: true,
+          badgeCount: surveys.length,
+        },
+      ]
+    : [
+        {
+          id: 'collaborators',
+          label: 'Colaboradores',
+          icon: <Users className="w-4 h-4" />,
+          visible: true,
+          badgeCount: collaborators.length,
+        },
+        {
+          id: 'tracks',
+          label: 'Trilhas de Aprendizagem',
+          icon: <GraduationCap className="w-4 h-4" />,
+          visible: true,
+          badgeCount: learningTracks.length,
+        },
+        {
+          id: 'surveys',
+          label: 'Pesquisas de Satisfação',
+          icon: <ClipboardCheck className="w-4 h-4" />,
+          visible: true,
+          badgeCount: surveys.length,
+        },
+        {
+          id: 'checklists',
+          label: 'Checklists',
+          icon: <BookOpen className="w-4 h-4" />,
+          visible: true,
+          badgeCount: checklists.length,
+        },
+        {
+          id: 'exercises',
+          label: 'Exercícios',
+          icon: <FileText className="w-4 h-4" />,
+          visible: true,
+          badgeCount: exercises.length,
+        },
+        {
+          id: 'characters',
+          label: 'Banco de Clientes',
+          icon: <UserCheck className="w-4 h-4" />,
+          visible: true,
+          badgeCount: characters.length,
+        },
+        {
+          id: 'admin',
+          label: 'Administração',
+          icon: <ShieldCheck className="w-4 h-4" />,
+          visible: currentUser.role === 'admin' || hasPermission('users:manage'),
+        },
+      ];
 
   const handleProfileSwitch = (targetUserId: string) => {
     setSwitchError(null);
+    const targetUser = users.find((u) => u.id === targetUserId);
     const res = switchDemoUser(targetUserId);
     if (!res.success) {
       setSwitchError(res.message);
+    } else {
+      if (targetUser?.role === 'colaborador') {
+        onNavigate('my-development');
+      } else {
+        if (activeRoute === 'my-development') {
+          onNavigate('collaborators');
+        }
+      }
     }
   };
 
@@ -157,7 +205,7 @@ export const PlatformShell: React.FC<PlatformShellProps> = ({
         {/* Marca P e Título */}
         <button
           type="button"
-          onClick={() => onNavigate('collaborators')}
+          onClick={() => onNavigate(isCollaborator ? 'my-development' : 'collaborators')}
           className="flex items-center gap-3 text-left whitespace-nowrap shrink-0 focus:outline-none group cursor-pointer"
         >
           <span className="w-9 h-9 rounded-lg bg-emerald-600 group-hover:bg-emerald-500 transition-colors flex items-center justify-center font-display font-bold text-lg text-white shadow-sm">
@@ -336,7 +384,7 @@ export const PlatformShell: React.FC<PlatformShellProps> = ({
             >
               {users.map((u) => (
                 <option key={u.id} value={u.id}>
-                  {u.fullName} (@{u.username}) · {u.role.toUpperCase()}
+                  {u.fullName} (@{u.username}) · {u.role === 'colaborador' ? 'COLABORADOR' : u.role.toUpperCase()}
                 </option>
               ))}
             </select>

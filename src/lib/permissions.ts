@@ -17,6 +17,7 @@ const ROLE_DEFAULT_PERMISSIONS: Record<UserRole, PermissionKey[]> = {
     'can_apply_evaluations',
   ],
   auxiliar: [],
+  colaborador: [],
 };
 
 export const ALL_PERMISSIONS_METADATA: Array<{

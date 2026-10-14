@@ -1,4 +1,4 @@
-export type UserRole = 'admin' | 'avaliador' | 'auxiliar';
+export type UserRole = 'admin' | 'avaliador' | 'auxiliar' | 'colaborador';
 
 // Permissões Granulares
 export type PermissionKey =
@@ -17,7 +17,7 @@ export type UserStatus =
 
 export interface UserProfile {
   id: string;
-  username: string; // sempre em minúsculas, ex: 'david.furtado'
+  username: string; // sempre em minúsculas, ex: 'david.furtado' ou 'lucas.silveira'
   fullName: string;
   email: string;
   role: UserRole;
@@ -26,6 +26,7 @@ export interface UserProfile {
   password?: string;
   isActive: boolean;
   department: string;
+  collaboratorId?: string; // vínculo direto com colaborador
   individualPermissions: PermissionKey[];
   createdAt: string;
   lastLoginAt: string;
@@ -257,9 +258,11 @@ export type CollaboratorStatus = 'novo' | 'em_treinamento' | 'aprovado' | 'neces
 export interface Collaborator {
   id: string;
   fullName: string;
+  username?: string; // identificador único corporativo: nome.sobrenome
   roleTitle: string;
   cellTeam: string; // nome ou código da célula
   registrationCode?: string;
+  learningTrackId?: string; // vínculo opcional com trilha de aprendizagem
   status: CollaboratorStatus;
   createdAt: string;
   updatedAt: string;
@@ -302,6 +305,61 @@ export interface CollaboratorChecklist {
   updatedAt: string;
 }
 
+// 7. Pesquisas de Satisfação Dinâmicas
+export type SurveyQuestionType =
+  | 'multipla_simples'
+  | 'multipla_com_observacao'
+  | 'apenas_observacao';
+
+export interface SurveyQuestion {
+  id: string;
+  text: string;
+  type: SurveyQuestionType;
+  options: string[]; // alternativas quando aplicável
+  required: boolean;
+}
+
+export interface Survey {
+  id: string;
+  title: string;
+  description: string;
+  targetCell?: string; // Célula específica ou "Todas"
+  questions: SurveyQuestion[];
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SurveyAnswerItem {
+  selectedOption?: string;
+  observation?: string;
+}
+
+export interface SurveyResponse {
+  id: string;
+  surveyId: string;
+  collaboratorId: string;
+  collaboratorName: string;
+  collaboratorUsername: string;
+  cellTeam: string;
+  answers: Record<string, SurveyAnswerItem>; // questionId -> resposta
+  completedAt: string;
+}
+
+// 8. Trilhas de Aprendizagem Dinâmicas
+export interface LearningTrack {
+  id: string;
+  title: string;
+  description: string;
+  cell: string; // Laboratório, Imagem, Consultas, Terapias, Convênio, ou Geral
+  checklistIds: string[]; // Ordem cronológica das etapas de checklists
+  surveyId?: string; // Pesquisa de satisfação vinculada à conclusão da trilha
+  collaboratorIds: string[]; // Colaboradores matriculados nesta trilha
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface AuditLogEntry {
   id: string;
   timestamp: string;
@@ -309,7 +367,39 @@ export interface AuditLogEntry {
   actorName: string;
   actorRole: UserRole;
   action: string;
-  module: 'Autenticação' | 'Colaboradores' | 'Checklists' | 'Exercícios' | 'Personagens' | 'Avaliações' | 'Administração' | 'Categorias';
+  module:
+    | 'Autenticação'
+    | 'Colaboradores'
+    | 'Checklists'
+    | 'Exercícios'
+    | 'Personagens'
+    | 'Avaliações'
+    | 'Administração'
+    | 'Categorias'
+    | 'Trilhas'
+    | 'Pesquisas';
   targetDescription: string;
   status: 'Sucesso' | 'Bloqueado' | 'Erro';
+}
+
+/**
+ * Gera o identificador de usuário corporativo no padrão "nome.sobrenome"
+ * sem acentos e em minúsculas (ex: "Lucas Silveira" -> "lucas.silveira")
+ */
+export function generateCorporateUsername(firstName: string, lastName: string): string {
+  const sanitize = (text: string) =>
+    text
+      .trim()
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '') // remove diacríticos/acentos
+      .replace(/[^a-z0-9]/g, ''); // mantém apenas alfanuméricos
+
+  const cleanFirst = sanitize(firstName.split(' ')[0] || '');
+  const cleanLast = sanitize(lastName.split(' ').filter(Boolean).pop() || '');
+
+  if (!cleanFirst && !cleanLast) return '';
+  if (!cleanFirst) return cleanLast;
+  if (!cleanLast) return cleanFirst;
+  return `${cleanFirst}.${cleanLast}`;
 }

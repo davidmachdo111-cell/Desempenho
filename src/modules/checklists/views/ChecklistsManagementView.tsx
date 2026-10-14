@@ -12,8 +12,10 @@ import {
   Sparkles,
   Filter,
   Building2,
+  Download,
 } from 'lucide-react';
 import { usePortalStore } from '../../../context/PortalStoreContext';
+import { downloadChecklistPdf } from '../../../lib/downloadHelpers';
 import {
   Checklist,
   OfficialCell,
@@ -25,6 +27,7 @@ export const ChecklistsManagementView: React.FC = () => {
   const {
     checklists,
     exercises,
+    characters,
     categories,
     hasPermission,
     saveChecklist,
@@ -37,6 +40,7 @@ export const ChecklistsManagementView: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategoryFilter, setSelectedCategoryFilter] = useState<string>('all');
   const [selectedCellFilter, setSelectedCellFilter] = useState<string>('all');
+  const [linkExerciseCellFilter, setLinkExerciseCellFilter] = useState<'all' | OfficialCell>('all');
   const [modalState, setModalState] = useState<{
     open: boolean;
     checklist?: Checklist;
@@ -406,8 +410,8 @@ export const ChecklistsManagementView: React.FC = () => {
                           <Building2 className="w-3 h-3 text-slate-500" />
                           <span>{cellMeta.name}</span>
                         </span>
-                        <span className="text-[10px] font-bold text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded-full uppercase tracking-wider">
-                          {chk.categoryName || 'Atendimento SAC'}
+                        <span className="text-[10px] font-bold text-emerald-800 bg-emerald-50 border border-emerald-200/60 px-2 py-0.5 rounded-full uppercase tracking-wider">
+                          {chk.categoryName || 'Geral'}
                         </span>
                       </div>
                       <h3 className="text-base font-bold text-slate-900 group-hover:text-emerald-900 transition-colors">
@@ -445,27 +449,39 @@ export const ChecklistsManagementView: React.FC = () => {
               </div>
 
               {/* Ações */}
-              {canManageChecklists && (
-                <div className="mt-5 pt-4 border-t border-slate-100 flex items-center justify-between gap-2">
-                  <button
-                    type="button"
-                    onClick={() => openCreator(chk)}
-                    className="flex-1 py-2 px-3 text-xs font-bold text-[#0f3e2e] bg-emerald-50 hover:bg-emerald-100 rounded-lg transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
-                  >
-                    <Edit3 className="w-3.5 h-3.5" />
-                    <span>Editar Modelo</span>
-                  </button>
+              <div className="mt-5 pt-4 border-t border-slate-100 flex items-center justify-between gap-2">
+                <button
+                  type="button"
+                  onClick={() => downloadChecklistPdf(chk, exercises, characters)}
+                  className="py-2 px-3 text-xs font-bold text-white bg-[#064e3b] hover:bg-emerald-900 rounded-lg transition-colors flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs"
+                  title="Baixar checklist oficial em formato PDF"
+                >
+                  <Download className="w-3.5 h-3.5 text-emerald-200" />
+                  <span>Baixar PDF</span>
+                </button>
 
-                  <button
-                    type="button"
-                    onClick={() => handleDeleteClick(chk)}
-                    className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
-                    title="Excluir checklist"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                </div>
-              )}
+                {canManageChecklists && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => openCreator(chk)}
+                      className="flex-1 py-2 px-3 text-xs font-bold text-[#0f3e2e] bg-emerald-50 hover:bg-emerald-100 rounded-lg transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      <Edit3 className="w-3.5 h-3.5" />
+                      <span>Editar</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteClick(chk)}
+                      className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
+                      title="Excluir checklist"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </>
+                )}
+              </div>
             </div>
           );
         })}
@@ -719,40 +735,74 @@ export const ChecklistsManagementView: React.FC = () => {
                     </span>
                   </div>
 
+                  {/* Barra de Filtros por Célula */}
+                  <div className="flex items-center gap-1.5 flex-wrap pt-1 pb-1 border-t border-slate-200/60">
+                    <span className="text-[11px] font-semibold text-slate-500 mr-1">Célula:</span>
+                    {[
+                      { key: 'all', label: 'Todas' },
+                      { key: 'LAB', label: 'Laboratório' },
+                      { key: 'IMG', label: 'Imagem' },
+                      { key: 'CONSULTA', label: 'Consultas' },
+                      { key: 'TERAPIA', label: 'Terapias' },
+                      { key: 'OPERADORA', label: 'Operadora' },
+                    ].map((item) => {
+                      const isSel = linkExerciseCellFilter === item.key;
+                      return (
+                        <button
+                          key={item.key}
+                          type="button"
+                          onClick={() => setLinkExerciseCellFilter(item.key as 'all' | OfficialCell)}
+                          className={`px-2.5 py-1 rounded-lg text-[11px] transition-colors cursor-pointer ${
+                            isSel
+                              ? 'bg-[#0f3e2e] text-white border border-[#0f3e2e] font-bold shadow-xs'
+                              : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 hover:border-slate-300 font-medium'
+                          }`}
+                        >
+                          {item.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+
                   {exercises.length === 0 ? (
                     <div className="p-4 bg-white border border-dashed border-slate-200 rounded-lg text-center text-slate-500">
                       Nenhum exercício cadastrado no sistema ainda. Crie exercícios na aba "Exercícios & Clientes".
                     </div>
                   ) : (
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-h-52 overflow-y-auto pr-1">
-                      {exercises.map((ex) => {
-                        const isChecked = selectedExerciseIds.includes(ex.id);
-                        return (
-                          <label
-                            key={ex.id}
-                            className={`p-3 rounded-xl border flex items-start gap-3 cursor-pointer transition-all ${
-                              isChecked
-                                ? 'bg-emerald-50/80 border-emerald-500 shadow-xs'
-                                : 'bg-white border-slate-200 hover:border-slate-300'
-                            }`}
-                          >
-                            <input
-                              type="checkbox"
-                              checked={isChecked}
-                              onChange={() => handleToggleExercise(ex.id)}
-                              className="mt-0.5 rounded text-emerald-700 focus:ring-emerald-500 h-4 w-4"
-                            />
-                            <div className="min-w-0">
-                              <div className="font-bold text-slate-900 text-xs truncate">
-                                {ex.title}
+                      {exercises
+                        .filter((ex) => {
+                          if (linkExerciseCellFilter === 'all') return true;
+                          return (ex.cell || 'OPERADORA') === linkExerciseCellFilter;
+                        })
+                        .map((ex) => {
+                          const isChecked = selectedExerciseIds.includes(ex.id);
+                          return (
+                            <label
+                              key={ex.id}
+                              className={`p-3 rounded-xl border flex items-start gap-3 cursor-pointer transition-all ${
+                                isChecked
+                                  ? 'bg-emerald-50/80 border-emerald-500 shadow-xs'
+                                  : 'bg-white border-slate-200 hover:border-slate-300'
+                              }`}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={isChecked}
+                                onChange={() => handleToggleExercise(ex.id)}
+                                className="mt-0.5 rounded text-emerald-700 focus:ring-emerald-500 h-4 w-4"
+                              />
+                              <div className="min-w-0">
+                                <div className="font-bold text-slate-900 text-xs truncate">
+                                  {ex.title}
+                                </div>
+                                <div className="text-[11px] text-slate-500 truncate">
+                                  {ex.categoryName || 'Exercício'} · {ex.characterIds.length} cliente(s)
+                                </div>
                               </div>
-                              <div className="text-[11px] text-slate-500 truncate">
-                                {ex.categoryName || 'Exercício'} · {ex.characterIds.length} cliente(s)
-                              </div>
-                            </div>
-                          </label>
-                        );
-                      })}
+                            </label>
+                          );
+                        })}
                     </div>
                   )}
                 </div>

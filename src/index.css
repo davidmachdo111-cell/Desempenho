@@ -21,16 +21,19 @@
     visibility: hidden;
   }
 
-  /* Torna visível apenas o conteúdo do relatório ou do roteiro */
+  /* Torna visível apenas o conteúdo do relatório, roteiro ou guia */
   #printable-report,
   #printable-report *,
   #printable-roteiro,
-  #printable-roteiro * {
+  #printable-roteiro *,
+  #printable-guide,
+  #printable-guide * {
     visibility: visible;
   }
 
   #printable-report,
-  #printable-roteiro {
+  #printable-roteiro,
+  #printable-guide {
     position: absolute;
     left: 0;
     top: 0;
