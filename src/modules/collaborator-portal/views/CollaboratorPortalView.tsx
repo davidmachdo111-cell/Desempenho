@@ -58,13 +58,8 @@ export const CollaboratorPortalView: React.FC<CollaboratorPortalViewProps> = () 
     completeCollaboratorTrackStep,
   } = usePortalStore();
 
-  const [activeTab, setActiveTab] = useState<'track' | 'surveys' | 'guides'>('track');
-  const [guideMirrorChar, setGuideMirrorChar] = useState<Character | null>(null);
-  const [guideMirrorExerciseTitle, setGuideMirrorExerciseTitle] = useState<string | undefined>(
-    undefined
-  );
 
-  // Modal de Relatório do Colaborador
+  // Modal de Relatório do Colaborador (Laudo Oficial Concluído)
   const [viewReportAssignment, setViewReportAssignment] = useState<CollaboratorChecklist | null>(
     null
   );
@@ -74,18 +69,6 @@ export const CollaboratorPortalView: React.FC<CollaboratorPortalViewProps> = () 
   const [surveyAnswers, setSurveyAnswers] = useState<Record<string, SurveyAnswerItem>>({});
   const [isSubmittingSurvey, setIsSubmittingSurvey] = useState(false);
   const [surveyFeedback, setSurveyFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(
-    null
-  );
-
-  // Modal para Autoavaliação / Execução de Checklist pelo Colaborador
-  const [activeChecklistToExecute, setActiveChecklistToExecute] = useState<{
-    stepId: string;
-    checklist: Checklist;
-  } | null>(null);
-  const [checklistAnswers, setChecklistAnswers] = useState<Record<string, { checked: boolean; notes: string }>>({});
-  const [checklistGeneralObs, setChecklistGeneralObs] = useState('');
-  const [isSubmittingChecklist, setIsSubmittingChecklist] = useState(false);
-  const [checklistFeedback, setChecklistFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(
     null
   );
 
@@ -129,23 +112,6 @@ export const CollaboratorPortalView: React.FC<CollaboratorPortalViewProps> = () 
     );
   }, [currentCollaborator, learningTracks]);
 
-  // Pesquisas atribuídas / disponíveis
-  const mySurveys = useMemo(() => {
-    if (!surveys || surveys.length === 0) return [];
-    // Retorna as pesquisas ativas para a célula do colaborador ou todas
-    const collabCell = currentCollaborator ? getCellName(currentCollaborator.cellTeam) : 'Laboratório';
-    return surveys.filter((s) => s.targetCell === 'Todas' || s.targetCell === collabCell || s.targetCell === undefined);
-  }, [surveys, currentCollaborator]);
-
-  // Respostas já enviadas pelo colaborador
-  const myResponses = useMemo(() => {
-    if (!currentCollaborator) return [];
-    return surveyResponses.filter(
-      (r) =>
-        r.collaboratorId === currentCollaborator.id ||
-        r.collaboratorUsername.toLowerCase() === (currentCollaborator.username || '').toLowerCase()
-    );
-  }, [currentCollaborator, surveyResponses]);
 
   // Trilha individual sequencial do Colaborador
   const collaboratorTrack = useMemo(() => {
@@ -257,53 +223,13 @@ export const CollaboratorPortalView: React.FC<CollaboratorPortalViewProps> = () 
       }
       setTimeout(() => {
         setActiveSurveyToAnswer(null);
-        setActiveTab('track');
       }, 1000);
     } else {
       setSurveyFeedback({ type: 'error', text: res.message });
     }
   };
 
-  const handleStartChecklistExecution = (stepId: string, checklist: Checklist) => {
-    setActiveChecklistToExecute({ stepId, checklist });
-    const initial: Record<string, { checked: boolean; notes: string }> = {};
-    checklist.criteria.forEach((crit) => {
-      initial[crit.id] = { checked: true, notes: '' };
-    });
-    setChecklistAnswers(initial);
-    setChecklistGeneralObs('');
-    setChecklistFeedback(null);
-  };
 
-  const handleSubmitChecklistExecution = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!activeChecklistToExecute || !currentCollaborator) return;
-
-    setIsSubmittingChecklist(true);
-    const { stepId, checklist } = activeChecklistToExecute;
-
-    // Calcula nota proporcional dos critérios atendidos
-    const totalWeight = checklist.criteria.reduce((sum, c) => sum + (c.weight || 1), 0);
-    const earnedWeight = checklist.criteria.reduce((sum, c) => {
-      const ans = checklistAnswers[c.id];
-      return sum + (ans?.checked ? (c.weight || 1) : 0);
-    }, 0);
-    const finalScore = totalWeight > 0 ? Number(((earnedWeight / totalWeight) * 10).toFixed(1)) : 10.0;
-
-    const res = await completeCollaboratorTrackStep(currentCollaborator.id, stepId, {
-      finalScore,
-    });
-    setIsSubmittingChecklist(false);
-
-    if (res.success) {
-      setChecklistFeedback({ type: 'success', text: `Checklist concluído com nota ${finalScore.toFixed(1)}/10! Próxima etapa liberada.` });
-      setTimeout(() => {
-        setActiveChecklistToExecute(null);
-      }, 1000);
-    } else {
-      setChecklistFeedback({ type: 'error', text: res.message });
-    }
-  };
 
   return (
     <div className="space-y-6">
@@ -385,57 +311,18 @@ export const CollaboratorPortalView: React.FC<CollaboratorPortalViewProps> = () 
       </div>
 
       {/* ========================================================= */}
-      {/* 2. ABAS DE NAVEGAÇÃO DO COLABORADOR */}
+      {/* 2. MINHA TRILHA DE APRENDIZAGEM & AVALIAÇÕES */}
       {/* ========================================================= */}
-      <div className="flex items-center gap-2 border-b border-slate-200 pb-px">
-        <button
-          type="button"
-          onClick={() => setActiveTab('track')}
-          className={`px-4 py-2.5 text-xs font-bold transition-all border-b-2 cursor-pointer flex items-center gap-2 ${
-            activeTab === 'track'
-              ? 'border-emerald-700 text-emerald-900 bg-emerald-50/50'
-              : 'border-transparent text-slate-500 hover:text-slate-800'
-          }`}
-        >
-          <BookOpen className="w-4 h-4" />
-          <span>Minha Trilha & Avaliações ({myAssignments.length})</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveTab('surveys')}
-          className={`px-4 py-2.5 text-xs font-bold transition-all border-b-2 cursor-pointer flex items-center gap-2 ${
-            activeTab === 'surveys'
-              ? 'border-emerald-700 text-emerald-900 bg-emerald-50/50'
-              : 'border-transparent text-slate-500 hover:text-slate-800'
-          }`}
-        >
-          <ClipboardCheck className="w-4 h-4" />
-          <span>Pesquisas de Satisfação ({mySurveys.length})</span>
-          {mySurveys.length > myResponses.length && (
-            <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
-          )}
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveTab('guides')}
-          className={`px-4 py-2.5 text-xs font-bold transition-all border-b-2 cursor-pointer flex items-center gap-2 ${
-            activeTab === 'guides'
-              ? 'border-emerald-700 text-emerald-900 bg-emerald-50/50'
-              : 'border-transparent text-slate-500 hover:text-slate-800'
-          }`}
-        >
-          <FileText className="w-4 h-4" />
-          <span>Guias Médicas & Roteiros</span>
-        </button>
-      </div>
-
-      {/* ========================================================= */}
-      {/* ABA 1: MINHA TRILHA DE APRENDIZAGEM */}
-      {/* ========================================================= */}
-      {activeTab === 'track' && (
-        <div className="space-y-4">
+      <div className="space-y-4">
+        <div className="flex items-center justify-between border-b border-slate-200 pb-3">
+          <div className="flex items-center gap-2.5 text-emerald-950 font-bold text-sm">
+            <BookOpen className="w-4 h-4 text-emerald-700" />
+            <span>Minha Trilha & Avaliações</span>
+          </div>
+          <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200">
+            {collaboratorTrack.length > 0 ? `${collaboratorTrack.length} etapas` : `${myAssignments.length} checklists`}
+          </span>
+        </div>
           <div className="flex items-center justify-between">
             <div>
               <h2 className="text-sm font-bold text-slate-900">
@@ -599,46 +486,31 @@ export const CollaboratorPortalView: React.FC<CollaboratorPortalViewProps> = () 
                         </div>
                       )}
 
-                      {/* Botão de Ação: Disponível para o Aluno Preencher */}
-                      {isAvailable && isFilledByCollaborator && (
-                        <div>
-                          {isChecklist && targetChecklist && (
-                            <button
-                              type="button"
-                              onClick={() => handleStartChecklistExecution(step.id, targetChecklist)}
-                              className="px-4 py-2 text-xs font-bold text-white bg-[#0f3e2e] hover:bg-emerald-900 rounded-xl transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
-                            >
-                              <Play className="w-3.5 h-3.5 fill-current" />
-                              <span>Preencher Checklist</span>
-                            </button>
-                          )}
-
-                          {isSurvey && targetSurvey && (
-                            <button
-                              type="button"
-                              onClick={() => handleStartSurvey(targetSurvey)}
-                              className="px-4 py-2 text-xs font-bold text-white bg-purple-700 hover:bg-purple-800 rounded-xl transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
-                            >
-                              <ClipboardCheck className="w-3.5 h-3.5" />
-                              <span>Responder Pesquisa</span>
-                            </button>
-                          )}
-                        </div>
+                      {/* Botão de Ação: Se for Pesquisa e estiver disponível, colaborador pode responder */}
+                      {isAvailable && isSurvey && targetSurvey && (
+                        <button
+                          type="button"
+                          onClick={() => handleStartSurvey(targetSurvey)}
+                          className="px-4 py-2 text-xs font-bold text-white bg-purple-700 hover:bg-purple-800 rounded-xl transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
+                        >
+                          <ClipboardCheck className="w-3.5 h-3.5" />
+                          <span>Responder Pesquisa de Satisfação</span>
+                        </button>
                       )}
 
-                      {/* Etapa Disponível porém feita pelo Avaliador */}
-                      {isAvailable && isFilledByEvaluator && (
-                        <div className="text-xs text-amber-700 font-semibold bg-amber-50 border border-amber-200 px-3 py-1.5 rounded-xl flex items-center gap-1.5">
-                          <Clock className="w-3.5 h-3.5 text-amber-600" />
-                          <span>Aguardando Avaliação do Instrutor</span>
+                      {/* Etapa de Checklist Disponível: aguardando condução da simulação pelo instrutor */}
+                      {isAvailable && isChecklist && (
+                        <div className="text-xs text-emerald-800 font-semibold bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-xl flex items-center gap-1.5">
+                          <Clock className="w-3.5 h-3.5 text-emerald-600" />
+                          <span>Liberada para Simulação / Avaliação com Instrutor</span>
                         </div>
                       )}
 
                       {/* Etapa Bloqueada */}
                       {isLocked && (
-                        <div className="text-xs text-slate-400 font-medium italic flex items-center gap-1">
-                          <Lock className="w-3.5 h-3.5 text-slate-300" />
-                          <span>Bloqueada</span>
+                        <div className="text-xs text-slate-400 font-medium italic flex items-center gap-1.5 bg-slate-100 px-3 py-1.5 rounded-xl border border-slate-200">
+                          <Lock className="w-3.5 h-3.5 text-slate-400" />
+                          <span>Bloqueada (Etapa Anterior Pendente)</span>
                         </div>
                       )}
 
@@ -647,10 +519,10 @@ export const CollaboratorPortalView: React.FC<CollaboratorPortalViewProps> = () 
                         <button
                           type="button"
                           onClick={() => setViewReportAssignment(assignment)}
-                          className="px-3.5 py-2 text-xs font-bold text-white bg-emerald-700 hover:bg-emerald-800 rounded-xl transition-colors flex items-center gap-1.5 shadow-xs cursor-pointer"
+                          className="px-3.5 py-2 text-xs font-bold text-white bg-[#0f3e2e] hover:bg-emerald-900 rounded-xl transition-colors flex items-center gap-1.5 shadow-xs cursor-pointer"
                         >
                           <FileText className="w-3.5 h-3.5" />
-                          <span>Ver Laudo</span>
+                          <span>Visualizar Laudo Oficial & Feedback</span>
                         </button>
                       )}
                     </div>
@@ -730,10 +602,10 @@ export const CollaboratorPortalView: React.FC<CollaboratorPortalViewProps> = () 
                         <button
                           type="button"
                           onClick={() => setViewReportAssignment(asg)}
-                          className="px-3.5 py-2 text-xs font-bold text-white bg-emerald-700 hover:bg-emerald-800 rounded-xl transition-colors flex items-center gap-1.5 shadow-xs cursor-pointer"
+                          className="px-3.5 py-2 text-xs font-bold text-white bg-[#0f3e2e] hover:bg-emerald-900 rounded-xl transition-colors flex items-center gap-1.5 shadow-xs cursor-pointer"
                         >
                           <FileText className="w-3.5 h-3.5" />
-                          <span>Ver Laudo / Relatório</span>
+                          <span>Visualizar Laudo Oficial & Feedback</span>
                         </button>
                       )}
                     </div>
@@ -743,167 +615,7 @@ export const CollaboratorPortalView: React.FC<CollaboratorPortalViewProps> = () 
             </div>
           )}
         </div>
-      )}
 
-      {/* ========================================================= */}
-      {/* ABA 2: PESQUISAS DE SATISFAÇÃO */}
-      {/* ========================================================= */}
-      {activeTab === 'surveys' && (
-        <div className="space-y-4">
-          <div>
-            <h2 className="text-sm font-bold text-slate-900">
-              Pesquisas de Satisfação & Percepção do Treinamento
-            </h2>
-            <p className="text-xs text-slate-500">
-              Sua opinião fundamenta a evolução das simulações, guias e roteiros.
-            </p>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {mySurveys.map((survey) => {
-              const response = myResponses.find((r) => r.surveyId === survey.id);
-              const isAnswered = !!response;
-
-              return (
-                <div
-                  key={survey.id}
-                  className={`bg-white border rounded-2xl p-6 transition-all shadow-xs flex flex-col justify-between space-y-4 ${
-                    isAnswered
-                      ? 'border-emerald-200 bg-emerald-50/20'
-                      : 'border-slate-200 hover:border-emerald-300'
-                  }`}
-                >
-                  <div className="space-y-2.5">
-                    <div className="flex items-start justify-between gap-2">
-                      <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-800 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full inline-block">
-                        {survey.targetCell || 'Todas as Células'}
-                      </span>
-
-                      {isAnswered ? (
-                        <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-800 bg-emerald-100 border border-emerald-300 px-2.5 py-0.5 rounded-full">
-                          <CheckCircle2 className="w-3 h-3 text-emerald-700" />
-                          <span>Respondida</span>
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-800 bg-amber-100 border border-amber-300 px-2.5 py-0.5 rounded-full">
-                          <Clock className="w-3 h-3 text-amber-700" />
-                          <span>Pendente</span>
-                        </span>
-                      )}
-                    </div>
-
-                    <h3 className="font-bold text-base text-slate-900 leading-snug">
-                      {survey.title}
-                    </h3>
-
-                    <p className="text-xs text-slate-500 leading-relaxed">
-                      {survey.description || 'Avalie as etapas do treinamento e deixe suas sugestões.'}
-                    </p>
-
-                    <div className="text-xs text-slate-500 flex items-center gap-1">
-                      <HelpCircle className="w-3.5 h-3.5 text-slate-400" />
-                      <span>{survey.questions.length} pergunta(s) estruturada(s)</span>
-                    </div>
-                  </div>
-
-                  <div className="pt-3 border-t border-slate-100 flex items-center justify-between">
-                    {isAnswered ? (
-                      <span className="text-[11px] text-emerald-800 font-medium">
-                        Enviada em {new Date(response.completedAt).toLocaleDateString('pt-BR')}
-                      </span>
-                    ) : (
-                      <span className="text-[11px] text-amber-700 font-medium">
-                        Aguardando seu preenchimento
-                      </span>
-                    )}
-
-                    <button
-                      type="button"
-                      onClick={() => handleStartSurvey(survey)}
-                      className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-xs ${
-                        isAnswered
-                          ? 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-                          : 'bg-[#0f3e2e] hover:bg-emerald-900 text-white'
-                      }`}
-                    >
-                      <ClipboardCheck className="w-3.5 h-3.5" />
-                      <span>{isAnswered ? 'Revisar / Reenviar' : 'Responder Pesquisa'}</span>
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* ========================================================= */}
-      {/* ABA 3: GUIAS MÉDICAS E ROTEIROS */}
-      {/* ========================================================= */}
-      {activeTab === 'guides' && (
-        <div className="space-y-4">
-          <div>
-            <h2 className="text-sm font-bold text-slate-900">
-              Banco de Guias Médicas dos Casos Clínicos
-            </h2>
-            <p className="text-xs text-slate-500">
-              Consulte e baixe em PDF oficial as fichas das guias médicas para estudo dos critérios de conferência.
-            </p>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {characters.slice(0, 9).map((char) => (
-              <div
-                key={char.id}
-                className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs flex flex-col justify-between space-y-3 hover:border-emerald-300 transition-colors"
-              >
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-800 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
-                      {getCellName(char.cell)}
-                    </span>
-                    <span className="text-xs text-slate-400 font-mono">
-                      {char.cardNumber}
-                    </span>
-                  </div>
-
-                  <h3 className="font-bold text-sm text-slate-900">{char.name}</h3>
-                  <div className="text-xs text-slate-500">
-                    {char.age} · {char.gender} · {char.city}
-                  </div>
-
-                  <p className="text-xs text-slate-600 line-clamp-2 leading-relaxed bg-slate-50 p-2.5 rounded-lg border border-slate-100">
-                    {char.serviceContext}
-                  </p>
-                </div>
-
-                <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setGuideMirrorChar(char);
-                      setGuideMirrorExerciseTitle('Guia Médica de Treinamento');
-                    }}
-                    className="px-2.5 py-1.5 text-xs font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg flex items-center gap-1 transition-colors cursor-pointer"
-                  >
-                    <Eye className="w-3.5 h-3.5" />
-                    <span>Visualizar</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => downloadGuidePdf(char, 'Guia Médica de Treinamento')}
-                    className="px-3 py-1.5 text-xs font-bold text-white bg-[#0f3e2e] hover:bg-emerald-900 rounded-lg flex items-center gap-1 transition-colors cursor-pointer shadow-xs"
-                  >
-                    <Download className="w-3.5 h-3.5" />
-                    <span>Baixar PDF</span>
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
 
       {/* ========================================================= */}
       {/* MODAL PARA RESPONDER PESQUISA DE SATISFAÇÃO */}
@@ -1199,154 +911,7 @@ export const CollaboratorPortalView: React.FC<CollaboratorPortalViewProps> = () 
         </div>
       )}
 
-      {/* MODAL DE AUTOAVALIAÇÃO / EXECUÇÃO DO CHECKLIST PELO COLABORADOR */}
-      {activeChecklistToExecute && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[90vh] animate-in fade-in zoom-in-95 duration-200">
-            {/* Header */}
-            <div className="px-6 py-4 bg-[#0f3e2e] text-white flex items-center justify-between shrink-0">
-              <div className="flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-lg bg-emerald-600 flex items-center justify-center font-bold">
-                  <BookOpen className="w-4 h-4 text-white" />
-                </div>
-                <div>
-                  <h3 className="font-bold text-sm">{activeChecklistToExecute.checklist.title}</h3>
-                  <p className="text-[11px] text-emerald-200">
-                    Autoavaliação e conferência de critérios operacionais
-                  </p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setActiveChecklistToExecute(null)}
-                className="text-emerald-200 hover:text-white p-1 rounded-lg hover:bg-white/10 cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
 
-            {/* Form */}
-            <form onSubmit={handleSubmitChecklistExecution} className="flex-1 overflow-y-auto p-6 space-y-5 text-xs">
-              {checklistFeedback && (
-                <div
-                  className={`p-3.5 rounded-xl flex items-center gap-2 text-xs font-medium border ${
-                    checklistFeedback.type === 'success'
-                      ? 'bg-emerald-50 text-emerald-900 border-emerald-200'
-                      : 'bg-red-50 text-red-900 border-red-200'
-                  }`}
-                >
-                  {checklistFeedback.type === 'success' ? (
-                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                  ) : (
-                    <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
-                  )}
-                  <span>{checklistFeedback.text}</span>
-                </div>
-              )}
-
-              {activeChecklistToExecute.checklist.description && (
-                <div className="p-3 bg-emerald-50/60 border border-emerald-200/80 rounded-xl text-emerald-950 text-xs leading-relaxed">
-                  {activeChecklistToExecute.checklist.description}
-                </div>
-              )}
-
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="font-bold text-slate-800 uppercase tracking-wider text-[11px]">
-                    Critérios de Execução Obrigatórios
-                  </span>
-                  <span className="text-slate-500 font-medium text-[11px]">
-                    Marque os itens atendidos
-                  </span>
-                </div>
-
-                <div className="space-y-2">
-                  {activeChecklistToExecute.checklist.criteria.map((crit, cIdx) => {
-                    const ans = checklistAnswers[crit.id] || { checked: false, notes: '' };
-                    return (
-                      <label
-                        key={crit.id}
-                        className={`p-3.5 rounded-xl border flex items-start gap-3 cursor-pointer transition-all ${
-                          ans.checked
-                            ? 'bg-emerald-50/70 border-emerald-300'
-                            : 'bg-white border-slate-200 hover:border-slate-300'
-                        }`}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={ans.checked}
-                          onChange={(e) =>
-                            setChecklistAnswers((prev) => ({
-                              ...prev,
-                              [crit.id]: {
-                                ...prev[crit.id],
-                                checked: e.target.checked,
-                              },
-                            }))
-                          }
-                          className="mt-0.5 rounded text-emerald-700 focus:ring-emerald-500 h-4 w-4 shrink-0"
-                        />
-                        <div className="flex-1">
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="font-bold text-slate-900 text-xs leading-snug">
-                              {cIdx + 1}. {crit.name}
-                            </span>
-                            <span className="text-[10px] font-mono font-bold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200 shrink-0">
-                              Peso {crit.weight || 1}
-                            </span>
-                          </div>
-                        </div>
-                      </label>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* Observações / Justificativas do Colaborador */}
-              <div className="space-y-1.5">
-                <label className="block font-bold text-slate-800 text-xs">
-                  Observações / Justificativa da Realização (Opcional)
-                </label>
-                <textarea
-                  rows={3}
-                  value={checklistGeneralObs}
-                  onChange={(e) => setChecklistGeneralObs(e.target.value)}
-                  placeholder="Descreva detalhes ou observações pertinentes sobre como este checklist foi executado..."
-                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                />
-              </div>
-
-              {/* Botões */}
-              <div className="flex justify-end gap-3 pt-3 border-t border-slate-200">
-                <button
-                  type="button"
-                  onClick={() => setActiveChecklistToExecute(null)}
-                  className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-xl font-semibold cursor-pointer"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  disabled={isSubmittingChecklist}
-                  className="px-5 py-2 bg-[#0f3e2e] hover:bg-emerald-900 text-white font-bold rounded-xl shadow-xs transition-all flex items-center gap-2 cursor-pointer disabled:opacity-50"
-                >
-                  <CheckCircle2 className="w-4 h-4" />
-                  <span>{isSubmittingChecklist ? 'Enviando...' : 'Concluir e Liberar Próxima Etapa'}</span>
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* Espelho da Guia Médica */}
-      {guideMirrorChar && (
-        <GuideMirrorModal
-          character={guideMirrorChar}
-          exerciseTitle={guideMirrorExerciseTitle}
-          onClose={() => setGuideMirrorChar(null)}
-        />
-      )}
     </div>
   );
 };

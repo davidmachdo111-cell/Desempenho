@@ -290,11 +290,16 @@ export const AuthLoginView: React.FC = () => {
                             </span>
                             {isMaster && (
                               <span className="text-[9px] bg-amber-200 text-amber-900 px-1.5 py-0.2 rounded font-bold uppercase">
-                                Mestre
+                                ADMIN
+                              </span>
+                            )}
+                            {(u.role === 'avaliador' || u.role === 'auxiliar') && (
+                              <span className="text-[9px] bg-emerald-100 text-emerald-800 border border-emerald-300 px-1.5 py-0.2 rounded font-bold uppercase">
+                                Avaliador / Auxiliar
                               </span>
                             )}
                             {u.role === 'colaborador' && (
-                              <span className="text-[9px] bg-emerald-100 text-emerald-800 border border-emerald-300 px-1.5 py-0.2 rounded font-bold uppercase">
+                              <span className="text-[9px] bg-slate-100 text-slate-700 border border-slate-300 px-1.5 py-0.2 rounded font-bold uppercase">
                                 Colaborador
                               </span>
                             )}

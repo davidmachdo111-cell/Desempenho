@@ -28,18 +28,28 @@ const PortalAppInner: React.FC = () => {
   const [activeAssignmentId, setActiveAssignmentId] = useState<string | null>(null);
   const [selectedCollaboratorId, setSelectedCollaboratorId] = useState<string | null>(null);
 
-  // Redirecionamento automático respeitando o Duplo Perfil de Acesso
+  // Redirecionamento automático respeitando os 3 Perfis Fundamentais de Acesso
   useEffect(() => {
     if (currentUser?.role === 'colaborador') {
-      if (activeRoute !== 'my-development' && activeRoute !== 'surveys') {
+      if (activeRoute !== 'my-development') {
         setActiveRoute('my-development');
       }
+    } else if (currentUser?.role === 'avaliador' || currentUser?.role === 'auxiliar') {
+      // Avaliador tem foco em colaboradores e não acessa governança nem pesquisas
+      if (
+        activeRoute === 'my-development' ||
+        activeRoute === 'admin' ||
+        activeRoute === 'surveys' ||
+        (activeRoute as string) === 'tracks'
+      ) {
+        setActiveRoute('collaborators');
+      }
     } else if (currentUser) {
-      if (activeRoute === 'my-development') {
+      if (activeRoute === 'my-development' || (activeRoute as string) === 'tracks') {
         setActiveRoute('collaborators');
       }
     }
-  }, [currentUser?.role, currentUser?.id]);
+  }, [currentUser?.role, currentUser?.id, activeRoute]);
 
   if (!currentUser) {
     return <AuthLoginView />;
@@ -91,7 +101,7 @@ const PortalAppInner: React.FC = () => {
       {/* MÓDULOS ADMINISTRATIVOS */}
       {/* ========================================================= */}
 
-      {/* 1. Colaboradores (/colaboradores) — Gestão e Vínculos */}
+      {/* 1. Colaboradores (/colaboradores) */}
       {!isCollaborator && activeRoute === 'collaborators' && (
         <CollaboratorsView
           initialCollaboratorId={selectedCollaboratorId}
@@ -99,10 +109,7 @@ const PortalAppInner: React.FC = () => {
         />
       )}
 
-      {/* 2. Trilhas de Aprendizagem (/trilhas) — Construtor Modular */}
-      {!isCollaborator && activeRoute === 'tracks' && <TracksManagementView />}
-
-      {/* 3. Pesquisas de Satisfação (/pesquisas) — Construtor e Resultados */}
+      {/* 2. Pesquisas de Satisfação (/pesquisas) — Construtor e Resultados */}
       {!isCollaborator && activeRoute === 'surveys' && <SurveysManagementView />}
 
       {/* 4. Checklists (/checklists) — Modelos flexíveis */}

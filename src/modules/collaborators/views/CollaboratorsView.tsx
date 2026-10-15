@@ -44,10 +44,16 @@ import {
 import { CUSTOMER_TIER_BADGES } from '../../characters/views/CharactersManagementView';
 import { DIFFICULTY_BADGES } from '../../exercises/views/ExercisesSimulationView';
 import { GuideMirrorModal } from '../../../components/GuideMirrorModal';
-import { downloadGuidePdf, downloadReportPdf } from '../../../lib/downloadHelpers';
+import {
+  downloadGuidePdf,
+  downloadReportPdf,
+  downloadCollaboratorDossierPdf,
+  DossierTrackItem,
+  DossierEvaluationHistoryItem,
+} from '../../../lib/downloadHelpers';
 import { CollaboratorTrackBuilder } from '../../tracks/views/CollaboratorTrackBuilder';
 
-const CLEAN_CELL_OPTIONS = ['Laboratório', 'Imagem', 'Consultas', 'Terapias', 'Convênio'];
+const CLEAN_CELL_OPTIONS = ['Laboratório', 'Imagem', 'Consultas', 'Terapias', 'Operadora'];
 
 interface CollaboratorsViewProps {
   initialCollaboratorId?: string | null;
@@ -76,6 +82,8 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
     users,
     currentUser,
     hasPermission,
+    surveys,
+    surveyResponses,
     createCollaborator,
     deleteCollaborator,
     updateCollaboratorChecklistAssignments,
@@ -87,6 +95,7 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
 
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedStatusFilter, setSelectedStatusFilter] = useState<string>('all');
+  const [selectedCellFilter, setSelectedCellFilter] = useState<string>('all');
   const [activeCollaboratorId, setActiveCollaboratorId] = useState<string | null>(
     initialCollaboratorId || null
   );
@@ -137,6 +146,10 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
     const q = searchQuery.trim().toLowerCase();
     return collaborators.filter((col) => {
       if (selectedStatusFilter !== 'all' && col.status !== selectedStatusFilter) return false;
+      if (selectedCellFilter !== 'all') {
+        const colCell = getCellName(col.cellTeam);
+        if (colCell !== selectedCellFilter) return false;
+      }
       if (!q) return true;
       return (
         col.fullName.toLowerCase().includes(q) ||
@@ -145,7 +158,7 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
         (col.registrationCode && col.registrationCode.toLowerCase().includes(q))
       );
     });
-  }, [collaborators, searchQuery, selectedStatusFilter]);
+  }, [collaborators, searchQuery, selectedStatusFilter, selectedCellFilter]);
 
   const activeCollaborator = useMemo(
     () => collaborators.find((c) => c.id === activeCollaboratorId) || null,
@@ -174,6 +187,74 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
       .map((exId) => exercises.find((e) => e.id === exId))
       .filter(Boolean) as Exercise[];
   }, [activeCollaborator, activeAssignments, checklists, exercises]);
+
+  // Exportação consolidada do Dossiê do Colaborador em PDF
+  const handleExportCollaboratorDossier = () => {
+    if (!activeCollaborator) return;
+
+    const completedAssignments = activeAssignments.filter((a) => a.status === 'concluido');
+    const totalScore = completedAssignments.reduce((acc, curr) => acc + (curr.finalScore || 0), 0);
+    const avgScore = completedAssignments.length > 0 ? totalScore / completedAssignments.length : 0;
+
+    const trackSteps: DossierTrackItem[] = (activeCollaborator.track || []).map((step, idx) => {
+      let title = step.title;
+      if (step.type === 'checklist') {
+        const chk = checklists.find((c) => c.id === step.refId);
+        if (chk) title = chk.title;
+      } else if (step.type === 'survey') {
+        const srv = surveys.find((s) => s.id === step.refId);
+        if (srv) title = srv.title;
+      }
+      return {
+        orderIndex: step.order || idx + 1,
+        title,
+        type: step.type,
+        status: step.status,
+        score: typeof step.finalScore === 'number' ? step.finalScore : undefined,
+        completedAt: step.completedAt ? new Date(step.completedAt).toLocaleDateString('pt-BR') : undefined,
+      };
+    });
+
+    const evaluationHistory: DossierEvaluationHistoryItem[] = completedAssignments.map((a) => {
+      const chk = checklists.find((c) => c.id === a.checklistId);
+      const ex = chk?.exerciseIds?.[0]
+        ? exercises.find((e) => e.id === chk.exerciseIds[0])
+        : exercises[0];
+      const char = ex?.characterIds?.[0] ? characters.find((c) => c.id === ex.characterIds[0]) : undefined;
+      const evaluator = users.find((u) => u.id === a.instructorAuxiliarId);
+
+      return {
+        checklistTitle: chk?.title || 'Checklist de Avaliação',
+        categoryName: chk?.categoryName,
+        exerciseTitle: ex?.title,
+        characterName: char?.name,
+        evaluatorName: evaluator?.fullName || 'Avaliador Responsável',
+        finalScore: a.finalScore || 0,
+        completedAt: a.completedAt ? new Date(a.completedAt).toLocaleDateString('pt-BR') : 'Data não informada',
+        observations: a.generalObservations || undefined,
+      };
+    });
+
+    downloadCollaboratorDossierPdf({
+      collaboratorName: activeCollaborator.fullName,
+      roleTitle: activeCollaborator.roleTitle,
+      registrationCode: activeCollaborator.registrationCode || '',
+      cellTeam: getCellName(activeCollaborator.cellTeam),
+      status: activeCollaborator.status,
+      averageScore: avgScore,
+      totalEvaluations: completedAssignments.length,
+      totalSurveys: surveyResponses.filter((s) => s.collaboratorId === activeCollaborator.id).length,
+      trackSteps,
+      evaluationHistory,
+      generatedAt: new Date().toLocaleDateString('pt-BR', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      }),
+    });
+  };
 
   // Estados temporários do modal de gerenciar vínculos
   const [tempAssignedChecklistIds, setTempAssignedChecklistIds] = useState<string[]>([]);
@@ -374,38 +455,42 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
               <span>Voltar para Lista de Colaboradores</span>
             </button>
 
-            {canManageCollaborators && (
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setActiveCollabViewTab('track_builder')}
-                  className={`px-3.5 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 cursor-pointer shadow-xs ${
-                    activeCollabViewTab === 'track_builder'
-                      ? 'bg-[#0f3e2e] text-white'
-                      : 'bg-emerald-50 text-emerald-900 border border-emerald-300 hover:bg-emerald-100'
-                  }`}
-                >
-                  <GraduationCap className="w-3.5 h-3.5" />
-                  <span>Configurar Trilha / Linha do Tempo</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={openLinksManager}
-                  className="px-3.5 py-1.5 text-xs font-bold text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer"
-                >
-                  <SlidersHorizontal className="w-3.5 h-3.5" />
-                  <span>Vínculos de Checklists</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setDeleteConfirmCollaborator(activeCollaborator)}
-                  className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
-                  title="Excluir Colaborador"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
-              </div>
-            )}
+            <div className="flex items-center gap-2 flex-wrap">
+              <button
+                type="button"
+                onClick={handleExportCollaboratorDossier}
+                className="px-3.5 py-1.5 text-xs font-bold text-white bg-[#0f3e2e] hover:bg-emerald-900 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer shadow-xs"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>Exportar Dossiê do Colaborador (PDF)</span>
+              </button>
+
+              {canManageCollaborators && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setActiveCollabViewTab('track_builder')}
+                    className={`px-3.5 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 cursor-pointer shadow-xs ${
+                      activeCollabViewTab === 'track_builder'
+                        ? 'bg-[#0f3e2e] text-white'
+                        : 'bg-emerald-50 text-emerald-900 border border-emerald-300 hover:bg-emerald-100'
+                    }`}
+                  >
+                    <GraduationCap className="w-3.5 h-3.5" />
+                    <span>Configurar Trilha / Linha do Tempo</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setDeleteConfirmCollaborator(activeCollaborator)}
+                    className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
+                    title="Excluir Colaborador"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </>
+              )}
+            </div>
           </div>
 
           {/* Cartão de Identificação do Colaborador */}
@@ -449,22 +534,58 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
               </div>
             </div>
 
-            {/* Resumo de Avaliações */}
-            <div className="flex items-center gap-4 bg-slate-50 p-4 rounded-xl border border-slate-200 shrink-0">
-              <div>
-                <div className="text-[11px] text-slate-500 font-medium">Etapas na Trilha</div>
-                <div className="text-lg font-bold font-mono text-[#0f3e2e]">
-                  {activeCollaborator.track?.length || 0} etapa(s)
+            {/* Painel Resumo Compacto de Métricas */}
+            {(() => {
+              const trackList = activeCollaborator.track || [];
+              const doneTrack = trackList.filter((s) => s.status === 'concluido').length;
+              const totalTrack = trackList.length;
+              const trackPct = totalTrack > 0 ? Math.round((doneTrack / totalTrack) * 100) : 0;
+
+              const completedAsgs = activeAssignments.filter((a) => a.status === 'concluido');
+              const totalScores = completedAsgs.reduce((acc, curr) => acc + (curr.finalScore || 0), 0);
+              const avgScore = completedAsgs.length > 0 ? (totalScores / completedAsgs.length).toFixed(1) : '—';
+
+              return (
+                <div className="flex flex-col sm:flex-row items-center gap-4 bg-slate-50 p-4 rounded-xl border border-slate-200 shrink-0">
+                  <div>
+                    <div className="text-[11px] text-slate-500 font-medium">Progresso na Trilha</div>
+                    <div className="text-base font-bold font-mono text-[#0f3e2e] flex items-center gap-2">
+                      <span>{doneTrack} de {totalTrack} ({trackPct}%)</span>
+                    </div>
+                    <div className="w-28 bg-slate-200 h-1.5 rounded-full overflow-hidden mt-1">
+                      <div
+                        className="bg-emerald-600 h-full rounded-full transition-all"
+                        style={{ width: `${trackPct}%` }}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="hidden sm:block w-px h-10 bg-slate-200" />
+
+                  <div>
+                    <div className="text-[11px] text-slate-500 font-medium">Média de Desempenho</div>
+                    <div className="text-base font-bold font-mono text-emerald-800">
+                      {avgScore !== '—' ? `${avgScore} / 10` : 'Pendente'}
+                    </div>
+                    <div className="text-[10px] text-slate-400">
+                      {completedAsgs.length} avaliação(ões)
+                    </div>
+                  </div>
+
+                  <div className="hidden sm:block w-px h-10 bg-slate-200" />
+
+                  <button
+                    type="button"
+                    onClick={handleExportCollaboratorDossier}
+                    className="px-3 py-1.5 text-xs font-bold text-emerald-950 bg-emerald-100 hover:bg-emerald-200 border border-emerald-300 rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap"
+                    title="Baixar dossiê consolidado com métricas, histórico e assinaturas"
+                  >
+                    <Download className="w-3.5 h-3.5 text-emerald-800" />
+                    <span>Dossiê PDF</span>
+                  </button>
                 </div>
-              </div>
-              <div className="w-px h-8 bg-slate-200" />
-              <div>
-                <div className="text-[11px] text-slate-500 font-medium">Exercícios Vinculados</div>
-                <div className="text-lg font-bold font-mono text-emerald-800">
-                  {activeLinkedExercises.length} caso(s)
-                </div>
-              </div>
-            </div>
+              );
+            })()}
           </div>
 
           {/* Abas de Navegação Interna da Ficha do Colaborador */}
@@ -741,31 +862,76 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
           </div>
 
           {/* Barra de Filtros e Busca */}
-          <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-xs flex flex-col sm:flex-row items-center justify-between gap-3">
-            <div className="relative w-full sm:w-80">
-              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Buscar por nome, cargo ou matrícula..."
-                className="w-full pl-9 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-              />
+          <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-xs space-y-3">
+            {/* Filtro por Célula (Padrão Corporativo Limpo) */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pb-3 border-b border-slate-100">
+              <div className="flex items-center gap-2">
+                <Building2 className="w-4 h-4 text-emerald-700 shrink-0" />
+                <span className="text-xs font-bold text-slate-800 uppercase tracking-wide">
+                  Célula:
+                </span>
+              </div>
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <button
+                  type="button"
+                  onClick={() => setSelectedCellFilter('all')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer border ${
+                    selectedCellFilter === 'all'
+                      ? 'bg-[#0f3e2e] text-white border-[#0f3e2e] shadow-xs'
+                      : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                  }`}
+                >
+                  Todas
+                </button>
+                {CLEAN_CELL_OPTIONS.map((cellName) => {
+                  const isSelected = selectedCellFilter === cellName;
+                  return (
+                    <button
+                      key={cellName}
+                      type="button"
+                      onClick={() => setSelectedCellFilter(cellName)}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer border ${
+                        isSelected
+                          ? 'bg-[#0f3e2e] text-white border-[#0f3e2e] shadow-xs'
+                          : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                      }`}
+                    >
+                      {cellName}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
 
-            <div className="flex items-center gap-2 w-full sm:w-auto">
-              <span className="text-xs font-medium text-slate-600">Status:</span>
-              <select
-                value={selectedStatusFilter}
-                onChange={(e) => setSelectedStatusFilter(e.target.value)}
-                className="text-xs bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-              >
-                <option value="all">Todos os Status</option>
-                <option value="novo">Novo</option>
-                <option value="em_treinamento">Em Treinamento</option>
-                <option value="aprovado">Aprovado</option>
-                <option value="necessita_reforco">Necessita Reforço</option>
-              </select>
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-0.5">
+              <div className="relative w-full sm:w-80">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Buscar por nome, cargo ou matrícula..."
+                  className="w-full pl-9 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500 font-medium"
+                />
+              </div>
+
+              <div className="flex items-center gap-2 w-full sm:w-auto">
+                <span className="text-xs font-medium text-slate-600">Status:</span>
+                <select
+                  value={selectedStatusFilter}
+                  onChange={(e) => setSelectedStatusFilter(e.target.value)}
+                  className="text-xs bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                >
+                  <option value="all">Todos os Status</option>
+                  <option value="novo">Novo</option>
+                  <option value="em_treinamento">Em Treinamento</option>
+                  <option value="aprovado">Aprovado</option>
+                  <option value="necessita_reforco">Necessita Reforço</option>
+                </select>
+                <div className="text-xs text-slate-500 font-medium ml-2">
+                  {filteredCollaborators.length} colaborador(es)
+                </div>
+              </div>
             </div>
           </div>
 
@@ -951,7 +1117,7 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
                   { key: 'IMG', label: 'Imagem' },
                   { key: 'CONSULTA', label: 'Consultas' },
                   { key: 'TERAPIA', label: 'Terapias' },
-                  { key: 'OPERADORA', label: 'Convênio' },
+                  { key: 'OPERADORA', label: 'Operadora' },
                 ].map((item) => {
                   const isSel = linksCellFilter === item.key;
                   return (

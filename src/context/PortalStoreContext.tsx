@@ -287,12 +287,18 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
       if (stored) {
         const parsed: UserProfile[] = JSON.parse(stored);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          // Garante que o administrador mestre david.furtado sempre exista
+          // Garante que os 3 perfis fundamentais de teste sempre existam
           if (!parsed.some((u) => u.username === 'david.furtado')) {
             const master = INITIAL_USERS.find((u) => u.username === 'david.furtado');
             if (master) parsed.unshift(master);
           }
-          // Garante que o usuário colaborador de teste lucas.silveira exista para testar o perfil duplo
+          if (!parsed.some((u) => u.username === 'marina.santos')) {
+            const evalUser = INITIAL_USERS.find((u) => u.username === 'marina.santos');
+            if (evalUser) {
+              const davidIdx = parsed.findIndex((u) => u.username === 'david.furtado');
+              parsed.splice(davidIdx >= 0 ? davidIdx + 1 : 1, 0, evalUser);
+            }
+          }
           if (!parsed.some((u) => u.username === 'lucas.silveira')) {
             const demoCollab = INITIAL_USERS.find((u) => u.username === 'lucas.silveira');
             if (demoCollab) parsed.push(demoCollab);

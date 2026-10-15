@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Play,
   CheckCircle2,
@@ -128,6 +128,11 @@ export const EvaluationExecutionView: React.FC<EvaluationExecutionViewProps> = (
   );
   const [isFinishing, setIsFinishing] = useState(false);
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  // Ciclo de vida dinâmico: sugere automaticamente status baseado na pontuação (>= 7.0: Aprovado, < 7.0: Necessita Reforço)
+  useEffect(() => {
+    setSelectedResultStatus(currentScore >= 7.0 ? 'aprovado' : 'necessita_reforco');
+  }, [currentScore]);
 
   if (!assignment || !collaborator || !checklist) {
     return (
@@ -363,9 +368,14 @@ export const EvaluationExecutionView: React.FC<EvaluationExecutionViewProps> = (
             </div>
 
             <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3">
-              <label className="block text-xs font-bold text-slate-900">
-                Resultado / Próximo Status do Colaborador:
-              </label>
+              <div className="flex items-center justify-between">
+                <label className="block text-xs font-bold text-slate-900">
+                  Resultado / Próximo Status do Colaborador:
+                </label>
+                <span className="text-[11px] text-slate-500 font-medium">
+                  Pontuação: <strong className="text-slate-800">{currentScore.toFixed(1)}/10</strong> ({Math.round(currentScore * 10)}%)
+                </span>
+              </div>
               <div className="grid grid-cols-2 gap-3 text-xs">
                 <button
                   type="button"
@@ -376,7 +386,12 @@ export const EvaluationExecutionView: React.FC<EvaluationExecutionViewProps> = (
                       : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-100'
                   }`}
                 >
-                  ✓ Aprovado na Etapa
+                  <div>✓ Aprovado na Etapa</div>
+                  {currentScore >= 7.0 && (
+                    <div className="text-[10px] font-medium opacity-90 mt-0.5">
+                      (Sugerido por pontuação ≥ 70%)
+                    </div>
+                  )}
                 </button>
                 <button
                   type="button"
@@ -387,7 +402,12 @@ export const EvaluationExecutionView: React.FC<EvaluationExecutionViewProps> = (
                       : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-100'
                   }`}
                 >
-                  ⚠ Necessita Reforço
+                  <div>⚠ Necessita Reforço</div>
+                  {currentScore < 7.0 && (
+                    <div className="text-[10px] font-medium opacity-90 mt-0.5">
+                      (Sugerido por pontuação &lt; 70%)
+                    </div>
+                  )}
                 </button>
               </div>
             </div>

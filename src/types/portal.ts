@@ -87,8 +87,80 @@ export function getCellName(cell?: string | null): string {
   }
   if (cell === 'Consultas Ambulatoriais') return 'Consultas';
   if (cell === 'Terapias / Tratamentos') return 'Terapias';
-  if (cell === 'Convênio / Planos de Saúde' || cell === 'Convênio' || cell === 'OPERADORA' || cell === 'Operadora') return 'Operadora';
+  if (
+    cell === 'Convênio / Planos de Saúde' ||
+    cell === 'Convênio' ||
+    cell === 'OPERADORA' ||
+    cell === 'Operadora'
+  ) {
+    return 'Operadora';
+  }
   return cell;
+}
+
+/**
+ * Remove prefixos redundantes de títulos de atividades para exibição compacta e limpa
+ */
+export function cleanActivityTitle(title: string): string {
+  return title
+    .replace(/^Checklist\s+de\s+Avalia[çc][ãa]o:\s*/i, '')
+    .replace(/^Checklist\s+de\s+/i, '')
+    .replace(/^Pesquisa\s+de\s+Satisfa[çc][ãa]o:\s*/i, '')
+    .trim();
+}
+
+/**
+ * Calcula dinamicamente o status do colaborador com base no progresso de sua trilha:
+ * - 'novo': 0% de progresso ou nenhuma etapa iniciada/concluída
+ * - 'em_treinamento': progresso > 0% e < 100%
+ * - 'concluido': 100% das etapas configuradas concluídas
+ */
+export function getCollaboratorDynamicStatus(collaborator: {
+  track?: CollaboratorTrackStep[];
+  status?: CollaboratorStatus;
+}): {
+  status: 'novo' | 'em_treinamento' | 'concluido';
+  label: string;
+  badgeStyle: string;
+  progressPct: number;
+  completedSteps: number;
+  totalSteps: number;
+} {
+  const steps = collaborator.track || [];
+  const totalSteps = steps.length;
+  const completedSteps = steps.filter((s) => s.status === 'concluido').length;
+  const progressPct = totalSteps > 0 ? Math.round((completedSteps / totalSteps) * 100) : 0;
+
+  if (totalSteps > 0 && completedSteps === totalSteps) {
+    return {
+      status: 'concluido',
+      label: 'Concluído',
+      badgeStyle: 'bg-emerald-50 text-emerald-800 border-emerald-200',
+      progressPct: 100,
+      completedSteps,
+      totalSteps,
+    };
+  }
+
+  if (completedSteps > 0 && completedSteps < totalSteps) {
+    return {
+      status: 'em_treinamento',
+      label: 'Em Treinamento',
+      badgeStyle: 'bg-amber-50 text-amber-800 border-amber-200',
+      progressPct,
+      completedSteps,
+      totalSteps,
+    };
+  }
+
+  return {
+    status: 'novo',
+    label: 'Novo',
+    badgeStyle: 'bg-slate-100 text-slate-700 border-slate-200',
+    progressPct: 0,
+    completedSteps,
+    totalSteps,
+  };
 }
 
 export interface OfficialCellMetadata {
@@ -370,7 +442,7 @@ export interface LearningTrack {
   id: string;
   title: string;
   description: string;
-  cell: string; // Laboratório, Imagem, Consultas, Terapias, Convênio, ou Geral
+  cell: string; // Laboratório, Imagem, Consultas, Terapias, Operadora, ou Geral
   checklistIds: string[]; // Ordem cronológica das etapas de checklists
   surveyId?: string; // Pesquisa de satisfação vinculada à conclusão da trilha
   collaboratorIds: string[]; // Colaboradores matriculados nesta trilha

@@ -788,3 +788,331 @@ export function downloadReportTxt(reportData: {
 }): void {
   downloadReportPdf(reportData);
 }
+
+export interface DossierEvaluationHistoryItem {
+  checklistTitle: string;
+  categoryName?: string;
+  exerciseTitle?: string;
+  characterName?: string;
+  evaluatorName: string;
+  finalScore: number;
+  completedAt: string;
+  observations?: string;
+}
+
+export interface DossierTrackItem {
+  orderIndex: number;
+  title: string;
+  type: 'checklist' | 'survey';
+  status: 'concluido' | 'disponivel' | 'bloqueado' | 'em_andamento';
+  score?: number;
+  completedAt?: string;
+}
+
+export interface CollaboratorDossierData {
+  collaboratorName: string;
+  roleTitle: string;
+  registrationCode: string;
+  cellTeam: string;
+  status: string;
+  averageScore: number;
+  totalEvaluations: number;
+  totalSurveys: number;
+  trackSteps: DossierTrackItem[];
+  evaluationHistory: DossierEvaluationHistoryItem[];
+  generatedAt: string;
+}
+
+/**
+ * Gera e exporta o Dossiê Completo do Colaborador em formato PDF institucional
+ */
+export function downloadCollaboratorDossierPdf(dossier: CollaboratorDossierData): void {
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+
+  const primaryEmerald = [15, 62, 46] as const; // #0f3e2e
+  const mediumEmerald = [4, 120, 87] as const;
+  const slateDark = [15, 23, 42] as const;
+  const slateMuted = [100, 116, 139] as const;
+  const slateBorder = [203, 213, 225] as const;
+  const bgLight = [248, 250, 252] as const;
+  const white = [255, 255, 255] as const;
+
+  const leftMargin = 14;
+  const contentWidth = 182;
+  let currentY = 12;
+
+  // 1. Cabeçalho Corporativo Institucional
+  doc.setFillColor(...primaryEmerald);
+  doc.roundedRect(leftMargin, currentY, contentWidth, 24, 2, 2, 'F');
+
+  doc.setFillColor(...mediumEmerald);
+  doc.roundedRect(120, currentY + 3.5, 72, 5.5, 1, 1, 'F');
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(6.5);
+  doc.setTextColor(...white);
+  doc.text('DOSSIÊ OFICIAL DO COLABORADOR', 156, currentY + 7.5, { align: 'center' });
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(11);
+  doc.setTextColor(...white);
+  doc.text('PORTAL DE DESEMPENHO CORPORATIVO', leftMargin + 5, currentY + 9.5);
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(7.5);
+  doc.setTextColor(209, 250, 229);
+  doc.text('Relatório Consolidado de Desenvolvimento, Capacitação e Auditoria de Desempenho', leftMargin + 5, currentY + 15.5);
+  doc.text(`Data de Emissão: ${dossier.generatedAt}   ·   Documento Autenticado`, leftMargin + 5, currentY + 20);
+
+  currentY += 28;
+
+  // 2. Ficha Cadastral do Colaborador
+  doc.setFillColor(...bgLight);
+  doc.setDrawColor(...slateBorder);
+  doc.roundedRect(leftMargin, currentY, contentWidth, 22, 2, 2, 'FD');
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(10.5);
+  doc.setTextColor(...slateDark);
+  doc.text(dossier.collaboratorName, leftMargin + 4, currentY + 7);
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(7.5);
+  doc.setTextColor(...slateMuted);
+  doc.text(`Cargo: ${dossier.roleTitle}   ·   Matrícula: ${dossier.registrationCode || 'N/A'}   ·   Célula: ${dossier.cellTeam}`, leftMargin + 4, currentY + 12);
+  doc.text(`Status Oficial de Desempenho: ${dossier.status.toUpperCase()}`, leftMargin + 4, currentY + 17);
+
+  // Status Badge
+  const statusColor = dossier.status === 'aprovado' ? [16, 185, 129] : dossier.status === 'necessita_reforco' ? [239, 68, 68] : [59, 130, 246];
+  doc.setFillColor(statusColor[0], statusColor[1], statusColor[2]);
+  doc.roundedRect(leftMargin + contentWidth - 36, currentY + 4, 32, 6, 1, 1, 'F');
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(6.5);
+  doc.setTextColor(...white);
+  doc.text(dossier.status.replace('_', ' ').toUpperCase(), leftMargin + contentWidth - 20, currentY + 8, { align: 'center' });
+
+  currentY += 26;
+
+  // 3. Resumo Executivo de Métricas
+  const metricBoxWidth = (contentWidth - 6) / 3;
+  const metrics = [
+    { label: 'MÉDIA GERAL DE NOTAS', val: `${dossier.averageScore.toFixed(1)} / 10`, sub: `${Math.round(dossier.averageScore * 10)}% de conformidade` },
+    { label: 'AVALIAÇÕES CONCLUÍDAS', val: `${dossier.totalEvaluations}`, sub: 'Checklists aplicados' },
+    { label: 'PESQUISAS DE SATISFAÇÃO', val: `${dossier.totalSurveys}`, sub: 'Respostas registradas' },
+  ];
+
+  metrics.forEach((m, idx) => {
+    const bx = leftMargin + idx * (metricBoxWidth + 3);
+    doc.setFillColor(255, 255, 255);
+    doc.setDrawColor(...slateBorder);
+    doc.roundedRect(bx, currentY, metricBoxWidth, 16, 1.5, 1.5, 'FD');
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(6.5);
+    doc.setTextColor(...slateMuted);
+    doc.text(m.label, bx + 3, currentY + 4.5);
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(10);
+    doc.setTextColor(...primaryEmerald);
+    doc.text(m.val, bx + 3, currentY + 10);
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(6);
+    doc.setTextColor(...slateMuted);
+    doc.text(m.sub, bx + 3, currentY + 14);
+  });
+
+  currentY += 20;
+
+  // 4. Trilha de Desenvolvimento (Lista ordenada de etapas)
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8.5);
+  doc.setTextColor(...primaryEmerald);
+  doc.text('1. TRILHA DE DESENVOLVIMENTO & LINHA DO TEMPO', leftMargin, currentY + 3);
+
+  currentY += 5.5;
+
+  // Cabeçalho da Tabela da Trilha
+  doc.setFillColor(241, 245, 249);
+  doc.setDrawColor(...slateBorder);
+  doc.roundedRect(leftMargin, currentY, contentWidth, 6, 1, 1, 'FD');
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(6.5);
+  doc.setTextColor(...slateDark);
+  doc.text('#', leftMargin + 3, currentY + 4);
+  doc.text('ETAPA / TÍTULO', leftMargin + 12, currentY + 4);
+  doc.text('TIPO', leftMargin + 95, currentY + 4);
+  doc.text('STATUS', leftMargin + 125, currentY + 4);
+  doc.text('PONTUAÇÃO', leftMargin + 152, currentY + 4);
+
+  currentY += 6.5;
+
+  if (dossier.trackSteps.length === 0) {
+    doc.setFont('helvetica', 'italic');
+    doc.setFontSize(7);
+    doc.setTextColor(...slateMuted);
+    doc.text('Nenhuma etapa cadastrada na trilha do colaborador.', leftMargin + 4, currentY + 4);
+    currentY += 8;
+  } else {
+    dossier.trackSteps.forEach((step, idx) => {
+      if (currentY > 265) {
+        doc.addPage();
+        currentY = 15;
+      }
+
+      doc.setFillColor(idx % 2 === 0 ? 255 : 250, idx % 2 === 0 ? 255 : 252, idx % 2 === 0 ? 255 : 254);
+      doc.setDrawColor(241, 245, 249);
+      doc.roundedRect(leftMargin, currentY, contentWidth, 6, 0.5, 0.5, 'FD');
+
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(6.5);
+      doc.setTextColor(...slateDark);
+      doc.text(String(step.orderIndex).padStart(2, '0'), leftMargin + 3, currentY + 4);
+
+      doc.setFont('helvetica', 'normal');
+      const titleShort = step.title.length > 55 ? step.title.slice(0, 52) + '...' : step.title;
+      doc.text(titleShort, leftMargin + 12, currentY + 4);
+
+      doc.text(step.type === 'survey' ? 'Pesquisa' : 'Checklist', leftMargin + 95, currentY + 4);
+
+      const stLabel = step.status === 'concluido' ? 'Concluído' : step.status === 'em_andamento' ? 'Em Andamento' : step.status === 'disponivel' ? 'Disponível' : 'Bloqueado';
+      if (step.status === 'concluido') {
+        doc.setTextColor(4, 120, 87);
+      } else if (step.status === 'em_andamento') {
+        doc.setTextColor(217, 119, 6);
+      } else {
+        doc.setTextColor(...slateMuted);
+      }
+      doc.text(stLabel, leftMargin + 125, currentY + 4);
+
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(...slateDark);
+      doc.text(step.score !== undefined ? `${step.score.toFixed(1)}/10` : '—', leftMargin + 155, currentY + 4);
+
+      currentY += 6.5;
+    });
+  }
+
+  currentY += 4;
+
+  // 5. Histórico Detalhado de Avaliações
+  if (currentY > 235) {
+    doc.addPage();
+    currentY = 15;
+  }
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8.5);
+  doc.setTextColor(...primaryEmerald);
+  doc.text('2. HISTÓRICO DETALHADO DE AVALIAÇÕES REALIZADAS', leftMargin, currentY + 3);
+
+  currentY += 6;
+
+  if (dossier.evaluationHistory.length === 0) {
+    doc.setFont('helvetica', 'italic');
+    doc.setFontSize(7);
+    doc.setTextColor(...slateMuted);
+    doc.text('Nenhuma avaliação individual registrada para este colaborador até o momento.', leftMargin + 4, currentY + 4);
+    currentY += 12;
+  } else {
+    dossier.evaluationHistory.forEach((evalItem, idx) => {
+      if (currentY > 235) {
+        doc.addPage();
+        currentY = 15;
+      }
+
+      doc.setFillColor(...bgLight);
+      doc.setDrawColor(...slateBorder);
+      doc.roundedRect(leftMargin, currentY, contentWidth, 24, 1.5, 1.5, 'FD');
+
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(7.5);
+      doc.setTextColor(...slateDark);
+      doc.text(`${idx + 1}. ${evalItem.checklistTitle}`, leftMargin + 4, currentY + 5.5);
+
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(6.5);
+      doc.setTextColor(...slateMuted);
+      doc.text(`Data: ${evalItem.completedAt}   ·   Avaliador: ${evalItem.evaluatorName}`, leftMargin + 4, currentY + 9.5);
+
+      if (evalItem.exerciseTitle || evalItem.characterName) {
+        doc.text(`Cenário: ${evalItem.exerciseTitle || 'Padrão'}   ·   Cliente Atendido: ${evalItem.characterName || 'N/A'}`, leftMargin + 4, currentY + 13.5);
+      }
+
+      if (evalItem.observations) {
+        const obsShort = evalItem.observations.length > 115 ? evalItem.observations.slice(0, 112) + '...' : evalItem.observations;
+        doc.setFont('helvetica', 'italic');
+        doc.setTextColor(51, 65, 85);
+        doc.text(`Obs: "${obsShort}"`, leftMargin + 4, currentY + 18);
+      }
+
+      // Nota Box
+      doc.setFillColor(255, 255, 255);
+      doc.setDrawColor(...slateBorder);
+      doc.roundedRect(leftMargin + contentWidth - 32, currentY + 4, 28, 14, 1, 1, 'FD');
+
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(6);
+      doc.setTextColor(...slateMuted);
+      doc.text('NOTA FINAL', leftMargin + contentWidth - 18, currentY + 8, { align: 'center' });
+
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(9);
+      doc.setTextColor(evalItem.finalScore >= 7 ? 4 : 220, evalItem.finalScore >= 7 ? 120 : 38, evalItem.finalScore >= 7 ? 87 : 38);
+      doc.text(`${evalItem.finalScore.toFixed(1)}/10`, leftMargin + contentWidth - 18, currentY + 14, { align: 'center' });
+
+      currentY += 27;
+    });
+  }
+
+  // 6. Espaço Formal de Assinaturas
+  if (currentY > 240) {
+    doc.addPage();
+    currentY = 25;
+  } else {
+    currentY += 6;
+  }
+
+  const sigWidth = 75;
+  const sig1X = leftMargin + 10;
+  const sig2X = leftMargin + contentWidth - sigWidth - 10;
+
+  doc.setDrawColor(...slateBorder);
+  doc.setLineWidth(0.4);
+  doc.line(sig1X, currentY + 14, sig1X + sigWidth, currentY + 14);
+  doc.line(sig2X, currentY + 14, sig2X + sigWidth, currentY + 14);
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(7);
+  doc.setTextColor(...slateDark);
+  doc.text('Avaliador / Coordenador Responsável', sig1X + sigWidth / 2, currentY + 18, { align: 'center' });
+  doc.text('Colaborador Avaliado', sig2X + sigWidth / 2, currentY + 18, { align: 'center' });
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(6);
+  doc.setTextColor(...slateMuted);
+  doc.text('Assinatura e Carimbo', sig1X + sigWidth / 2, currentY + 21.5, { align: 'center' });
+  doc.text(dossier.collaboratorName, sig2X + sigWidth / 2, currentY + 21.5, { align: 'center' });
+
+  // Rodapé institucional
+  const pageCount = (doc as any).internal.getNumberOfPages();
+  for (let i = 1; i <= pageCount; i++) {
+    doc.setPage(i);
+    const footerY = 284;
+    doc.setDrawColor(...slateBorder);
+    doc.setLineWidth(0.3);
+    doc.line(leftMargin, footerY, leftMargin + contentWidth, footerY);
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(6);
+    doc.setTextColor(...slateMuted);
+    doc.text('Portal de Desempenho Operacional   ·   Dossiê Confidencial de Capacitação Profissional', leftMargin, footerY + 4);
+    doc.setFont('helvetica', 'bold');
+    doc.text(`Página ${i} de ${pageCount}`, leftMargin + contentWidth - 18, footerY + 4);
+  }
+
+  const safeCollabName = dossier.collaboratorName.replace(/[^a-zA-Z0-9_\u00C0-\u017F]+/g, '_');
+  doc.save(`Dossie_${safeCollabName}.pdf`);
+}
+

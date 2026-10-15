@@ -312,7 +312,7 @@ export const INITIAL_AUDIT_LOGS: AuditLogEntry[] = [
   },
 ];
 
-// Usuários do Sistema: Administrador Master + Colaborador de Exemplo (Duplo Perfil)
+// Usuários do Sistema: Administrador Master + Avaliador/Auxiliar + Colaborador de Exemplo (3 Perfis Fundamentais)
 export const INITIAL_USERS: UserProfile[] = [
   {
     id: 'usr-admin-master',
@@ -320,7 +320,7 @@ export const INITIAL_USERS: UserProfile[] = [
     fullName: 'David Furtado',
     email: 'david.furtado@portaldesempenho.corp',
     role: 'admin',
-    status: 'aprovado_sem_senha',
+    status: 'ativo',
     canChangePassword: true,
     isActive: true,
     password: '',
@@ -332,6 +332,23 @@ export const INITIAL_USERS: UserProfile[] = [
       'can_apply_evaluations',
       'users:manage',
       'cells:manage',
+    ],
+    createdAt: '2026-10-13T08:00:00Z',
+    lastLoginAt: '2026-10-13T08:00:00Z',
+  },
+  {
+    id: 'usr-eval-marina',
+    username: 'marina.santos',
+    fullName: 'Marina Santos',
+    email: 'marina.santos@portaldesempenho.corp',
+    role: 'avaliador',
+    status: 'ativo',
+    canChangePassword: true,
+    isActive: true,
+    password: '',
+    department: 'Supervisão & Treinamento Clínico',
+    individualPermissions: [
+      'can_apply_evaluations',
     ],
     createdAt: '2026-10-13T08:00:00Z',
     lastLoginAt: '2026-10-13T08:00:00Z',

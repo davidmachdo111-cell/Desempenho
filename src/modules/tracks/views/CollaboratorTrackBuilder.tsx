@@ -358,7 +358,7 @@ export const CollaboratorTrackBuilder: React.FC<CollaboratorTrackBuilderProps> =
                   { key: 'IMG', label: 'Imagem' },
                   { key: 'CONSULTA', label: 'Consultas' },
                   { key: 'TERAPIA', label: 'Terapias' },
-                  { key: 'OPERADORA', label: 'Convênio' },
+                  { key: 'OPERADORA', label: 'Operadora' },
                 ].map((item) => {
                   const isSel = cellFilter === item.key;
                   return (

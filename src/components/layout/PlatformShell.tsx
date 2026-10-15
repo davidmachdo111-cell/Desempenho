@@ -106,8 +106,27 @@ export const PlatformShell: React.FC<PlatformShellProps> = ({
   if (!currentUser) return null;
 
   const isCollaborator = currentUser.role === 'colaborador';
+  const isEvaluator = currentUser.role === 'avaliador' || currentUser.role === 'auxiliar';
+  const isAdmin = currentUser.role === 'admin';
 
-  // Itens do Menu Lateral (Diferenciados por Perfil: Administrador vs Colaborador)
+  // Helper para formatar a badge oficial dos 3 perfis fundamentais
+  const getRoleBadge = (role: string) => {
+    if (role === 'admin') return 'ADMIN';
+    if (role === 'avaliador' || role === 'auxiliar') return 'AVALIADOR / AUXILIAR';
+    if (role === 'colaborador') return 'COLABORADOR';
+    return role.toUpperCase();
+  };
+
+  // Itens do Menu Lateral (Diferenciados por Perfil: Administrador vs Avaliador vs Colaborador)
+  // 1. Colaborador: estritamente UMA ÚNICA opção ("Minha Trilha / Avaliações")
+  // 2. Avaliador/Auxiliar: Foco na lista de colaboradores e avaliação de checklists pendentes (+ consulta a checklists, exercícios e clientes)
+  // 3. Administrador: Ordem oficial completa com todas as 6 abas corporativas:
+  //    1. Banco de Clientes
+  //    2. Exercícios
+  //    3. Checklists
+  //    4. Colaboradores
+  //    5. Pesquisas de Satisfação
+  //    6. Administração (Gestão de acessos, permissões do sistema e configurações gerais)
   const navItems: Array<{
     id: PortalRoute;
     label: string;
@@ -118,39 +137,19 @@ export const PlatformShell: React.FC<PlatformShellProps> = ({
     ? [
         {
           id: 'my-development',
-          label: 'Meu Desenvolvimento',
+          label: 'Minha Trilha / Avaliações',
           icon: <GraduationCap className="w-4 h-4" />,
           visible: true,
         },
-        {
-          id: 'surveys',
-          label: 'Pesquisas de Satisfação',
-          icon: <ClipboardCheck className="w-4 h-4" />,
-          visible: true,
-          badgeCount: surveys.length,
-        },
       ]
-    : [
+    : isEvaluator
+    ? [
         {
           id: 'collaborators',
           label: 'Colaboradores',
           icon: <Users className="w-4 h-4" />,
           visible: true,
           badgeCount: collaborators.length,
-        },
-        {
-          id: 'tracks',
-          label: 'Trilhas de Aprendizagem',
-          icon: <GraduationCap className="w-4 h-4" />,
-          visible: true,
-          badgeCount: learningTracks.length,
-        },
-        {
-          id: 'surveys',
-          label: 'Pesquisas de Satisfação',
-          icon: <ClipboardCheck className="w-4 h-4" />,
-          visible: true,
-          badgeCount: surveys.length,
         },
         {
           id: 'checklists',
@@ -173,13 +172,63 @@ export const PlatformShell: React.FC<PlatformShellProps> = ({
           visible: true,
           badgeCount: characters.length,
         },
+      ]
+    : [
+        {
+          id: 'characters',
+          label: 'Banco de Clientes',
+          icon: <UserCheck className="w-4 h-4" />,
+          visible: true,
+          badgeCount: characters.length,
+        },
+        {
+          id: 'exercises',
+          label: 'Exercícios',
+          icon: <FileText className="w-4 h-4" />,
+          visible: true,
+          badgeCount: exercises.length,
+        },
+        {
+          id: 'checklists',
+          label: 'Checklists',
+          icon: <BookOpen className="w-4 h-4" />,
+          visible: true,
+          badgeCount: checklists.length,
+        },
+        {
+          id: 'collaborators',
+          label: 'Colaboradores',
+          icon: <Users className="w-4 h-4" />,
+          visible: true,
+          badgeCount: collaborators.length,
+        },
+        {
+          id: 'surveys',
+          label: 'Pesquisas de Satisfação',
+          icon: <ClipboardCheck className="w-4 h-4" />,
+          visible: true,
+          badgeCount: surveys.length,
+        },
         {
           id: 'admin',
           label: 'Administração',
           icon: <ShieldCheck className="w-4 h-4" />,
-          visible: currentUser.role === 'admin' || hasPermission('users:manage'),
+          visible: true,
         },
       ];
+
+  // Ordenação prioritária dos 3 perfis essenciais no seletor do header
+  const selectorUsers = useMemo(() => {
+    const priority = ['david.furtado', 'marina.santos', 'lucas.silveira'];
+    return [...users].sort((a, b) => {
+      const idxA = priority.indexOf(a.username);
+      const idxB = priority.indexOf(b.username);
+      if (idxA !== -1 && idxB !== -1) return idxA - idxB;
+      if (idxA !== -1) return -1;
+      if (idxB !== -1) return 1;
+      return a.fullName.localeCompare(b.fullName);
+    });
+  }, [users]);
 
   const handleProfileSwitch = (targetUserId: string) => {
     setSwitchError(null);
@@ -190,6 +239,8 @@ export const PlatformShell: React.FC<PlatformShellProps> = ({
     } else {
       if (targetUser?.role === 'colaborador') {
         onNavigate('my-development');
+      } else if (targetUser?.role === 'avaliador' || targetUser?.role === 'auxiliar') {
+        onNavigate('collaborators');
       } else {
         if (activeRoute === 'my-development') {
           onNavigate('collaborators');
@@ -380,11 +431,11 @@ export const PlatformShell: React.FC<PlatformShellProps> = ({
               aria-label="Selecionar Usuário da Sessão"
               value={currentUser.id}
               onChange={(e) => handleProfileSwitch(e.target.value)}
-              className="bg-emerald-950/90 text-white border border-emerald-700 rounded-lg px-2.5 py-1.5 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-emerald-400"
+              className="bg-emerald-950/90 text-white border border-emerald-700 rounded-lg px-2.5 py-1.5 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-emerald-400 cursor-pointer"
             >
-              {users.map((u) => (
+              {selectorUsers.map((u) => (
                 <option key={u.id} value={u.id}>
-                  {u.fullName} (@{u.username}) · {u.role === 'colaborador' ? 'COLABORADOR' : u.role.toUpperCase()}
+                  {u.fullName} (@{u.username}) · {getRoleBadge(u.role)}
                 </option>
               ))}
             </select>
@@ -464,12 +515,12 @@ export const PlatformShell: React.FC<PlatformShellProps> = ({
 
           {/* Card do Usuário Logado na Base da Sidebar */}
           <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-1.5 text-xs">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-1">
               <span className="font-bold text-slate-900 truncate">
                 {currentUser.fullName}
               </span>
-              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 uppercase">
-                {currentUser.role}
+              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 uppercase tracking-tight shrink-0">
+                {getRoleBadge(currentUser.role)}
               </span>
             </div>
             <div className="text-emerald-800 font-mono text-[11px] truncate font-semibold">
