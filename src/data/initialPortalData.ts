@@ -312,7 +312,7 @@ export const INITIAL_AUDIT_LOGS: AuditLogEntry[] = [
   },
 ];
 
-// Usuários do Sistema: Administrador Master + Avaliador/Auxiliar + Colaborador de Exemplo (3 Perfis Fundamentais)
+// Usuários do Sistema: 4 Perfis Fundamentais Representativos para Validação Imediata
 export const INITIAL_USERS: UserProfile[] = [
   {
     id: 'usr-admin-master',
@@ -320,7 +320,7 @@ export const INITIAL_USERS: UserProfile[] = [
     fullName: 'David Furtado',
     email: 'david.furtado@portaldesempenho.corp',
     role: 'admin',
-    status: 'ativo',
+    status: 'aprovado_sem_senha',
     canChangePassword: true,
     isActive: true,
     password: '',
@@ -330,6 +330,7 @@ export const INITIAL_USERS: UserProfile[] = [
       'can_manage_checklists',
       'can_manage_exercises',
       'can_apply_evaluations',
+      'can_view_scenarios',
       'users:manage',
       'cells:manage',
     ],
@@ -337,18 +338,35 @@ export const INITIAL_USERS: UserProfile[] = [
     lastLoginAt: '2026-10-13T08:00:00Z',
   },
   {
-    id: 'usr-eval-marina',
-    username: 'marina.santos',
-    fullName: 'Marina Santos',
-    email: 'marina.santos@portaldesempenho.corp',
+    id: 'usr-eval-mariana',
+    username: 'mariana.avaliador',
+    fullName: 'Mariana Evaluator',
+    email: 'mariana.avaliador@portaldesempenho.corp',
     role: 'avaliador',
     status: 'ativo',
     canChangePassword: true,
     isActive: true,
     password: '',
-    department: 'Supervisão & Treinamento Clínico',
+    department: 'Supervisão & Avaliação Clínica',
     individualPermissions: [
       'can_apply_evaluations',
+    ],
+    createdAt: '2026-10-13T08:00:00Z',
+    lastLoginAt: '2026-10-13T08:00:00Z',
+  },
+  {
+    id: 'usr-aux-carlos',
+    username: 'carlos.ator',
+    fullName: 'Carlos Ator',
+    email: 'carlos.ator@portaldesempenho.corp',
+    role: 'auxiliar',
+    status: 'ativo',
+    canChangePassword: true,
+    isActive: true,
+    password: '',
+    department: 'Simulação & Apoio Cênico',
+    individualPermissions: [
+      'can_view_scenarios',
     ],
     createdAt: '2026-10-13T08:00:00Z',
     lastLoginAt: '2026-10-13T08:00:00Z',

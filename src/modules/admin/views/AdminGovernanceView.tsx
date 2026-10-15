@@ -89,25 +89,56 @@ export const AdminGovernanceView: React.FC = () => {
   const [newPermissions, setNewPermissions] = useState<PermissionKey[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // As 4 permissões operacionais simples
-  const SIMPLIFIED_PERMISSIONS: Array<{ key: PermissionKey; label: string }> = [
+  // Permissões operacionais com can_view_scenarios incluído
+  const SIMPLIFIED_PERMISSIONS: Array<{ key: PermissionKey; label: string; description: string }> = [
     {
       key: 'can_manage_collaborators',
       label: 'Pode cadastrar e gerenciar colaboradores',
+      description: 'Cadastrar novos colaboradores, editar perfis e gerenciar a equipe',
     },
     {
       key: 'can_manage_checklists',
       label: 'Pode criar checklists e critérios',
+      description: 'Criar e editar modelos de checklists e critérios de avaliação',
     },
     {
       key: 'can_manage_exercises',
       label: 'Pode criar exercícios e anexar guias',
+      description: 'Criar cenários de simulação e realizar upload de guias médicas',
     },
     {
       key: 'can_apply_evaluations',
       label: 'Pode conduzir e aplicar avaliações',
+      description: 'Abrir trilha do colaborador, preencher checklists, pontuar e concluir',
+    },
+    {
+      key: 'can_view_scenarios',
+      label: 'Visualizar cenários de simulação vinculados',
+      description: 'Acesso de leitura a exercícios, falas/objeções e guias médicas de apoio',
     },
   ];
+
+  // Reflete automaticamente as permissões padrão ao alternar o papel corporativo
+  const handleSelectRole = (newRole: UserRole) => {
+    setTargetRole(newRole);
+    if (newRole === 'admin') {
+      setTargetPermissions([
+        'can_manage_collaborators',
+        'can_manage_checklists',
+        'can_manage_exercises',
+        'can_apply_evaluations',
+        'can_view_scenarios',
+        'users:manage',
+        'cells:manage',
+      ]);
+    } else if (newRole === 'avaliador') {
+      setTargetPermissions(['can_apply_evaluations']);
+    } else if (newRole === 'auxiliar') {
+      setTargetPermissions(['can_view_scenarios']);
+    } else {
+      setTargetPermissions([]);
+    }
+  };
 
   const toggleTargetPermission = (key: PermissionKey) => {
     setTargetPermissions((prev) =>
@@ -686,7 +717,7 @@ export const AdminGovernanceView: React.FC = () => {
                     <label
                       className={`p-3 rounded-xl border flex flex-col cursor-pointer transition-all ${
                         targetRole === 'admin'
-                          ? 'bg-emerald-50 border-emerald-500 shadow-xs'
+                          ? 'bg-emerald-50 border-emerald-500 shadow-xs ring-1 ring-emerald-500/30'
                           : 'bg-white border-slate-200 hover:border-slate-300'
                       }`}
                     >
@@ -695,7 +726,7 @@ export const AdminGovernanceView: React.FC = () => {
                         name="role"
                         value="admin"
                         checked={targetRole === 'admin'}
-                        onChange={() => setTargetRole('admin')}
+                        onChange={() => handleSelectRole('admin')}
                         className="hidden"
                       />
                       <span className="font-bold text-xs text-slate-900">Administrador</span>
@@ -705,7 +736,7 @@ export const AdminGovernanceView: React.FC = () => {
                     <label
                       className={`p-3 rounded-xl border flex flex-col cursor-pointer transition-all ${
                         targetRole === 'avaliador'
-                          ? 'bg-emerald-50 border-emerald-500 shadow-xs'
+                          ? 'bg-blue-50 border-blue-500 shadow-xs ring-1 ring-blue-500/30'
                           : 'bg-white border-slate-200 hover:border-slate-300'
                       }`}
                     >
@@ -714,17 +745,17 @@ export const AdminGovernanceView: React.FC = () => {
                         name="role"
                         value="avaliador"
                         checked={targetRole === 'avaliador'}
-                        onChange={() => setTargetRole('avaliador')}
+                        onChange={() => handleSelectRole('avaliador')}
                         className="hidden"
                       />
                       <span className="font-bold text-xs text-slate-900">Avaliador</span>
-                      <span className="text-[10px] text-slate-500 mt-1">Aplica avaliações</span>
+                      <span className="text-[10px] text-slate-500 mt-1">Aplica e pontua checklists</span>
                     </label>
 
                     <label
                       className={`p-3 rounded-xl border flex flex-col cursor-pointer transition-all ${
                         targetRole === 'auxiliar'
-                          ? 'bg-emerald-50 border-emerald-500 shadow-xs'
+                          ? 'bg-purple-50 border-purple-500 shadow-xs ring-1 ring-purple-500/30'
                           : 'bg-white border-slate-200 hover:border-slate-300'
                       }`}
                     >
@@ -733,53 +764,58 @@ export const AdminGovernanceView: React.FC = () => {
                         name="role"
                         value="auxiliar"
                         checked={targetRole === 'auxiliar'}
-                        onChange={() => setTargetRole('auxiliar')}
+                        onChange={() => handleSelectRole('auxiliar')}
                         className="hidden"
                       />
                       <span className="font-bold text-xs text-slate-900">Auxiliar / Ator</span>
-                      <span className="text-[10px] text-slate-500 mt-1">Interpretação e apoio</span>
+                      <span className="text-[10px] text-slate-500 mt-1">Apoio e visualização dos exercícios atrelados</span>
                     </label>
                   </div>
                 </div>
 
                 {/* Delegar Poderes e Permissões Individuais */}
                 <div className="space-y-3 bg-slate-50 border border-slate-200 rounded-xl p-4.5">
-                  <div>
-                    <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wide">
-                      Delegar Poderes e Permissões Individuais:
-                    </h3>
-                    <p className="text-[11px] text-slate-500 mt-0.5">
-                      Conceda competências específicas a este colaborador.
-                    </p>
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wide">
+                        Delegar Poderes e Permissões Individuais:
+                      </h3>
+                      <p className="text-[11px] text-slate-500 mt-0.5">
+                        Permissões padrão ajustadas automaticamente pela função. O Administrador pode personalizar marcando/desmarcando competências pontuais.
+                      </p>
+                    </div>
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-100 text-emerald-800">
+                      {targetPermissions.length} ativa(s)
+                    </span>
                   </div>
 
                   <div className="space-y-2.5 pt-1">
                     {SIMPLIFIED_PERMISSIONS.map((perm) => {
-                      const isChecked =
-                        targetRole === 'admin' || targetPermissions.includes(perm.key);
-                      const isDisabled = targetRole === 'admin';
+                      const isChecked = targetPermissions.includes(perm.key);
 
                       return (
                         <label
                           key={perm.key}
-                          className={`p-3 rounded-lg border flex items-center gap-3 transition-colors ${
-                            isDisabled
-                              ? 'bg-slate-100 border-slate-200 opacity-80 cursor-default'
-                              : isChecked
-                              ? 'bg-emerald-50/80 border-emerald-400 cursor-pointer'
-                              : 'bg-white border-slate-200 hover:border-slate-300 cursor-pointer'
+                          className={`p-3 rounded-lg border flex items-start gap-3 transition-colors cursor-pointer ${
+                            isChecked
+                              ? 'bg-emerald-50/80 border-emerald-400'
+                              : 'bg-white border-slate-200 hover:border-slate-300'
                           }`}
                         >
                           <input
                             type="checkbox"
-                            disabled={isDisabled}
                             checked={isChecked}
                             onChange={() => toggleTargetPermission(perm.key)}
-                            className="rounded text-emerald-700 focus:ring-emerald-500 h-4 w-4"
+                            className="rounded text-emerald-700 focus:ring-emerald-500 h-4 w-4 mt-0.5 cursor-pointer"
                           />
-                          <span className="text-xs font-semibold text-slate-800">
-                            ☑ {perm.label}
-                          </span>
+                          <div className="space-y-0.5">
+                            <span className="text-xs font-semibold text-slate-800 block">
+                              {perm.label}
+                            </span>
+                            <span className="text-[11px] text-slate-500 block">
+                              {perm.description}
+                            </span>
+                          </div>
                         </label>
                       );
                     })}

@@ -16,36 +16,52 @@ import { CharactersManagementView } from './modules/characters/views/CharactersM
 import { EvaluationExecutionView } from './modules/evaluations/views/EvaluationExecutionView';
 import { AdminGovernanceView } from './modules/admin/views/AdminGovernanceView';
 import { CollaboratorPortalView } from './modules/collaborator-portal/views/CollaboratorPortalView';
+import { ActorScenariosView } from './modules/actor-scenarios/views/ActorScenariosView';
 
 const PortalAppInner: React.FC = () => {
   const { currentUser, collaboratorChecklists } = usePortalStore();
 
   const isCollaborator = currentUser?.role === 'colaborador';
+  const isAuxiliar = currentUser?.role === 'auxiliar';
+  const isEvaluator = currentUser?.role === 'avaliador';
+  const isAdmin = currentUser?.role === 'admin';
 
-  const [activeRoute, setActiveRoute] = useState<PortalRoute>(() =>
-    currentUser?.role === 'colaborador' ? 'my-development' : 'collaborators'
-  );
+  const [activeRoute, setActiveRoute] = useState<PortalRoute>(() => {
+    if (currentUser?.role === 'colaborador') return 'my-development';
+    if (currentUser?.role === 'auxiliar') return 'actor-scenarios';
+    return 'collaborators';
+  });
   const [activeAssignmentId, setActiveAssignmentId] = useState<string | null>(null);
   const [selectedCollaboratorId, setSelectedCollaboratorId] = useState<string | null>(null);
 
-  // Redirecionamento automático respeitando os 3 Perfis Fundamentais de Acesso
+  // Redirecionamento automático respeitando os 4 Papéis Corporativos (RBAC)
   useEffect(() => {
-    if (currentUser?.role === 'colaborador') {
+    if (!currentUser) return;
+
+    if (currentUser.role === 'colaborador') {
+      // 1. Colaborador: estritamente restrito a sua trilha individual
       if (activeRoute !== 'my-development') {
         setActiveRoute('my-development');
       }
-    } else if (currentUser?.role === 'avaliador' || currentUser?.role === 'auxiliar') {
-      // Avaliador tem foco em colaboradores e não acessa governança nem pesquisas
-      if (
-        activeRoute === 'my-development' ||
-        activeRoute === 'admin' ||
-        activeRoute === 'surveys' ||
-        (activeRoute as string) === 'tracks'
-      ) {
+    } else if (currentUser.role === 'auxiliar') {
+      // 2. Auxiliar / Ator: estritamente restrito aos cenários de simulação e casos atrelados
+      if (activeRoute !== 'actor-scenarios') {
+        setActiveRoute('actor-scenarios');
+      }
+    } else if (currentUser.role === 'avaliador') {
+      // 3. Avaliador: Colaboradores, Exercícios e Checklists (modo consulta/avaliação)
+      const allowedForEvaluator: PortalRoute[] = [
+        'collaborators',
+        'exercises',
+        'checklists',
+        'evaluation-run',
+      ];
+      if (!allowedForEvaluator.includes(activeRoute)) {
         setActiveRoute('collaborators');
       }
-    } else if (currentUser) {
-      if (activeRoute === 'my-development' || (activeRoute as string) === 'tracks') {
+    } else if (currentUser.role === 'admin') {
+      // 4. Administrador: acesso total; redireciona apenas se estava em tela exclusiva de colaborador
+      if (activeRoute === 'my-development') {
         setActiveRoute('collaborators');
       }
     }
@@ -91,46 +107,55 @@ const PortalAppInner: React.FC = () => {
       }}
     >
       {/* ========================================================= */}
-      {/* VISÃO RESTRITA DO COLABORADOR (MEU DESENVOLVIMENTO) */}
+      {/* 1. VISÃO RESTRITA DO COLABORADOR (MINHA TRILHA) */}
       {/* ========================================================= */}
       {(activeRoute === 'my-development' || (isCollaborator && activeRoute === 'surveys')) && (
         <CollaboratorPortalView />
       )}
 
       {/* ========================================================= */}
-      {/* MÓDULOS ADMINISTRATIVOS */}
+      {/* 2. CENÁRIOS DE SIMULAÇÃO & CASOS ATRELADOS (PAINEL DO ATOR) */}
+      {/* ========================================================= */}
+      {activeRoute === 'actor-scenarios' && <ActorScenariosView />}
+
+      {/* ========================================================= */}
+      {/* 3. MÓDULOS DE GESTÃO E AVALIAÇÃO (ADMIN & AVALIADOR) */}
       {/* ========================================================= */}
 
-      {/* 1. Colaboradores (/colaboradores) */}
-      {!isCollaborator && activeRoute === 'collaborators' && (
+      {/* Colaboradores (/colaboradores) — Admin e Avaliador */}
+      {!isCollaborator && !isAuxiliar && activeRoute === 'collaborators' && (
         <CollaboratorsView
           initialCollaboratorId={selectedCollaboratorId}
           onStartEvaluation={handleStartEvaluation}
         />
       )}
 
-      {/* 2. Pesquisas de Satisfação (/pesquisas) — Construtor e Resultados */}
-      {!isCollaborator && activeRoute === 'surveys' && <SurveysManagementView />}
+      {/* Checklists (/checklists) — Admin e Avaliador (modo consulta) */}
+      {!isCollaborator && !isAuxiliar && activeRoute === 'checklists' && <ChecklistsManagementView />}
 
-      {/* 4. Checklists (/checklists) — Modelos flexíveis */}
-      {!isCollaborator && activeRoute === 'checklists' && <ChecklistsManagementView />}
+      {/* Exercícios (/exercicios) — Admin e Avaliador (modo consulta) */}
+      {!isCollaborator && !isAuxiliar && activeRoute === 'exercises' && <ExercisesSimulationView />}
 
-      {/* 5. Exercícios (/exercicios) — Roleplay e anexos */}
-      {!isCollaborator && activeRoute === 'exercises' && <ExercisesSimulationView />}
-
-      {/* 6. Banco de Clientes / Personagens (/clientes) — CRUD independente */}
-      {!isCollaborator && activeRoute === 'characters' && <CharactersManagementView />}
-
-      {/* 7. Administração (/admin) — Gestão e delegação de poderes */}
-      {!isCollaborator && activeRoute === 'admin' && <AdminGovernanceView />}
-
-      {/* 8. Tela de Avaliação em Tempo Real (/avaliacoes/executar/:id) */}
-      {!isCollaborator && activeRoute === 'evaluation-run' && (
+      {/* Tela de Avaliação em Tempo Real (/avaliacoes/executar/:id) */}
+      {!isCollaborator && !isAuxiliar && activeRoute === 'evaluation-run' && (
         <EvaluationExecutionView
           assignmentId={currentAssignmentId}
           onBack={handleBackFromEvaluation}
         />
       )}
+
+      {/* ========================================================= */}
+      {/* 4. MÓDULOS EXCLUSIVOS DO ADMINISTRADOR */}
+      {/* ========================================================= */}
+
+      {/* Banco de Clientes (/clientes) — Acesso irrestrito Admin */}
+      {isAdmin && activeRoute === 'characters' && <CharactersManagementView />}
+
+      {/* Pesquisas de Satisfação (/pesquisas) — Construtor e Resultados Admin */}
+      {isAdmin && activeRoute === 'surveys' && <SurveysManagementView />}
+
+      {/* Administração (/admin) — Gestão e delegação de poderes Admin */}
+      {isAdmin && activeRoute === 'admin' && <AdminGovernanceView />}
     </PlatformShell>
   );
 };

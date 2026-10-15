@@ -2,21 +2,25 @@ import { PermissionKey, UserProfile, UserRole } from '../types/portal';
 
 // Por padrão:
 // - admin tem controle total
-// - avaliador pode conduzir avaliações e ver checklists/exercícios
-// - auxiliar pode atuar como ator/instrutor e consultar exercícios
+// - avaliador pode conduzir e aplicar avaliações
+// - auxiliar/ator pode visualizar cenários de simulação e casos atrelados
+// - colaborador acessa exclusivamente sua própria trilha
 const ROLE_DEFAULT_PERMISSIONS: Record<UserRole, PermissionKey[]> = {
   admin: [
     'can_manage_collaborators',
     'can_manage_checklists',
     'can_manage_exercises',
     'can_apply_evaluations',
+    'can_view_scenarios',
     'users:manage',
     'cells:manage',
   ],
   avaliador: [
     'can_apply_evaluations',
   ],
-  auxiliar: [],
+  auxiliar: [
+    'can_view_scenarios',
+  ],
   colaborador: [],
 };
 
@@ -44,6 +48,11 @@ export const ALL_PERMISSIONS_METADATA: Array<{
     key: 'can_apply_evaluations',
     label: 'Conduzir e Avaliar Simulações (can_apply_evaluations)',
     description: 'Iniciar treinamentos em tempo real, dar checks nos critérios e registrar a nota final.',
+  },
+  {
+    key: 'can_view_scenarios',
+    label: 'Visualizar Cenários de Simulação Vinculados (can_view_scenarios)',
+    description: 'Consultar roteiros de casos clínicos, falas/objeções do paciente e guias médicas de apoio.',
   },
   {
     key: 'users:manage',

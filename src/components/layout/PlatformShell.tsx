@@ -11,6 +11,7 @@ import {
   UserCheck,
   GraduationCap,
   ClipboardCheck,
+  Theater,
 } from 'lucide-react';
 import { usePortalStore } from '../../context/PortalStoreContext';
 import { normalizePhrases } from '../../types/portal';
@@ -24,7 +25,8 @@ export type PortalRoute =
   | 'characters'
   | 'admin'
   | 'my-development'
-  | 'evaluation-run';
+  | 'evaluation-run'
+  | 'actor-scenarios';
 
 interface PlatformShellProps {
   activeRoute: PortalRoute;
@@ -106,27 +108,40 @@ export const PlatformShell: React.FC<PlatformShellProps> = ({
   if (!currentUser) return null;
 
   const isCollaborator = currentUser.role === 'colaborador';
-  const isEvaluator = currentUser.role === 'avaliador' || currentUser.role === 'auxiliar';
+  const isEvaluator = currentUser.role === 'avaliador';
+  const isAuxiliar = currentUser.role === 'auxiliar';
   const isAdmin = currentUser.role === 'admin';
 
-  // Helper para formatar a badge oficial dos 3 perfis fundamentais
+  // Helper para formatar a badge oficial dos 4 papéis corporativos
   const getRoleBadge = (role: string) => {
     if (role === 'admin') return 'ADMIN';
-    if (role === 'avaliador' || role === 'auxiliar') return 'AVALIADOR / AUXILIAR';
+    if (role === 'avaliador') return 'AVALIADOR';
+    if (role === 'auxiliar') return 'AUXILIAR / ATOR';
     if (role === 'colaborador') return 'COLABORADOR';
     return role.toUpperCase();
   };
 
-  // Itens do Menu Lateral (Diferenciados por Perfil: Administrador vs Avaliador vs Colaborador)
-  // 1. Colaborador: estritamente UMA ÚNICA opção ("Minha Trilha / Avaliações")
-  // 2. Avaliador/Auxiliar: Foco na lista de colaboradores e avaliação de checklists pendentes (+ consulta a checklists, exercícios e clientes)
-  // 3. Administrador: Ordem oficial completa com todas as 6 abas corporativas:
-  //    1. Banco de Clientes
-  //    2. Exercícios
-  //    3. Checklists
-  //    4. Colaboradores
-  //    5. Pesquisas de Satisfação
-  //    6. Administração (Gestão de acessos, permissões do sistema e configurações gerais)
+  const getRoleBadgeStyle = (role: string) => {
+    if (role === 'admin') return 'bg-amber-100 text-amber-900 border-amber-300';
+    if (role === 'avaliador') return 'bg-blue-100 text-blue-900 border-blue-300';
+    if (role === 'auxiliar') return 'bg-purple-100 text-purple-900 border-purple-300';
+    if (role === 'colaborador') return 'bg-emerald-100 text-emerald-900 border-emerald-300';
+    return 'bg-slate-100 text-slate-800 border-slate-300';
+  };
+
+  const getAvatarBg = (role: string) => {
+    if (role === 'admin') return 'bg-amber-600 text-white';
+    if (role === 'avaliador') return 'bg-blue-600 text-white';
+    if (role === 'auxiliar') return 'bg-purple-600 text-white';
+    if (role === 'colaborador') return 'bg-emerald-700 text-white';
+    return 'bg-slate-600 text-white';
+  };
+
+  // Itens do Menu Lateral (Diferenciados por Perfil: Administrador vs Avaliador vs Auxiliar/Ator vs Colaborador)
+  // 1. Administrador (ADMIN): 6 abas oficiais completas
+  // 2. Avaliador (Instrutor/Supervisor): Colaboradores, Exercícios e Checklists (modo consulta/avaliação)
+  // 3. Auxiliar/Ator (Simulador): Apenas "Cenários de Simulação / Casos Atrelados"
+  // 4. Colaborador (Aluno): Estritamente "Minha Trilha / Avaliações"
   const navItems: Array<{
     id: PortalRoute;
     label: string;
@@ -142,6 +157,16 @@ export const PlatformShell: React.FC<PlatformShellProps> = ({
           visible: true,
         },
       ]
+    : isAuxiliar
+    ? [
+        {
+          id: 'actor-scenarios',
+          label: 'Cenários de Simulação / Casos Atrelados',
+          icon: <Theater className="w-4 h-4" />,
+          visible: true,
+          badgeCount: exercises.length,
+        },
+      ]
     : isEvaluator
     ? [
         {
@@ -152,13 +177,6 @@ export const PlatformShell: React.FC<PlatformShellProps> = ({
           badgeCount: collaborators.length,
         },
         {
-          id: 'checklists',
-          label: 'Checklists',
-          icon: <BookOpen className="w-4 h-4" />,
-          visible: true,
-          badgeCount: checklists.length,
-        },
-        {
           id: 'exercises',
           label: 'Exercícios',
           icon: <FileText className="w-4 h-4" />,
@@ -166,11 +184,11 @@ export const PlatformShell: React.FC<PlatformShellProps> = ({
           badgeCount: exercises.length,
         },
         {
-          id: 'characters',
-          label: 'Banco de Clientes',
-          icon: <UserCheck className="w-4 h-4" />,
+          id: 'checklists',
+          label: 'Checklists',
+          icon: <BookOpen className="w-4 h-4" />,
           visible: true,
-          badgeCount: characters.length,
+          badgeCount: checklists.length,
         },
       ]
     : [
@@ -217,9 +235,9 @@ export const PlatformShell: React.FC<PlatformShellProps> = ({
         },
       ];
 
-  // Ordenação prioritária dos 3 perfis essenciais no seletor do header
+  // Ordenação prioritária dos 4 perfis essenciais no seletor do header
   const selectorUsers = useMemo(() => {
-    const priority = ['david.furtado', 'marina.santos', 'lucas.silveira'];
+    const priority = ['david.furtado', 'mariana.avaliador', 'carlos.ator', 'lucas.silveira'];
     return [...users].sort((a, b) => {
       const idxA = priority.indexOf(a.username);
       const idxB = priority.indexOf(b.username);
@@ -239,10 +257,13 @@ export const PlatformShell: React.FC<PlatformShellProps> = ({
     } else {
       if (targetUser?.role === 'colaborador') {
         onNavigate('my-development');
-      } else if (targetUser?.role === 'avaliador' || targetUser?.role === 'auxiliar') {
+      } else if (targetUser?.role === 'auxiliar') {
+        onNavigate('actor-scenarios');
+      } else if (targetUser?.role === 'avaliador') {
         onNavigate('collaborators');
       } else {
-        if (activeRoute === 'my-development') {
+        // Admin: se estava em rotas restritas de colaborador ou ator, vai para a gestão
+        if (activeRoute === 'my-development' || activeRoute === 'actor-scenarios') {
           onNavigate('collaborators');
         }
       }
@@ -514,25 +535,57 @@ export const PlatformShell: React.FC<PlatformShellProps> = ({
           </div>
 
           {/* Card do Usuário Logado na Base da Sidebar */}
-          <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-1.5 text-xs">
-            <div className="flex items-center justify-between gap-1">
-              <span className="font-bold text-slate-900 truncate">
-                {currentUser.fullName}
-              </span>
-              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 uppercase tracking-tight shrink-0">
-                {getRoleBadge(currentUser.role)}
-              </span>
+          <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-2.5 text-xs">
+            <div className="flex items-start gap-2.5">
+              {/* Avatar com Iniciais e Cor por Perfil */}
+              <div
+                className={`w-9 h-9 rounded-xl flex items-center justify-center font-bold text-xs shrink-0 shadow-2xs ${getAvatarBg(
+                  currentUser.role
+                )}`}
+              >
+                {currentUser.fullName
+                  .split(' ')
+                  .filter(Boolean)
+                  .map((n) => n[0])
+                  .slice(0, 2)
+                  .join('')
+                  .toUpperCase()}
+              </div>
+
+              <div className="min-w-0 flex-1">
+                <div className="font-bold text-slate-900 truncate leading-tight">
+                  {currentUser.fullName}
+                </div>
+                <div className="text-emerald-800 font-mono text-[11px] truncate font-semibold">
+                  @{currentUser.username}
+                </div>
+              </div>
             </div>
-            <div className="text-emerald-800 font-mono text-[11px] truncate font-semibold">
-              @{currentUser.username}
+
+            {/* Badge de Perfil e E-mail Institucional */}
+            <div className="space-y-1 pt-1 border-t border-slate-200/80">
+              <div className="flex items-center justify-between gap-1">
+                <span
+                  className={`text-[9px] font-bold px-2 py-0.5 rounded border uppercase tracking-wider shrink-0 ${getRoleBadgeStyle(
+                    currentUser.role
+                  )}`}
+                >
+                  {getRoleBadge(currentUser.role)}
+                </span>
+                <span className="text-[10px] text-slate-400 truncate text-right">
+                  {currentUser.department}
+                </span>
+              </div>
+
+              <div className="text-slate-500 text-[10px] truncate" title={currentUser.email}>
+                {currentUser.email}
+              </div>
             </div>
-            <div className="text-slate-500 text-[10px] truncate">
-              {currentUser.department}
-            </div>
+
             {currentUser.individualPermissions.length > 0 && (
               <div className="text-[10px] text-emerald-800 font-medium flex items-center gap-1 pt-1 border-t border-slate-200">
-                <Sparkles className="w-3 h-3 text-emerald-600" />
-                <span>{currentUser.individualPermissions.length} permissão(ões) ativa(s)</span>
+                <Sparkles className="w-3 h-3 text-emerald-600 shrink-0" />
+                <span className="truncate">{currentUser.individualPermissions.length} permissão(ões) ativa(s)</span>
               </div>
             )}
           </div>

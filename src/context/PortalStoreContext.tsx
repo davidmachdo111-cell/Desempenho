@@ -287,16 +287,23 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
       if (stored) {
         const parsed: UserProfile[] = JSON.parse(stored);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          // Garante que os 3 perfis fundamentais de teste sempre existam
+          // Garante que os 4 perfis fundamentais de teste sempre existam
           if (!parsed.some((u) => u.username === 'david.furtado')) {
             const master = INITIAL_USERS.find((u) => u.username === 'david.furtado');
             if (master) parsed.unshift(master);
           }
-          if (!parsed.some((u) => u.username === 'marina.santos')) {
-            const evalUser = INITIAL_USERS.find((u) => u.username === 'marina.santos');
+          if (!parsed.some((u) => u.username === 'mariana.avaliador')) {
+            const evalUser = INITIAL_USERS.find((u) => u.username === 'mariana.avaliador');
             if (evalUser) {
               const davidIdx = parsed.findIndex((u) => u.username === 'david.furtado');
               parsed.splice(davidIdx >= 0 ? davidIdx + 1 : 1, 0, evalUser);
+            }
+          }
+          if (!parsed.some((u) => u.username === 'carlos.ator')) {
+            const actorUser = INITIAL_USERS.find((u) => u.username === 'carlos.ator');
+            if (actorUser) {
+              const marianaIdx = parsed.findIndex((u) => u.username === 'mariana.avaliador');
+              parsed.splice(marianaIdx >= 0 ? marianaIdx + 1 : 2, 0, actorUser);
             }
           }
           if (!parsed.some((u) => u.username === 'lucas.silveira')) {

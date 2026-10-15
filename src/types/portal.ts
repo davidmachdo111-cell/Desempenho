@@ -6,6 +6,7 @@ export type PermissionKey =
   | 'can_manage_checklists'    // pode criar e editar checklists e critérios
   | 'can_manage_exercises'     // pode criar exercícios, personagens e guias
   | 'can_apply_evaluations'    // pode conduzir e dar check em avaliações
+  | 'can_view_scenarios'       // visualização de cenários de simulação e casos atrelados
   | 'users:manage'             // administração de contas de usuário
   | 'cells:manage';            // gestão de células e equipes
 
