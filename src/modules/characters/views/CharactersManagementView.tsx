@@ -23,7 +23,7 @@ import {
 } from 'lucide-react';
 import { usePortalStore } from '../../../context/PortalStoreContext';
 import { GuideMirrorModal } from '../../../components/GuideMirrorModal';
-import { downloadGuidePdf } from '../../../lib/downloadHelpers';
+import { downloadGuidePdf, downloadMultipleGuidesPdf } from '../../../lib/downloadHelpers';
 import {
   Character,
   Gender,
@@ -346,14 +346,27 @@ export const CharactersManagementView: React.FC = () => {
         </div>
 
         {canManage && (
-          <button
-            type="button"
-            onClick={() => openModal()}
-            className="px-5 py-2.5 text-xs font-bold text-white bg-[#0f3e2e] hover:bg-emerald-900 rounded-xl transition-all shadow-sm flex items-center gap-2 shrink-0 cursor-pointer"
-          >
-            <Plus className="w-4 h-4" />
-            <span>+ Novo Cliente</span>
-          </button>
+          <div className="flex items-center gap-2 flex-wrap">
+            {filteredCharacters.length > 1 && (
+              <button
+                type="button"
+                onClick={() => downloadMultipleGuidesPdf(filteredCharacters, undefined, 'Banco_de_Clientes_Roteiros')}
+                className="px-4 py-2.5 text-xs font-bold text-emerald-900 bg-emerald-100 hover:bg-emerald-200 border border-emerald-300 rounded-xl transition-all shadow-2xs flex items-center gap-2 shrink-0 cursor-pointer"
+                title="Gera um único PDF consolidando todas as fichas de clientes/roteiros da listagem"
+              >
+                <Download className="w-4 h-4 text-emerald-800" />
+                <span>Baixar Todos os Roteiros (PDF Único)</span>
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => openModal()}
+              className="px-5 py-2.5 text-xs font-bold text-white bg-[#0f3e2e] hover:bg-emerald-900 rounded-xl transition-all shadow-sm flex items-center gap-2 shrink-0 cursor-pointer"
+            >
+              <Plus className="w-4 h-4" />
+              <span>+ Novo Cliente</span>
+            </button>
+          </div>
         )}
       </div>
 
@@ -592,43 +605,36 @@ export const CharactersManagementView: React.FC = () => {
                   )}
                 </div>
 
-                {/* Rodapé do Card: Guia Anexa e Ações */}
+                {/* Rodapé do Card: Roteiro, Guia e Ações de Download */}
                 <div className="space-y-3 pt-3 border-t border-slate-100">
-                  {/* Botão de Guia Anexa */}
-                  {char.guideAttachmentUrl ? (
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between p-2.5 bg-slate-50 rounded-lg border border-slate-200 text-xs gap-2">
-                      <div className="flex items-center gap-2 truncate pr-1">
-                        <FileText className="w-4 h-4 text-emerald-700 shrink-0" />
-                        <span className="truncate text-slate-700 font-medium text-[11px]" title={char.guideAttachmentName || 'Guia de Atendimento'}>
-                          {char.guideAttachmentName || 'Guia de Atendimento'}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-1.5 shrink-0">
-                        <button
-                          type="button"
-                          onClick={() => setMirrorCharacter(char)}
-                          className="px-2.5 py-1 text-[11px] font-bold text-emerald-800 bg-emerald-100 hover:bg-emerald-200 rounded-lg transition-colors inline-flex items-center gap-1 cursor-pointer"
-                          title="Visualizar espelho da guia"
-                        >
-                          <Eye className="w-3 h-3" />
-                          <span>Visualizar Guia</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => downloadGuidePdf(char)}
-                          className="px-2.5 py-1 text-[11px] font-bold text-white bg-[#064e3b] hover:bg-emerald-900 rounded-lg transition-colors inline-flex items-center gap-1 cursor-pointer shadow-2xs"
-                          title={`Baixar Guia_${char.name.replace(/\s+/g, '_')}.pdf`}
-                        >
-                          <Download className="w-3 h-3 text-emerald-200" />
-                          <span>Baixar PDF</span>
-                        </button>
-                      </div>
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between p-2.5 bg-slate-50 rounded-lg border border-slate-200 text-xs gap-2">
+                    <div className="flex items-center gap-2 truncate pr-1">
+                      <FileText className="w-4 h-4 text-emerald-700 shrink-0" />
+                      <span className="truncate text-slate-700 font-medium text-[11px]" title={char.guideAttachmentName || 'Ficha do Cliente / Roteiro'}>
+                        {char.guideAttachmentName || 'Ficha do Cliente / Roteiro'}
+                      </span>
                     </div>
-                  ) : (
-                    <div className="text-[11px] text-slate-400 italic px-1">
-                      Nenhuma guia de atendimento anexada.
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => setMirrorCharacter(char)}
+                        className="px-2.5 py-1 text-[11px] font-bold text-emerald-800 bg-emerald-100 hover:bg-emerald-200 rounded-lg transition-colors inline-flex items-center gap-1 cursor-pointer"
+                        title="Visualizar ficha e roteiro do cliente"
+                      >
+                        <Eye className="w-3 h-3" />
+                        <span>Visualizar Ficha</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => downloadGuidePdf(char)}
+                        className="px-2.5 py-1 text-[11px] font-bold text-white bg-[#064e3b] hover:bg-emerald-900 rounded-lg transition-colors inline-flex items-center gap-1 cursor-pointer shadow-2xs"
+                        title={`Baixar Cliente_${char.name.replace(/\s+/g, '_')}.pdf`}
+                      >
+                        <Download className="w-3 h-3 text-emerald-200" />
+                        <span>Baixar PDF</span>
+                      </button>
                     </div>
-                  )}
+                  </div>
 
                   {/* Botões de Ação do Card */}
                   {canManage && (

@@ -64,56 +64,20 @@ export function extractExamsFromCharacter(char: Character): GuideExamItem[] {
   }));
 }
 
-/**
- * Retorna orientações padronizadas de preparo e coleta para a guia
- */
-export function getPreparationGuidelines(char: Character): string[] {
-  const cell = char.cell;
-  const guidelines: string[] = [];
-
-  if (cell === 'LAB') {
-    guidelines.push(
-      'Requisitos de Jejum: Manter jejum metabólico de 8 a 12 horas para dosagens de glicemia e perfil lipídico. Não exceder 14 horas de jejum.'
-    );
-    guidelines.push(
-      'Frascos & Amostras: Amostras biológicas (urina, fezes, escarro) devem ser colhidas em frascos estéreis fornecidos pela unidade. Para urina tipo 1 ou urocultura, coletar a primeira urina da manhã em jato médio.'
-    );
-    guidelines.push(
-      'Prazos da ANS (RN 566/2022): Garantia de atendimento para exames laboratoriais básicos em até 03 dias úteis nos núcleos próprios ou rede referenciada.'
-    );
-    guidelines.push(
-      'Orientações dos Núcleos: Comparecer munido de documento oficial com foto e requisição médica com CRM legível. Validade da guia: 30 a 90 dias a contar da emissão.'
-    );
-  } else if (cell === 'IMG') {
-    guidelines.push(
-      'Preparo de Imagem: Para exames contrastados ou ultrassonografia abdominal, seguir jejum absoluto de 6 a 8 horas e retenção urinária conforme indicação.'
-    );
-    guidelines.push(
-      'Prazos da ANS (RN 566/2022): Exames complementares de imagem de alta complexidade (RM / TC) possuem garantia em até 10 dias úteis.'
-    );
-    guidelines.push(
-      'Remoção de Adornos: Proibido o uso de joias, relógios ou piercings metálicos nas salas de exames radiológicos ou de ressonância magnética.'
-    );
-  } else {
-    guidelines.push(
-      'Identificação & Documentação: Apresentar carteira física ou digital no app oficial, acompanhada de documento oficial com foto válido em território nacional.'
-    );
-    guidelines.push(
-      'Prazos da ANS (RN 566/2022 e RN 259): Consultas básicas garantidas em até 7 dias úteis e especialidades médicas em até 14 dias úteis.'
-    );
-    guidelines.push(
-      'Orientações Operacionais: Acolhimento preferencial a idosos, gestantes, lactantes e pessoas com deficiência conforme Lei 10.048/2000.'
-    );
-  }
-
-  return guidelines;
+export function getPreparationGuidelines(_char?: Character): string[] {
+  return [];
 }
 
 /**
- * Gera e dispara o download do PDF estilizado da Guia Médica / Ficha de Simulação
+ * Renderiza uma página com a Ficha do Cliente / Roteiro no documento PDF
  */
-export function downloadGuidePdf(char: Character, exerciseTitle?: string): void {
-  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+export function renderCharacterSheetOnDoc(
+  doc: jsPDF,
+  char: Character,
+  exerciseTitle?: string,
+  pageNumber: number = 1,
+  totalPages: number = 1
+): void {
   const cellName = getCellName(char.cell);
 
   // Paleta corporativa esmeralda e cinza institucional
@@ -128,62 +92,49 @@ export function downloadGuidePdf(char: Character, exerciseTitle?: string): void 
 
   const leftMargin = 14;
   const contentWidth = 182;
-  let currentY = 10;
+  let currentY = 12;
 
   // ============================================================================
-  // A) CABEÇALHO INSTITUCIONAL
+  // A) CABEÇALHO LIMPO E INSTITUCIONAL
   // ============================================================================
-  // Faixa superior no verde corporativo (#064E3B)
   doc.setFillColor(...primaryEmerald);
-  doc.roundedRect(leftMargin, currentY, contentWidth, 24, 2, 2, 'F');
-
-  // Carimbo / Badge discreto no topo direito: "DOCUMENTO FICTÍCIO PARA TREINAMENTO"
-  doc.setFillColor(...mediumEmerald);
-  doc.roundedRect(122, currentY + 3, 70, 5.5, 1, 1, 'F');
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(6.5);
-  doc.setTextColor(...white);
-  doc.text('DOCUMENTO FICTÍCIO PARA TREINAMENTO', 157, currentY + 7, { align: 'center' });
+  doc.roundedRect(leftMargin, currentY, contentWidth, 18, 2, 2, 'F');
 
   // Título Institucional
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(10.5);
+  doc.setFontSize(11);
   doc.setTextColor(...white);
-  doc.text('PORTAL DE DESEMPENHO — GUIA DE ATENDIMENTO E SIMULAÇÃO', leftMargin + 5, currentY + 9);
+  doc.text('PORTAL DE DESEMPENHO — FICHA DO CLIENTE / ROTEIRO', leftMargin + 6, currentY + 8);
 
-  // Subtítulo com número fictício do protocolo e data/hora da emissão
-  const simulatedHash = Math.abs(
-    char.id.split('').reduce((acc, c) => ((acc << 5) - acc + c.charCodeAt(0)) | 0, 0)
-  ).toString().padStart(6, '0').slice(-6);
-  const now = new Date();
-  const protocolNumber = `TISS-SIM-${now.getFullYear()}.${String(now.getMonth() + 1).padStart(2, '0')}-${simulatedHash}`;
-  const emissionDate = `${now.toLocaleDateString('pt-BR')} às ${now.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`;
-
+  // Subtítulo: Somente a Célula (e título do exercício se fornecido)
   doc.setFont('helvetica', 'normal');
-  doc.setFontSize(7.5);
+  doc.setFontSize(8);
   doc.setTextColor(209, 250, 229); // #D1FAE5
-  doc.text(`Protocolo: ${protocolNumber}   ·   Emissão: ${emissionDate}   ·   Célula: ${cellName}`, leftMargin + 5, currentY + 15.5);
-  doc.text('Padrão TISS Digital Integrado — Simulação Prática de Atendimento ao Beneficiário', leftMargin + 5, currentY + 20);
+  const headerSubtitle = exerciseTitle
+    ? `Célula: ${cellName}   ·   Cenário: ${exerciseTitle.slice(0, 50)}`
+    : `Célula: ${cellName}`;
+  doc.text(headerSubtitle, leftMargin + 6, currentY + 13.5);
 
-  currentY += 28;
+  currentY += 24;
 
   // ============================================================================
-  // B) DADOS DO BENEFICIÁRIO (QUADRO DESTACADO)
+  // B) DADOS CADASTRAIS DO CLIENTE
   // ============================================================================
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(8.5);
   doc.setTextColor(...primaryEmerald);
-  doc.text('1. DADOS CADASTRAIS DO BENEFICIÁRIO', leftMargin, currentY);
+  doc.text('1. DADOS CADASTRAIS DO CLIENTE', leftMargin, currentY);
 
   currentY += 3.5;
 
-  // Quadro de destaque
+  const hasObjectives = Boolean(char.objectives?.trim());
+  const cardBoxHeight = hasObjectives ? 44 : 34;
+
   doc.setFillColor(...bgLight);
   doc.setDrawColor(...slateBorder);
   doc.setLineWidth(0.3);
-  doc.roundedRect(leftMargin, currentY, contentWidth, 23, 2, 2, 'FD');
+  doc.roundedRect(leftMargin, currentY, contentWidth, cardBoxHeight, 2, 2, 'FD');
 
-  // Linha 1 de dados
   const col1 = leftMargin + 4;
   const col2 = leftMargin + 65;
   const col3 = leftMargin + 125;
@@ -198,162 +149,96 @@ export function downloadGuidePdf(char: Character, exerciseTitle?: string): void 
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(8);
   doc.setTextColor(...slateDark);
-  doc.text(char.name, col1, currentY + 9);
-  doc.text(char.cardNumber, col2, currentY + 9);
-  doc.text(`${char.age} anos · ${char.gender}`, col3, currentY + 9);
+  doc.text(char.name || '---', col1, currentY + 9);
+  doc.text(char.cardNumber || '---', col2, currentY + 9);
+  const ageDisplay = char.age ? (char.age.toLowerCase().includes('ano') ? char.age : `${char.age} anos`) : '---';
+  doc.text(`${ageDisplay} · ${char.gender || '---'}`, col3, currentY + 9);
 
-  // Linha 2 de dados
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(6.5);
   doc.setTextColor(...slateMuted);
   doc.text('CIDADE / POLO:', col1, currentY + 14.5);
   doc.text('CÉLULA:', col2, currentY + 14.5);
-  doc.text('CLASSIFICAÇÃO / TIER:', col3, currentY + 14.5);
+  doc.text('CLASSIFICAÇÃO / COMPLEXIDADE:', col3, currentY + 14.5);
 
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(8);
   doc.setTextColor(...slateDark);
-  doc.text(char.city, col1, currentY + 18.5);
+  doc.text(char.city || '---', col1, currentY + 18.5);
 
   // Badge da Célula
   doc.setFillColor(...softEmerald);
   doc.setDrawColor(...mediumEmerald);
-  doc.roundedRect(col2, currentY + 15.5, 30, 4.5, 1, 1, 'FD');
+  doc.roundedRect(col2, currentY + 15.5, 32, 4.5, 1, 1, 'FD');
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(6.5);
   doc.setTextColor(...primaryEmerald);
-  doc.text(cellName, col2 + 15, currentY + 18.8, { align: 'center' });
+  doc.text(cellName, col2 + 16, currentY + 18.8, { align: 'center' });
 
   // Badge da Classificação
   doc.setFillColor(254, 243, 199); // #FEF3C7
   doc.setDrawColor(217, 119, 6); // #D97706
-  doc.roundedRect(col3, currentY + 15.5, 32, 4.5, 1, 1, 'FD');
+  doc.roundedRect(col3, currentY + 15.5, 34, 4.5, 1, 1, 'FD');
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(6.5);
   doc.setTextColor(146, 64, 14); // #92400E
-  doc.text(char.customerTier || 'Intermediário', col3 + 16, currentY + 18.8, { align: 'center' });
+  doc.text(char.customerTier || 'Mediano', col3 + 17, currentY + 18.8, { align: 'center' });
 
-  currentY += 28;
-
-  // ============================================================================
-  // C) DADOS CLÍNICOS E EXAMES SOLICITADOS (TABELA FORMATADA)
-  // ============================================================================
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(8.5);
-  doc.setTextColor(...primaryEmerald);
-  doc.text('2. DADOS CLÍNICOS E EXAMES SOLICITADOS', leftMargin, currentY);
-
-  const guideTitle = char.guideAttachmentName || 'Guia de Atendimento e Procedimentos TISS';
+  // Linha 3 de dados: Perfil / Temperamento
   doc.setFont('helvetica', 'normal');
-  doc.setFontSize(7);
+  doc.setFontSize(6.5);
   doc.setTextColor(...slateMuted);
-  doc.text(`Documento Anexo: ${guideTitle}`, leftMargin + 80, currentY);
-
-  currentY += 3.5;
-
-  // Cabeçalho da Tabela
-  doc.setFillColor(...primaryEmerald);
-  doc.rect(leftMargin, currentY, contentWidth, 6, 'F');
+  doc.text('PERFIL / TEMPERAMENTO COMPORTAMENTAL:', col1, currentY + 23.5);
 
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(6.5);
-  doc.setTextColor(...white);
-  doc.text('ITEM', leftMargin + 3, currentY + 4.2);
-  doc.text('EXAME / PROCEDIMENTO SOLICITADO', leftMargin + 16, currentY + 4.2);
-  doc.text('CÓDIGO TUSS', leftMargin + 105, currentY + 4.2);
-  doc.text('PRAZO ANS (RN 566)', leftMargin + 133, currentY + 4.2);
-  doc.text('SITUAÇÃO', leftMargin + 163, currentY + 4.2);
-
-  currentY += 6;
-
-  // Linhas da Tabela
-  const examItems = extractExamsFromCharacter(char);
-  examItems.forEach((exam, idx) => {
-    const isEven = idx % 2 === 0;
-    doc.setFillColor(isEven ? 255 : 248, isEven ? 255 : 250, isEven ? 255 : 252);
-    doc.rect(leftMargin, currentY, contentWidth, 6, 'F');
-    doc.setDrawColor(...slateBorder);
-    doc.setLineWidth(0.15);
-    doc.line(leftMargin, currentY + 6, leftMargin + contentWidth, currentY + 6);
-
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(7);
-    doc.setTextColor(...slateDark);
-    doc.text(exam.itemNumber, leftMargin + 4, currentY + 4.2);
-
-    doc.setFont('helvetica', 'normal');
-    const examNameShort = exam.name.length > 55 ? exam.name.slice(0, 52) + '...' : exam.name;
-    doc.text(examNameShort, leftMargin + 16, currentY + 4.2);
-
-    doc.setFont('helvetica', 'normal');
-    doc.setTextColor(...slateMuted);
-    doc.text(exam.tussCode, leftMargin + 105, currentY + 4.2);
-    doc.text(exam.deadlineAns, leftMargin + 133, currentY + 4.2);
-
-    doc.setFont('helvetica', 'bold');
-    doc.setTextColor(exam.status.includes('Liberado') ? 4 : 180, exam.status.includes('Liberado') ? 120 : 83, exam.status.includes('Liberado') ? 87 : 9);
-    doc.text(exam.status, leftMargin + 163, currentY + 4.2);
-
-    currentY += 6;
-  });
-
-  // Caixa de Indicação Clínica e Contexto do Pedido Médico
-  currentY += 2;
-  doc.setFillColor(...bgLight);
-  doc.setDrawColor(...slateBorder);
-  doc.setLineWidth(0.2);
-  doc.roundedRect(leftMargin, currentY, contentWidth, 16, 1.5, 1.5, 'FD');
-
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(6.5);
-  doc.setTextColor(...primaryEmerald);
-  doc.text('INDICAÇÃO CLÍNICA & CONTEXTO DA SOLICITAÇÃO MÉDICA:', leftMargin + 3, currentY + 4);
-
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(6.8);
+  doc.setFontSize(7.5);
   doc.setTextColor(...slateDark);
-  const contextLines = doc.splitTextToSize(
-    char.serviceContext || 'Solicitação médica ambulatorial de rotina para acompanhamento clínico preventivo.',
-    contentWidth - 6
-  );
-  doc.text(contextLines.slice(0, 3), leftMargin + 3, currentY + 8);
+  const tempLines = doc.splitTextToSize(char.temperament || 'Neutro, aguarda orientações.', contentWidth - 8);
+  doc.text(tempLines.slice(0, 2), col1, currentY + 27.5);
 
-  currentY += 20;
+  if (hasObjectives) {
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(6.5);
+    doc.setTextColor(...slateMuted);
+    doc.text('OBJETIVOS DA SIMULAÇÃO:', col1, currentY + 33.5);
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(7.5);
+    doc.setTextColor(...slateDark);
+    const objLines = doc.splitTextToSize(char.objectives, contentWidth - 8);
+    doc.text(objLines.slice(0, 2), col1, currentY + 37.5);
+  }
+
+  currentY += cardBoxHeight + 6;
 
   // ============================================================================
-  // D) ORIENTAÇÕES DE COLETA E PREPARO
+  // C) CONTEXTO DO ATENDIMENTO & HISTÓRICO
   // ============================================================================
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(8.5);
   doc.setTextColor(...primaryEmerald);
-  doc.text('3. ORIENTAÇÕES DE COLETA, PREPARO E REGRAS OPERACIONAIS', leftMargin, currentY);
+  doc.text('2. CONTEXTO DO ATENDIMENTO & HISTÓRICO', leftMargin, currentY);
 
   currentY += 3.5;
 
-  const guidelines = getPreparationGuidelines(char);
-  const prepBoxHeight = guidelines.length * 6.5 + 4;
+  const contextText = char.serviceContext?.trim() || 'Sem contexto adicional informado para este atendimento.';
+  const contextLines = doc.splitTextToSize(contextText, contentWidth - 8);
+  const contextBoxHeight = Math.max(contextLines.length * 4.2 + 7, 18);
+
   doc.setFillColor(...bgLight);
   doc.setDrawColor(...slateBorder);
   doc.setLineWidth(0.25);
-  doc.roundedRect(leftMargin, currentY, contentWidth, prepBoxHeight, 1.5, 1.5, 'FD');
+  doc.roundedRect(leftMargin, currentY, contentWidth, contextBoxHeight, 2, 2, 'FD');
 
-  let prepY = currentY + 4.5;
-  guidelines.forEach((g) => {
-    doc.setFillColor(...mediumEmerald);
-    doc.circle(leftMargin + 4, prepY - 1, 0.9, 'F');
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(7.5);
+  doc.setTextColor(...slateDark);
+  doc.text(contextLines, leftMargin + 4, currentY + 5.5);
 
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(6.8);
-    doc.setTextColor(...slateDark);
-    const splitted = doc.splitTextToSize(g, contentWidth - 12);
-    doc.text(splitted, leftMargin + 8, prepY);
-    prepY += splitted.length > 1 ? 7.5 : 6;
-  });
-
-  currentY += prepBoxHeight + 4;
+  currentY += contextBoxHeight + 6;
 
   // ============================================================================
-  // FALAS E OBJEÇÕES DO PACIENTE NA SIMULAÇÃO
+  // D) ROTEIRO DE SIMULAÇÃO (FALAS & OBJEÇÕES TÍPICAS)
   // ============================================================================
   const rawPhrases = Array.isArray(char.typicalPhrases)
     ? char.typicalPhrases
@@ -361,38 +246,49 @@ export function downloadGuidePdf(char: Character, exerciseTitle?: string): void 
     ? [char.typicalPhrases]
     : [];
 
-  if (rawPhrases.length > 0 && currentY < 240) {
+  if (rawPhrases.length > 0 && currentY < 235) {
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(8);
+    doc.setFontSize(8.5);
     doc.setTextColor(...primaryEmerald);
-    doc.text('4. ROTEIRO DE SIMULAÇÃO (FALAS & OBJEÇÕES TÍPICAS)', leftMargin, currentY);
+    doc.text('3. ROTEIRO DE SIMULAÇÃO (FALAS & OBJEÇÕES TÍPICAS)', leftMargin, currentY);
 
-    currentY += 3;
-    const phraseBoxHeight = Math.min(rawPhrases.slice(0, 3).length * 6 + 3, 22);
+    currentY += 3.5;
+
+    let totalLinesCount = 0;
+    const formattedPhrases = rawPhrases.map((phrase, idx) => {
+      const pLines = doc.splitTextToSize(`"${phrase}"`, contentWidth - 25);
+      totalLinesCount += pLines.length;
+      return { idx: idx + 1, lines: pLines };
+    });
+
+    const maxPhrasesHeight = 270 - currentY;
+    const phraseBoxHeight = Math.min(totalLinesCount * 5 + formattedPhrases.length * 2.5 + 6, maxPhrasesHeight);
+
     doc.setFillColor(255, 255, 255);
     doc.setDrawColor(...slateBorder);
-    doc.roundedRect(leftMargin, currentY, contentWidth, phraseBoxHeight, 1.5, 1.5, 'FD');
+    doc.setLineWidth(0.25);
+    doc.roundedRect(leftMargin, currentY, contentWidth, phraseBoxHeight, 2, 2, 'FD');
 
-    let phY = currentY + 4;
-    rawPhrases.slice(0, 3).forEach((phrase, idx) => {
+    let phY = currentY + 5;
+    for (const item of formattedPhrases) {
+      if (phY > currentY + phraseBoxHeight - 6) break;
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(6.5);
       doc.setTextColor(...mediumEmerald);
-      doc.text(`[Fala ${idx + 1}]`, leftMargin + 3, phY);
+      doc.text(`[Fala ${item.idx}]`, leftMargin + 4, phY);
 
       doc.setFont('helvetica', 'italic');
-      doc.setFontSize(6.8);
+      doc.setFontSize(7.2);
       doc.setTextColor(...slateDark);
-      const pLines = doc.splitTextToSize(`"${phrase}"`, contentWidth - 25);
-      doc.text(pLines[0] || '', leftMargin + 16, phY);
-      phY += 5.5;
-    });
+      doc.text(item.lines, leftMargin + 18, phY);
+      phY += item.lines.length * 4.2 + 3.2;
+    }
 
-    currentY += phraseBoxHeight + 5;
+    currentY += phraseBoxHeight + 6;
   }
 
   // ============================================================================
-  // E) RODAPÉ OFICIAL
+  // E) RODAPÉ LIMPO E INSTITUCIONAL
   // ============================================================================
   const footerY = 282;
   doc.setDrawColor(...slateBorder);
@@ -400,18 +296,47 @@ export function downloadGuidePdf(char: Character, exerciseTitle?: string): void 
   doc.line(leftMargin, footerY, leftMargin + contentWidth, footerY);
 
   doc.setFont('helvetica', 'normal');
-  doc.setFontSize(6.5);
+  doc.setFontSize(7);
   doc.setTextColor(...slateMuted);
-  const exRef = exerciseTitle ? `Exercício: ${exerciseTitle.slice(0, 45)}` : 'Simulação de Atendimento Clínico';
-  doc.text(`Portal de Desempenho e Capacitação Operacional   ·   ${exRef}`, leftMargin, footerY + 4);
-  doc.text('Aviso Legal: Documento gerado estritamente para capacitação, simulação e avaliação. RN ANS 566/2022.', leftMargin, footerY + 7.5);
+  const exRef = exerciseTitle ? `Exercício: ${exerciseTitle.slice(0, 45)}` : 'Perfil Cadastral do Cliente';
+  doc.text(`Portal de Desempenho Operacional   ·   ${exRef}`, leftMargin, footerY + 5);
 
   doc.setFont('helvetica', 'bold');
-  doc.text('Página 1 de 1', leftMargin + contentWidth - 16, footerY + 4);
+  doc.text(`Página ${pageNumber} de ${totalPages}`, leftMargin + contentWidth - 24, footerY + 5);
+}
 
-  // Nome padronizado do arquivo: Guia_{nome_cliente}.pdf
+/**
+ * Gera e dispara o download do PDF estilizado da Ficha do Cliente / Roteiro individual
+ */
+export function downloadGuidePdf(char: Character, exerciseTitle?: string): void {
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+  renderCharacterSheetOnDoc(doc, char, exerciseTitle, 1, 1);
   const safeName = char.name.replace(/[^a-zA-Z0-9_\u00C0-\u017F]+/g, '_');
-  doc.save(`Guia_${safeName}.pdf`);
+  doc.save(`Cliente_${safeName}.pdf`);
+}
+
+/**
+ * Gera e dispara o download de múltiplos roteiros/clientes consolidados em um ÚNICO PDF
+ */
+export function downloadMultipleGuidesPdf(
+  characters: Character[],
+  exerciseTitle?: string,
+  batchTitle?: string
+): void {
+  if (!characters || characters.length === 0) return;
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+  const total = characters.length;
+
+  characters.forEach((char, index) => {
+    if (index > 0) {
+      doc.addPage();
+    }
+    renderCharacterSheetOnDoc(doc, char, exerciseTitle, index + 1, total);
+  });
+
+  const baseTitle = batchTitle || (exerciseTitle ? `Roteiros_${exerciseTitle}` : 'Roteiros_Consolidados');
+  const safeTitle = baseTitle.replace(/[^a-zA-Z0-9_\u00C0-\u017F]+/g, '_');
+  doc.save(`${safeTitle}.pdf`);
 }
 
 /**
@@ -798,6 +723,22 @@ export interface DossierEvaluationHistoryItem {
   finalScore: number;
   completedAt: string;
   observations?: string;
+  criteriaAnswers?: Array<{
+    name: string;
+    checked: boolean;
+    weight: number;
+    notes?: string;
+  }>;
+}
+
+export interface DossierSurveySummaryItem {
+  surveyTitle: string;
+  completedAt: string;
+  questions: Array<{
+    questionText: string;
+    answer: string;
+    notes?: string;
+  }>;
 }
 
 export interface DossierTrackItem {
@@ -811,15 +752,19 @@ export interface DossierTrackItem {
 
 export interface CollaboratorDossierData {
   collaboratorName: string;
+  corporateUsername?: string;
   roleTitle: string;
   registrationCode: string;
   cellTeam: string;
   status: string;
   averageScore: number;
+  completionRate?: number;
+  totalTrackSteps?: number;
   totalEvaluations: number;
   totalSurveys: number;
   trackSteps: DossierTrackItem[];
   evaluationHistory: DossierEvaluationHistoryItem[];
+  surveyResponsesSummary?: DossierSurveySummaryItem[];
   generatedAt: string;
 }
 
@@ -829,8 +774,8 @@ export interface CollaboratorDossierData {
 export function downloadCollaboratorDossierPdf(dossier: CollaboratorDossierData): void {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
 
-  const primaryEmerald = [15, 62, 46] as const; // #0f3e2e
-  const mediumEmerald = [4, 120, 87] as const;
+  const primaryEmerald = [6, 78, 59] as const; // #064E3B corporativo
+  const mediumEmerald = [5, 150, 105] as const; // #059669
   const slateDark = [15, 23, 42] as const;
   const slateMuted = [100, 116, 139] as const;
   const slateBorder = [203, 213, 225] as const;
@@ -873,31 +818,51 @@ export function downloadCollaboratorDossierPdf(dossier: CollaboratorDossierData)
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(10.5);
   doc.setTextColor(...slateDark);
-  doc.text(dossier.collaboratorName, leftMargin + 4, currentY + 7);
+  const collabHeader = dossier.corporateUsername
+    ? `${dossier.collaboratorName} (${dossier.corporateUsername})`
+    : dossier.collaboratorName;
+  doc.text(collabHeader, leftMargin + 4, currentY + 7);
 
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(7.5);
   doc.setTextColor(...slateMuted);
   doc.text(`Cargo: ${dossier.roleTitle}   ·   Matrícula: ${dossier.registrationCode || 'N/A'}   ·   Célula: ${dossier.cellTeam}`, leftMargin + 4, currentY + 12);
-  doc.text(`Status Oficial de Desempenho: ${dossier.status.toUpperCase()}`, leftMargin + 4, currentY + 17);
+  doc.text(`Status Oficial de Desempenho: ${dossier.status}`, leftMargin + 4, currentY + 17);
 
-  // Status Badge
-  const statusColor = dossier.status === 'aprovado' ? [16, 185, 129] : dossier.status === 'necessita_reforco' ? [239, 68, 68] : [59, 130, 246];
+  // Status Badge com cor semântica (#064E3B / amber / slate)
+  const stLower = dossier.status.toLowerCase();
+  const statusColor = stLower.includes('conclu')
+    ? [16, 185, 129]
+    : stLower.includes('treinamento')
+    ? [217, 119, 6]
+    : [100, 116, 139];
   doc.setFillColor(statusColor[0], statusColor[1], statusColor[2]);
-  doc.roundedRect(leftMargin + contentWidth - 36, currentY + 4, 32, 6, 1, 1, 'F');
+  doc.roundedRect(leftMargin + contentWidth - 42, currentY + 4, 38, 6, 1, 1, 'F');
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(6.5);
   doc.setTextColor(...white);
-  doc.text(dossier.status.replace('_', ' ').toUpperCase(), leftMargin + contentWidth - 20, currentY + 8, { align: 'center' });
+  doc.text(dossier.status.toUpperCase(), leftMargin + contentWidth - 23, currentY + 8, { align: 'center' });
 
   currentY += 26;
 
-  // 3. Resumo Executivo de Métricas
+  // 3. Resumo Executivo de Indicadores
   const metricBoxWidth = (contentWidth - 6) / 3;
   const metrics = [
-    { label: 'MÉDIA GERAL DE NOTAS', val: `${dossier.averageScore.toFixed(1)} / 10`, sub: `${Math.round(dossier.averageScore * 10)}% de conformidade` },
-    { label: 'AVALIAÇÕES CONCLUÍDAS', val: `${dossier.totalEvaluations}`, sub: 'Checklists aplicados' },
-    { label: 'PESQUISAS DE SATISFAÇÃO', val: `${dossier.totalSurveys}`, sub: 'Respostas registradas' },
+    {
+      label: '% CONCLUÍDO',
+      val: `${dossier.completionRate ?? (dossier.trackSteps.length > 0 ? Math.round((dossier.trackSteps.filter((s) => s.status === 'concluido').length / dossier.trackSteps.length) * 100) : 0)}%`,
+      sub: 'Evolução na trilha',
+    },
+    {
+      label: 'MÉDIA GERAL DAS NOTAS',
+      val: `${dossier.averageScore.toFixed(1)} / 10`,
+      sub: `${Math.round(dossier.averageScore * 10)}% de aproveitamento`,
+    },
+    {
+      label: 'TOTAL DE ETAPAS',
+      val: `${dossier.totalTrackSteps ?? dossier.trackSteps.length}`,
+      sub: `${dossier.totalEvaluations} avaliações realizadas`,
+    },
   ];
 
   metrics.forEach((m, idx) => {
@@ -1017,14 +982,19 @@ export function downloadCollaboratorDossierPdf(dossier: CollaboratorDossierData)
     currentY += 12;
   } else {
     dossier.evaluationHistory.forEach((evalItem, idx) => {
-      if (currentY > 235) {
+      const hasCriteria = Boolean(evalItem.criteriaAnswers && evalItem.criteriaAnswers.length > 0);
+      const criteriaList = (evalItem.criteriaAnswers || []).slice(0, 8);
+      const extraHeight = hasCriteria ? criteriaList.length * 4.5 + 5 : 0;
+      const cardHeight = 24 + extraHeight;
+
+      if (currentY + cardHeight > 275) {
         doc.addPage();
         currentY = 15;
       }
 
       doc.setFillColor(...bgLight);
       doc.setDrawColor(...slateBorder);
-      doc.roundedRect(leftMargin, currentY, contentWidth, 24, 1.5, 1.5, 'FD');
+      doc.roundedRect(leftMargin, currentY, contentWidth, cardHeight, 1.5, 1.5, 'FD');
 
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(7.5);
@@ -1062,38 +1032,90 @@ export function downloadCollaboratorDossierPdf(dossier: CollaboratorDossierData)
       doc.setTextColor(evalItem.finalScore >= 7 ? 4 : 220, evalItem.finalScore >= 7 ? 120 : 38, evalItem.finalScore >= 7 ? 87 : 38);
       doc.text(`${evalItem.finalScore.toFixed(1)}/10`, leftMargin + contentWidth - 18, currentY + 14, { align: 'center' });
 
-      currentY += 27;
+      // Detalhamento de critérios avaliados
+      if (hasCriteria) {
+        let critY = currentY + (evalItem.observations ? 22 : 18);
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(6);
+        doc.setTextColor(...slateDark);
+        doc.text('CRITÉRIOS AVALIADOS:', leftMargin + 4, critY);
+        critY += 3.5;
+
+        criteriaList.forEach((c) => {
+          doc.setFont('helvetica', 'normal');
+          doc.setFontSize(5.8);
+          if (c.checked) {
+            doc.setTextColor(4, 120, 87);
+            doc.text(`[CONFORME] ${c.name}${c.notes ? ` - "${c.notes}"` : ''}`, leftMargin + 6, critY);
+          } else {
+            doc.setTextColor(185, 28, 28);
+            doc.text(`[NÃO CONFORME] ${c.name}${c.notes ? ` - "${c.notes}"` : ''}`, leftMargin + 6, critY);
+          }
+          critY += 4;
+        });
+      }
+
+      currentY += cardHeight + 3.5;
     });
   }
 
-  // 6. Espaço Formal de Assinaturas
-  if (currentY > 240) {
-    doc.addPage();
-    currentY = 25;
-  } else {
+  // 3. Resumo das Pesquisas de Satisfação & Feedback do Aluno
+  if (dossier.surveyResponsesSummary && dossier.surveyResponsesSummary.length > 0) {
+    if (currentY > 235) {
+      doc.addPage();
+      currentY = 15;
+    } else {
+      currentY += 4;
+    }
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8.5);
+    doc.setTextColor(...primaryEmerald);
+    doc.text('3. PESQUISAS DE SATISFAÇÃO & RESPOSTAS DO ALUNO', leftMargin, currentY + 3);
+
     currentY += 6;
+
+    dossier.surveyResponsesSummary.forEach((surveyItem) => {
+      const qCount = surveyItem.questions.length;
+      const srvCardHeight = 12 + qCount * 8;
+
+      if (currentY + srvCardHeight > 275) {
+        doc.addPage();
+        currentY = 15;
+      }
+
+      doc.setFillColor(...bgLight);
+      doc.setDrawColor(...slateBorder);
+      doc.roundedRect(leftMargin, currentY, contentWidth, srvCardHeight, 1.5, 1.5, 'FD');
+
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(7.5);
+      doc.setTextColor(...slateDark);
+      doc.text(surveyItem.surveyTitle, leftMargin + 4, currentY + 5.5);
+
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(6.5);
+      doc.setTextColor(...slateMuted);
+      doc.text(`Data de Resposta: ${surveyItem.completedAt}`, leftMargin + 4, currentY + 9.5);
+
+      let qY = currentY + 14;
+      surveyItem.questions.forEach((q, qIdx) => {
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(6.2);
+        doc.setTextColor(51, 65, 85);
+        doc.text(`${qIdx + 1}. ${q.questionText}`, leftMargin + 4, qY);
+
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(6);
+        doc.setTextColor(4, 120, 87);
+        doc.text(`Resposta: ${q.answer}${q.notes ? `   ·   Justificativa: "${q.notes}"` : ''}`, leftMargin + 6, qY + 3.5);
+
+        qY += 8;
+      });
+
+      currentY += srvCardHeight + 4;
+    });
   }
-
-  const sigWidth = 75;
-  const sig1X = leftMargin + 10;
-  const sig2X = leftMargin + contentWidth - sigWidth - 10;
-
-  doc.setDrawColor(...slateBorder);
-  doc.setLineWidth(0.4);
-  doc.line(sig1X, currentY + 14, sig1X + sigWidth, currentY + 14);
-  doc.line(sig2X, currentY + 14, sig2X + sigWidth, currentY + 14);
-
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(7);
-  doc.setTextColor(...slateDark);
-  doc.text('Avaliador / Coordenador Responsável', sig1X + sigWidth / 2, currentY + 18, { align: 'center' });
-  doc.text('Colaborador Avaliado', sig2X + sigWidth / 2, currentY + 18, { align: 'center' });
-
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(6);
-  doc.setTextColor(...slateMuted);
-  doc.text('Assinatura e Carimbo', sig1X + sigWidth / 2, currentY + 21.5, { align: 'center' });
-  doc.text(dossier.collaboratorName, sig2X + sigWidth / 2, currentY + 21.5, { align: 'center' });
 
   // Rodapé institucional
   const pageCount = (doc as any).internal.getNumberOfPages();

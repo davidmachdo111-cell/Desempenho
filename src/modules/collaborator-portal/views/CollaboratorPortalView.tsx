@@ -59,11 +59,6 @@ export const CollaboratorPortalView: React.FC<CollaboratorPortalViewProps> = () 
   } = usePortalStore();
 
 
-  // Modal de Relatório do Colaborador (Laudo Oficial Concluído)
-  const [viewReportAssignment, setViewReportAssignment] = useState<CollaboratorChecklist | null>(
-    null
-  );
-
   // Modal para Responder Pesquisa
   const [activeSurveyToAnswer, setActiveSurveyToAnswer] = useState<Survey | null>(null);
   const [surveyAnswers, setSurveyAnswers] = useState<Record<string, SurveyAnswerItem>>({});
@@ -271,14 +266,23 @@ export const CollaboratorPortalView: React.FC<CollaboratorPortalViewProps> = () 
             </div>
           </div>
 
-          {/* Cartão de Desempenho e Média */}
+          {/* Cartão de Resumo das Etapas */}
           <div className="bg-white/10 backdrop-blur-xs border border-white/15 rounded-xl p-4 flex items-center gap-5 shrink-0">
             <div>
               <div className="text-[11px] text-emerald-200 font-semibold uppercase tracking-wider">
-                Média Geral
+                Status da Trilha
               </div>
-              <div className="text-2xl font-black font-mono text-white mt-0.5">
-                {averageScore !== null ? `${averageScore} / 10` : '---'}
+              <div className="text-sm font-bold text-white mt-1 flex items-center gap-1.5">
+                {progressPct === 100 ? (
+                  <>
+                    <CheckCircle2 className="w-4 h-4 text-emerald-300" />
+                    <span>Concluído</span>
+                  </>
+                ) : completedStages > 0 ? (
+                  <span>Em Treinamento</span>
+                ) : (
+                  <span>A Realizar</span>
+                )}
               </div>
             </div>
             <div className="w-px h-10 bg-white/20" />
@@ -329,7 +333,7 @@ export const CollaboratorPortalView: React.FC<CollaboratorPortalViewProps> = () 
                 Etapas de Simulação e Critérios de Atendimento
               </h2>
               <p className="text-xs text-slate-500">
-                Acompanhe o status de cada checklist avaliado pelos instrutores e acesse seus laudos oficiais.
+                Acompanhe o status de cada etapa concluída e responda às pesquisas da sua trilha.
               </p>
             </div>
           </div>
@@ -459,30 +463,14 @@ export const CollaboratorPortalView: React.FC<CollaboratorPortalViewProps> = () 
                           : targetSurvey?.description || 'Pesquisa de satisfação e percepção sobre o treinamento.'}
                       </p>
 
-                      {/* Feedback ou Observações */}
-                      {isCompleted && assignment?.generalObservations && (
-                        <div className="p-3 bg-white border border-emerald-200 rounded-xl text-xs space-y-1">
-                          <div className="font-bold text-emerald-950 flex items-center gap-1.5 text-[11px]">
-                            <MessageSquare className="w-3.5 h-3.5 text-emerald-700" />
-                            <span>Observações do Avaliador:</span>
-                          </div>
-                          <p className="text-slate-700 italic leading-relaxed">
-                            &ldquo;{assignment.generalObservations}&rdquo;
-                          </p>
-                        </div>
-                      )}
                     </div>
 
-                    {/* Lado Direito: Ações & Notas */}
+                    {/* Lado Direito: Ações */}
                     <div className="flex items-center gap-3 shrink-0 self-end md:self-center">
-                      {isCompleted && typeof step.finalScore === 'number' && (
-                        <div className="text-right">
-                          <div className="text-[10px] font-bold text-emerald-800 uppercase tracking-wider">
-                            Nota Obtida
-                          </div>
-                          <div className="font-mono text-xl font-bold text-emerald-900 bg-emerald-100/80 px-3 py-1 rounded-lg border border-emerald-300 inline-block mt-0.5">
-                            {step.finalScore.toFixed(1)} / 10
-                          </div>
+                      {isCompleted && (
+                        <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-200 font-bold text-xs">
+                          <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                          <span>Concluído</span>
                         </div>
                       )}
 
@@ -512,18 +500,6 @@ export const CollaboratorPortalView: React.FC<CollaboratorPortalViewProps> = () 
                           <Lock className="w-3.5 h-3.5 text-slate-400" />
                           <span>Bloqueada (Etapa Anterior Pendente)</span>
                         </div>
-                      )}
-
-                      {/* Botão de Ver Laudo Oficial (se Checklist Concluído) */}
-                      {isCompleted && isChecklist && assignment && (
-                        <button
-                          type="button"
-                          onClick={() => setViewReportAssignment(assignment)}
-                          className="px-3.5 py-2 text-xs font-bold text-white bg-[#0f3e2e] hover:bg-emerald-900 rounded-xl transition-colors flex items-center gap-1.5 shadow-xs cursor-pointer"
-                        >
-                          <FileText className="w-3.5 h-3.5" />
-                          <span>Visualizar Laudo Oficial & Feedback</span>
-                        </button>
                       )}
                     </div>
                   </div>
@@ -583,30 +559,15 @@ export const CollaboratorPortalView: React.FC<CollaboratorPortalViewProps> = () 
                     </div>
 
                     <div className="flex items-center gap-3 shrink-0 self-end md:self-center">
-                      {isCompleted && typeof asg.finalScore === 'number' ? (
-                        <div className="text-right">
-                          <div className="text-[10px] font-bold text-emerald-800 uppercase tracking-wider">
-                            Nota Obtida
-                          </div>
-                          <div className="font-mono text-xl font-bold text-emerald-900 bg-emerald-100/80 px-3 py-1 rounded-lg border border-emerald-300 inline-block mt-0.5">
-                            {asg.finalScore.toFixed(1)} / 10
-                          </div>
+                      {isCompleted ? (
+                        <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-200 font-bold text-xs">
+                          <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                          <span>Concluído</span>
                         </div>
                       ) : (
                         <div className="text-xs text-slate-400 italic">
                           Aguardando avaliação
                         </div>
-                      )}
-
-                      {isCompleted && (
-                        <button
-                          type="button"
-                          onClick={() => setViewReportAssignment(asg)}
-                          className="px-3.5 py-2 text-xs font-bold text-white bg-[#0f3e2e] hover:bg-emerald-900 rounded-xl transition-colors flex items-center gap-1.5 shadow-xs cursor-pointer"
-                        >
-                          <FileText className="w-3.5 h-3.5" />
-                          <span>Visualizar Laudo Oficial & Feedback</span>
-                        </button>
                       )}
                     </div>
                   </div>
@@ -776,142 +737,6 @@ export const CollaboratorPortalView: React.FC<CollaboratorPortalViewProps> = () 
           </div>
         </div>
       )}
-
-      {/* ========================================================= */}
-      {/* MODAL DE LAUDO / RELATÓRIO DO COLABORADOR */}
-      {/* ========================================================= */}
-      {viewReportAssignment && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl border border-slate-200 overflow-hidden flex flex-col max-h-[90vh] animate-in fade-in zoom-in-95 duration-200">
-            <div className="px-6 py-4 bg-[#0f3e2e] text-white flex items-center justify-between shrink-0">
-              <div>
-                <h3 className="font-bold text-sm">Laudo Oficial da Avaliação</h3>
-                <p className="text-[11px] text-emerald-200">
-                  {checklists.find((c) => c.id === viewReportAssignment.checklistId)?.title ||
-                    'Checklist'}
-                </p>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    const chk = checklists.find((c) => c.id === viewReportAssignment.checklistId);
-                    downloadReportPdf({
-                      collaboratorName: currentCollaborator?.fullName || 'Colaborador',
-                      department: currentCollaborator?.cellTeam || 'Laboratório',
-                      cell: currentCollaborator?.cellTeam || 'Laboratório',
-                      checklistTitle: chk?.title || 'Checklist de Avaliação',
-                      checklistCategory: chk?.categoryName || 'Geral',
-                      finalScore: viewReportAssignment.finalScore || 0,
-                      evaluatedAt: viewReportAssignment.completedAt || new Date().toISOString(),
-                      evaluatorName: 'Equipe de Avaliação e Treinamento',
-                      notes: viewReportAssignment.generalObservations || undefined,
-                      items: viewReportAssignment.criteriaAnswers.map((ans) => ({
-                        name: ans.name,
-                        weight: ans.weight,
-                        checked: ans.checked,
-                      })),
-                    });
-                  }}
-                  className="px-3 py-1.5 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-500 rounded-lg transition-colors flex items-center gap-1 cursor-pointer"
-                >
-                  <Download className="w-3.5 h-3.5" />
-                  <span>Baixar PDF</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setViewReportAssignment(null)}
-                  className="text-emerald-200 hover:text-white p-1 rounded-lg hover:bg-white/10 cursor-pointer"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-            </div>
-
-            <div className="p-6 overflow-y-auto space-y-5 text-xs flex-1">
-              <div className="flex items-center justify-between bg-slate-50 p-4 rounded-xl border border-slate-200">
-                <div>
-                  <div className="text-[11px] text-slate-500 font-semibold uppercase">
-                    Status e Data
-                  </div>
-                  <div className="text-sm font-bold text-slate-900 mt-0.5">
-                    Concluído em{' '}
-                    {viewReportAssignment.completedAt
-                      ? new Date(viewReportAssignment.completedAt).toLocaleDateString('pt-BR')
-                      : '---'}
-                  </div>
-                </div>
-
-                <div className="text-right">
-                  <div className="text-[11px] text-slate-500 font-semibold uppercase">
-                    Nota Final
-                  </div>
-                  <div className="text-2xl font-black font-mono text-emerald-800">
-                    {viewReportAssignment.finalScore?.toFixed(1)} / 10
-                  </div>
-                </div>
-              </div>
-
-              {/* Lista dos Critérios */}
-              <div className="space-y-2">
-                <div className="font-bold text-slate-900 text-xs">
-                  Detalhamento dos Critérios Avaliados:
-                </div>
-                <div className="space-y-1.5 border border-slate-200 rounded-xl p-3 bg-slate-50/50">
-                  {viewReportAssignment.criteriaAnswers.map((crit, idx) => (
-                    <div
-                      key={crit.criterionId || idx}
-                      className="flex items-center justify-between p-2 rounded-lg bg-white border border-slate-100 text-xs"
-                    >
-                      <div className="flex items-center gap-2">
-                        {crit.checked ? (
-                          <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                        ) : (
-                          <span className="w-4 h-4 rounded-full border border-slate-300 flex items-center justify-center shrink-0">
-                            <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
-                          </span>
-                        )}
-                        <span className={crit.checked ? 'font-medium text-slate-800' : 'text-slate-500'}>
-                          {crit.name}
-                        </span>
-                      </div>
-                      <span className="text-[11px] font-mono font-bold text-slate-500 shrink-0 ml-2">
-                        Peso {crit.weight}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Observações */}
-              {viewReportAssignment.generalObservations && (
-                <div className="p-4 bg-emerald-50/60 border border-emerald-200/80 rounded-xl space-y-1">
-                  <div className="font-bold text-emerald-950 text-xs">
-                    Comentários e Orientações do Instrutor:
-                  </div>
-                  <p className="text-slate-700 italic leading-relaxed">
-                    &ldquo;{viewReportAssignment.generalObservations}&rdquo;
-                  </p>
-                </div>
-              )}
-            </div>
-
-            <div className="px-6 py-4 bg-slate-50 border-t border-slate-200 flex justify-end shrink-0">
-              <button
-                type="button"
-                onClick={() => setViewReportAssignment(null)}
-                className="px-5 py-2 bg-slate-800 hover:bg-slate-900 text-white rounded-xl text-xs font-bold transition-all cursor-pointer"
-              >
-                Fechar
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-
     </div>
   );
 };

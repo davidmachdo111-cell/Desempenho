@@ -181,6 +181,11 @@ interface PortalStoreContextValue {
     collaboratorId: string,
     checklistIds: string[]
   ) => Promise<MutationResult>;
+  ensureCollaboratorChecklistAssignment: (
+    collaboratorId: string,
+    checklistId: string,
+    preferredId?: string
+  ) => string;
   updateCollaboratorTrack: (
     collaboratorId: string,
     steps: CollaboratorTrackStep[]
@@ -287,30 +292,14 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
       if (stored) {
         const parsed: UserProfile[] = JSON.parse(stored);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          // Garante que os 4 perfis fundamentais de teste sempre existam
-          if (!parsed.some((u) => u.username === 'david.furtado')) {
-            const master = INITIAL_USERS.find((u) => u.username === 'david.furtado');
-            if (master) parsed.unshift(master);
-          }
-          if (!parsed.some((u) => u.username === 'mariana.avaliador')) {
-            const evalUser = INITIAL_USERS.find((u) => u.username === 'mariana.avaliador');
-            if (evalUser) {
-              const davidIdx = parsed.findIndex((u) => u.username === 'david.furtado');
-              parsed.splice(davidIdx >= 0 ? davidIdx + 1 : 1, 0, evalUser);
+          // Preserva todos os usuários cadastrados e garante os perfis corporativos essenciais
+          const combined = [...parsed];
+          INITIAL_USERS.forEach((def) => {
+            if (!combined.some((u) => u.username === def.username || u.id === def.id)) {
+              combined.push(def);
             }
-          }
-          if (!parsed.some((u) => u.username === 'carlos.ator')) {
-            const actorUser = INITIAL_USERS.find((u) => u.username === 'carlos.ator');
-            if (actorUser) {
-              const marianaIdx = parsed.findIndex((u) => u.username === 'mariana.avaliador');
-              parsed.splice(marianaIdx >= 0 ? marianaIdx + 1 : 2, 0, actorUser);
-            }
-          }
-          if (!parsed.some((u) => u.username === 'lucas.silveira')) {
-            const demoCollab = INITIAL_USERS.find((u) => u.username === 'lucas.silveira');
-            if (demoCollab) parsed.push(demoCollab);
-          }
-          return parsed;
+          });
+          return combined;
         }
       }
     } catch {
@@ -322,13 +311,13 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
   const [currentUserId, setCurrentUserId] = useState<string | null>(() => {
     try {
       const saved = localStorage.getItem('portal_current_user_id');
-      if (saved !== null) {
-        return saved === '' ? null : saved;
+      if (saved !== null && saved !== '') {
+        return saved;
       }
     } catch {
       // fallback
     }
-    return INITIAL_USERS[0]?.id || null;
+    return INITIAL_USERS[0]?.id || 'usr-admin-master';
   });
 
   // Persistência automática
@@ -353,29 +342,12 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
   }, [currentUserId]);
 
   // Inicialização e atualização de dados padrão (versão v8 com Trilhas e Pesquisas)
-  React.useEffect(() => {
-    try {
-      if (!localStorage.getItem('portal_clean_mocks_v8')) {
-        localStorage.setItem('portal_learning_tracks_store', JSON.stringify(INITIAL_LEARNING_TRACKS));
-        localStorage.setItem('portal_surveys_store', JSON.stringify(INITIAL_SURVEYS));
-        localStorage.setItem('portal_survey_responses_store', JSON.stringify(INITIAL_SURVEY_RESPONSES));
-        const existingCollabs = localStorage.getItem('portal_collaborators_store');
-        if (!existingCollabs || JSON.parse(existingCollabs).length === 0) {
-          localStorage.setItem('portal_collaborators_store', JSON.stringify(INITIAL_COLLABORATORS));
-          localStorage.setItem('portal_collaborator_checklists_store', JSON.stringify(INITIAL_COLLABORATOR_CHECKLISTS));
-        }
-        localStorage.setItem('portal_clean_mocks_v8', 'true');
-      }
-    } catch {
-      // ignore
-    }
-  }, []);
-
   const [categories, setCategories] = useState<Category[]>(() => {
     try {
-      if (localStorage.getItem('portal_clean_mocks_v7')) {
-        const s = localStorage.getItem('portal_categories_store');
-        if (s) return JSON.parse(s);
+      const s = localStorage.getItem('portal_categories_store');
+      if (s !== null) {
+        const parsed = JSON.parse(s);
+        if (Array.isArray(parsed)) return parsed;
       }
     } catch {}
     return INITIAL_CATEGORIES;
@@ -383,19 +355,17 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const [cells, setCells] = useState<Cell[]>(() => {
     try {
-      if (localStorage.getItem('portal_clean_mocks_v5')) {
-        const s = localStorage.getItem('portal_cells_store');
-        if (s) {
-          const parsed = JSON.parse(s);
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            return parsed.map((c: Cell) => ({
-              ...c,
-              name: getCellName(c.name),
-              coordinatorName: c.coordinatorName?.includes('Convênio')
-                ? c.coordinatorName.replace('Convênio', 'Operadora')
-                : c.coordinatorName,
-            }));
-          }
+      const s = localStorage.getItem('portal_cells_store');
+      if (s !== null) {
+        const parsed = JSON.parse(s);
+        if (Array.isArray(parsed)) {
+          return parsed.map((c: Cell) => ({
+            ...c,
+            name: getCellName(c.name),
+            coordinatorName: c.coordinatorName?.includes('Convênio')
+              ? c.coordinatorName.replace('Convênio', 'Operadora')
+              : c.coordinatorName,
+          }));
         }
       }
     } catch {}
@@ -404,9 +374,10 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const [criteria, setCriteria] = useState<Criterion[]>(() => {
     try {
-      if (localStorage.getItem('portal_clean_mocks_v5')) {
-        const s = localStorage.getItem('portal_criteria_store');
-        if (s) return JSON.parse(s);
+      const s = localStorage.getItem('portal_criteria_store');
+      if (s !== null) {
+        const parsed = JSON.parse(s);
+        if (Array.isArray(parsed)) return parsed;
       }
     } catch {}
     return [];
@@ -414,10 +385,10 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const [characters, setCharacters] = useState<Character[]>(() => {
     try {
-      if (localStorage.getItem('portal_clean_mocks_v7')) {
-        const s = localStorage.getItem('portal_characters_store');
-        if (s) {
-          const parsed: Character[] = JSON.parse(s);
+      const s = localStorage.getItem('portal_characters_store');
+      if (s !== null) {
+        const parsed: Character[] = JSON.parse(s);
+        if (Array.isArray(parsed)) {
           return parsed.map((c) => ({
             ...c,
             cell: c.cell || 'LAB',
@@ -431,10 +402,10 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const [exercises, setExercises] = useState<Exercise[]>(() => {
     try {
-      if (localStorage.getItem('portal_clean_mocks_v7')) {
-        const s = localStorage.getItem('portal_exercises_store');
-        if (s) {
-          const parsed: Exercise[] = JSON.parse(s);
+      const s = localStorage.getItem('portal_exercises_store');
+      if (s !== null) {
+        const parsed: Exercise[] = JSON.parse(s);
+        if (Array.isArray(parsed)) {
           return parsed.map((ex) => ({
             ...ex,
             cell: ex.cell || 'LAB',
@@ -447,10 +418,10 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const [checklists, setChecklists] = useState<Checklist[]>(() => {
     try {
-      if (localStorage.getItem('portal_clean_mocks_v7')) {
-        const s = localStorage.getItem('portal_checklists_store');
-        if (s) {
-          const parsed: Checklist[] = JSON.parse(s);
+      const s = localStorage.getItem('portal_checklists_store');
+      if (s !== null) {
+        const parsed: Checklist[] = JSON.parse(s);
+        if (Array.isArray(parsed)) {
           return parsed.map((chk) => ({
             ...chk,
             cell: chk.cell || 'LAB',
@@ -464,12 +435,17 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
   const [collaborators, setCollaborators] = useState<Collaborator[]>(() => {
     try {
       const s = localStorage.getItem('portal_collaborators_store');
-      if (s) {
-        const parsed = JSON.parse(s);
-        if (Array.isArray(parsed) && parsed.length > 0) {
+      if (s !== null) {
+        const parsed: Collaborator[] = JSON.parse(s);
+        if (Array.isArray(parsed)) {
           return parsed.map((col: Collaborator) => ({
             ...col,
             cellTeam: getCellName(col.cellTeam),
+            track: (col.track || []).filter(
+              (step) =>
+                step.refId !== 'chk-lab-03' &&
+                !step.title?.toLowerCase().includes('orientações de coleta')
+            ),
           }));
         }
       }
@@ -480,9 +456,18 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
   const [collaboratorChecklists, setCollaboratorChecklists] = useState<CollaboratorChecklist[]>(() => {
     try {
       const s = localStorage.getItem('portal_collaborator_checklists_store');
-      if (s) {
+      if (s !== null) {
         const parsed = JSON.parse(s);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed)) {
+          return parsed
+            .filter((asg: CollaboratorChecklist) => asg.checklistId !== 'chk-lab-03')
+            .map((asg: CollaboratorChecklist) => {
+              if (asg.collaboratorId === 'col-lucas-silveira') {
+                return { ...asg, collaboratorId: 'col-colaborador-teste' };
+              }
+              return asg;
+            });
+        }
       }
     } catch {}
     return INITIAL_COLLABORATOR_CHECKLISTS;
@@ -491,9 +476,16 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
   const [learningTracks, setLearningTracks] = useState<LearningTrack[]>(() => {
     try {
       const s = localStorage.getItem('portal_learning_tracks_store');
-      if (s) {
+      if (s !== null) {
         const parsed = JSON.parse(s);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed)) {
+          return parsed.map((track: LearningTrack) => ({
+            ...track,
+            collaboratorIds: (track.collaboratorIds || []).map((cid) =>
+              cid === 'col-lucas-silveira' ? 'col-colaborador-teste' : cid
+            ),
+          }));
+        }
       }
     } catch {}
     return INITIAL_LEARNING_TRACKS;
@@ -502,9 +494,9 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
   const [surveys, setSurveys] = useState<Survey[]>(() => {
     try {
       const s = localStorage.getItem('portal_surveys_store');
-      if (s) {
+      if (s !== null) {
         const parsed = JSON.parse(s);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed)) return parsed;
       }
     } catch {}
     return INITIAL_SURVEYS;
@@ -513,9 +505,9 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
   const [surveyResponses, setSurveyResponses] = useState<SurveyResponse[]>(() => {
     try {
       const s = localStorage.getItem('portal_survey_responses_store');
-      if (s) {
+      if (s !== null) {
         const parsed = JSON.parse(s);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed)) return parsed;
       }
     } catch {}
     return INITIAL_SURVEY_RESPONSES;
@@ -524,7 +516,10 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>(() => {
     try {
       const s = localStorage.getItem('portal_audit_logs_store');
-      if (s) return JSON.parse(s);
+      if (s !== null) {
+        const parsed = JSON.parse(s);
+        if (Array.isArray(parsed)) return parsed;
+      }
     } catch {}
     return INITIAL_AUDIT_LOGS;
   });
@@ -1255,9 +1250,13 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
           }
         }
 
-        setCharacters((prev) =>
-          prev.map((c) => (c.id === payload.id ? { ...c, ...updatedChar } : c))
-        );
+        setCharacters((prev) => {
+          const next = prev.map((c) => (c.id === payload.id ? { ...c, ...updatedChar } : c));
+          try {
+            localStorage.setItem('portal_characters_store', JSON.stringify(next));
+          } catch {}
+          return next;
+        });
         appendAudit('Edição de Personagem', 'Personagens', payload.name, 'Sucesso');
         return { success: true, message: 'Cliente atualizado com sucesso!', characterId: payload.id };
       } else {
@@ -1304,7 +1303,13 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
           }
         }
 
-        setCharacters((prev) => [newChar, ...prev]);
+        setCharacters((prev) => {
+          const next = [newChar, ...prev];
+          try {
+            localStorage.setItem('portal_characters_store', JSON.stringify(next));
+          } catch {}
+          return next;
+        });
         appendAudit('Criação de Personagem', 'Personagens', newChar.name, 'Sucesso');
         return { success: true, message: 'Cliente cadastrado no Banco de Clientes com sucesso!', characterId: newCharId };
       }
@@ -1330,14 +1335,24 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
       }
 
       // Remove dos exercícios associados sem quebrar os exercícios
-      setExercises((prev) =>
-        prev.map((ex) => ({
+      setExercises((prev) => {
+        const next = prev.map((ex) => ({
           ...ex,
           characterIds: ex.characterIds.filter((cid) => cid !== characterId),
-        }))
-      );
+        }));
+        try {
+          localStorage.setItem('portal_exercises_store', JSON.stringify(next));
+        } catch {}
+        return next;
+      });
 
-      setCharacters((prev) => prev.filter((c) => c.id !== characterId));
+      setCharacters((prev) => {
+        const next = prev.filter((c) => c.id !== characterId);
+        try {
+          localStorage.setItem('portal_characters_store', JSON.stringify(next));
+        } catch {}
+        return next;
+      });
       appendAudit('Exclusão de Personagem', 'Personagens', `ID: ${characterId}`, 'Sucesso');
       return { success: true, message: 'Cliente removido do Banco de Clientes com sucesso.' };
     },
@@ -1462,9 +1477,13 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
           }
         }
 
-        setExercises((prev) =>
-          prev.map((ex) => (ex.id === payload.id ? { ...ex, ...updatedEx } : ex))
-        );
+        setExercises((prev) => {
+          const next = prev.map((ex) => (ex.id === payload.id ? { ...ex, ...updatedEx } : ex));
+          try {
+            localStorage.setItem('portal_exercises_store', JSON.stringify(next));
+          } catch {}
+          return next;
+        });
         appendAudit('Edição de Exercício', 'Exercícios', payload.title, 'Sucesso');
         return { success: true, message: 'Exercício atualizado com sucesso.', exerciseId: payload.id };
       } else {
@@ -1513,7 +1532,13 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
           }
         }
 
-        setExercises((prev) => [newEx, ...prev]);
+        setExercises((prev) => {
+          const next = [newEx, ...prev];
+          try {
+            localStorage.setItem('portal_exercises_store', JSON.stringify(next));
+          } catch {}
+          return next;
+        });
         appendAudit('Criação de Exercício', 'Exercícios', newEx.title, 'Sucesso');
         return { success: true, message: 'Novo exercício criado com sucesso!', exerciseId: newExId };
       }
@@ -1540,15 +1565,25 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
       }
 
       // Desvincula dos checklists existentes sem excluir os checklists
-      setChecklists((prev) =>
-        prev.map((chk) => ({
+      setChecklists((prev) => {
+        const next = prev.map((chk) => ({
           ...chk,
           exerciseIds: chk.exerciseIds.filter((eid) => eid !== exerciseId),
           hasExercises: chk.exerciseIds.filter((eid) => eid !== exerciseId).length > 0,
-        }))
-      );
+        }));
+        try {
+          localStorage.setItem('portal_checklists_store', JSON.stringify(next));
+        } catch {}
+        return next;
+      });
 
-      setExercises((prev) => prev.filter((e) => e.id !== exerciseId));
+      setExercises((prev) => {
+        const next = prev.filter((e) => e.id !== exerciseId);
+        try {
+          localStorage.setItem('portal_exercises_store', JSON.stringify(next));
+        } catch {}
+        return next;
+      });
       appendAudit('Exclusão de Exercício', 'Exercícios', `ID: ${exerciseId}`, 'Sucesso');
       return { success: true, message: 'Exercício excluído com sucesso.' };
     },
@@ -1690,9 +1725,13 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
           }
         }
 
-        setChecklists((prev) =>
-          prev.map((chk) => (chk.id === payload.id ? { ...chk, ...updatedChk } : chk))
-        );
+        setChecklists((prev) => {
+          const next = prev.map((chk) => (chk.id === payload.id ? { ...chk, ...updatedChk } : chk));
+          try {
+            localStorage.setItem('portal_checklists_store', JSON.stringify(next));
+          } catch {}
+          return next;
+        });
         appendAudit('Edição de Checklist', 'Checklists', payload.title, 'Sucesso');
         return { success: true, message: 'Checklist atualizado com sucesso!', checklistId: payload.id };
       } else {
@@ -1749,7 +1788,13 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
           }
         }
 
-        setChecklists((prev) => [newChk, ...prev]);
+        setChecklists((prev) => {
+          const next = [newChk, ...prev];
+          try {
+            localStorage.setItem('portal_checklists_store', JSON.stringify(next));
+          } catch {}
+          return next;
+        });
         appendAudit('Criação de Checklist', 'Checklists', newChk.title, 'Sucesso');
         return { success: true, message: 'Checklist salvo com sucesso!', checklistId: newChkId };
       }
@@ -1777,9 +1822,21 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
       }
 
       // Integridade referencial com ON DELETE CASCADE: remove vínculos de avaliações dos colaboradores
-      setCollaboratorChecklists((prev) => prev.filter((c) => c.checklistId !== checklistId));
+      setCollaboratorChecklists((prev) => {
+        const next = prev.filter((c) => c.checklistId !== checklistId);
+        try {
+          localStorage.setItem('portal_collaborator_checklists_store', JSON.stringify(next));
+        } catch {}
+        return next;
+      });
 
-      setChecklists((prev) => prev.filter((c) => c.id !== checklistId));
+      setChecklists((prev) => {
+        const next = prev.filter((c) => c.id !== checklistId);
+        try {
+          localStorage.setItem('portal_checklists_store', JSON.stringify(next));
+        } catch {}
+        return next;
+      });
       appendAudit('Exclusão de Checklist', 'Checklists', `ID: ${checklistId}`, 'Sucesso');
       return { success: true, message: 'Checklist e seus vínculos foram excluídos com sucesso.' };
     },
@@ -2540,6 +2597,36 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
     [currentUser, appendAudit]
   );
 
+  const ensureCollaboratorChecklistAssignment = useCallback(
+    (collaboratorId: string, checklistId: string, preferredId?: string): string => {
+      const existing = collaboratorChecklists.find(
+        (c) =>
+          (preferredId && c.id === preferredId) ||
+          (c.collaboratorId === collaboratorId && c.checklistId === checklistId)
+      );
+      if (existing) return existing.id;
+
+      const newId = preferredId || `asg-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+      const nowIso = new Date().toISOString();
+      const newEntry: CollaboratorChecklist = {
+        id: newId,
+        collaboratorId,
+        checklistId,
+        status: 'pendente',
+        finalScore: null,
+        criteriaAnswers: [],
+        instructorAuxiliarId: null,
+        actorAuxiliarId: null,
+        completedAt: null,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+      };
+      setCollaboratorChecklists((prev) => [...prev, newEntry]);
+      return newId;
+    },
+    [collaboratorChecklists]
+  );
+
   // ==========================================
   // 6. Condução e Execução de Avaliação
   // ==========================================
@@ -2795,6 +2882,7 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
       removeStepFromCollaboratorTrack,
       completeCollaboratorTrackStep,
       updateCollaboratorChecklistAssignments,
+      ensureCollaboratorChecklistAssignment,
       createLearningTrack,
       updateLearningTrack,
       deleteLearningTrack,
@@ -2851,6 +2939,7 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
       removeStepFromCollaboratorTrack,
       completeCollaboratorTrackStep,
       updateCollaboratorChecklistAssignments,
+      ensureCollaboratorChecklistAssignment,
       createLearningTrack,
       updateLearningTrack,
       deleteLearningTrack,

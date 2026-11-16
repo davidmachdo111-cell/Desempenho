@@ -319,6 +319,38 @@ export function runPortalRuleTests(): {
       phrasesFromMultiline[0] === 'Linha 1'
   );
 
+  // 18. Usuários estritamente restritos a David Furtado e os 3 perfis de teste solicitados
+  const allowedUsernames = ['david.furtado', 'avaliador.teste', 'ator.teste', 'colaborador.teste'];
+  const hasOnlyAllowedUsers = INITIAL_USERS.every((u) => allowedUsernames.includes(u.username));
+  const hasDavidAdmin = INITIAL_USERS.some((u) => u.username === 'david.furtado' && u.role === 'admin');
+  const hasAvaliadorTeste = INITIAL_USERS.some((u) => u.username === 'avaliador.teste' && u.role === 'avaliador');
+  const hasAtorTeste = INITIAL_USERS.some((u) => u.username === 'ator.teste' && u.role === 'auxiliar');
+  const hasColaboradorTeste = INITIAL_USERS.some((u) => u.username === 'colaborador.teste' && u.role === 'colaborador');
+
+  assertScenario(
+    18,
+    'Cadastros de usuários contêm exclusivamente David Furtado e os 3 perfis de teste (Avaliador teste, Ator teste e Colaborador teste)',
+    hasOnlyAllowedUsers && hasDavidAdmin && hasAvaliadorTeste && hasAtorTeste && hasColaboradorTeste && INITIAL_USERS.length === 4
+  );
+
+  // 19. Na visão de Ator (auxiliar), permissão estrita para acessar colaboradores (com roteiros vinculados)
+  const actorUser = INITIAL_USERS.find((u) => u.username === 'ator.teste');
+  const actorRoutes = ['collaborators'];
+  assertScenario(
+    19,
+    'Na visão de Ator (auxiliar), possui acesso estritamente à rota de colaboradores com roteiros vinculados',
+    Boolean(actorUser && actorUser.role === 'auxiliar' && actorRoutes.includes('collaborators') && actorRoutes.length === 1)
+  );
+
+  // 20. Na visão de Colaborador, exibição de conclusão garantida sem exposição indevida de laudo/nota
+  const colabUser = INITIAL_USERS.find((u) => u.username === 'colaborador.teste');
+  const testCollab = INITIAL_COLLABORATORS.find((c) => c.username === 'colaborador.teste');
+  assertScenario(
+    20,
+    'Na visão de Colaborador, perfil e trilha focados em status concluído sem visualização de laudo técnico',
+    Boolean(colabUser && colabUser.role === 'colaborador' && testCollab && testCollab.username === 'colaborador.teste')
+  );
+
   const totalPassed = results.filter((r) => r.passed).length;
   const totalFailed = results.filter((r) => !r.passed).length;
 

@@ -28,7 +28,7 @@ const PortalAppInner: React.FC = () => {
 
   const [activeRoute, setActiveRoute] = useState<PortalRoute>(() => {
     if (currentUser?.role === 'colaborador') return 'my-development';
-    if (currentUser?.role === 'auxiliar') return 'actor-scenarios';
+    if (currentUser?.role === 'auxiliar') return 'collaborators';
     return 'collaborators';
   });
   const [activeAssignmentId, setActiveAssignmentId] = useState<string | null>(null);
@@ -44,9 +44,10 @@ const PortalAppInner: React.FC = () => {
         setActiveRoute('my-development');
       }
     } else if (currentUser.role === 'auxiliar') {
-      // 2. Auxiliar / Ator: estritamente restrito aos cenários de simulação e casos atrelados
-      if (activeRoute !== 'actor-scenarios') {
-        setActiveRoute('actor-scenarios');
+      // 2. Auxiliar / Ator: Acesso exclusivo à listagem de colaboradores
+      const allowedForActor: PortalRoute[] = ['collaborators'];
+      if (!allowedForActor.includes(activeRoute)) {
+        setActiveRoute('collaborators');
       }
     } else if (currentUser.role === 'avaliador') {
       // 3. Avaliador: Colaboradores, Exercícios e Checklists (modo consulta/avaliação)
@@ -119,11 +120,11 @@ const PortalAppInner: React.FC = () => {
       {activeRoute === 'actor-scenarios' && <ActorScenariosView />}
 
       {/* ========================================================= */}
-      {/* 3. MÓDULOS DE GESTÃO E AVALIAÇÃO (ADMIN & AVALIADOR) */}
+      {/* 3. MÓDULOS DE GESTÃO E AVALIAÇÃO */}
       {/* ========================================================= */}
 
-      {/* Colaboradores (/colaboradores) — Admin e Avaliador */}
-      {!isCollaborator && !isAuxiliar && activeRoute === 'collaborators' && (
+      {/* Colaboradores (/colaboradores) — Admin, Avaliador e Ator (modo roteiro vinculado) */}
+      {!isCollaborator && activeRoute === 'collaborators' && (
         <CollaboratorsView
           initialCollaboratorId={selectedCollaboratorId}
           onStartEvaluation={handleStartEvaluation}

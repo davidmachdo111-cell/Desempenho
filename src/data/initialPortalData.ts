@@ -132,9 +132,9 @@ export const INITIAL_SURVEY_RESPONSES: SurveyResponse[] = [
   {
     id: 'resp-demo-01',
     surveyId: 'survey-satisfacao-geral',
-    collaboratorId: 'col-lucas-silveira',
-    collaboratorName: 'Lucas Silveira',
-    collaboratorUsername: 'lucas.silveira',
+    collaboratorId: 'col-colaborador-teste',
+    collaboratorName: 'Colaborador Teste',
+    collaboratorUsername: 'colaborador.teste',
     cellTeam: 'Laboratório',
     answers: {
       'q-1': {
@@ -160,9 +160,9 @@ export const INITIAL_LEARNING_TRACKS: LearningTrack[] = [
     description:
       'Programa intensivo de integração focado em identificação de guias médicas, preparo de coletas especiais e comunicação assertiva.',
     cell: 'Laboratório',
-    checklistIds: ['chk-lab-01', 'chk-lab-02', 'chk-lab-03'],
+    checklistIds: ['chk-lab-01', 'chk-lab-02'],
     surveyId: 'survey-satisfacao-geral',
-    collaboratorIds: ['col-lucas-silveira'],
+    collaboratorIds: ['col-colaborador-teste'],
     isActive: true,
     createdAt: '2026-10-13T09:00:00Z',
     updatedAt: '2026-10-13T09:00:00Z',
@@ -172,12 +172,12 @@ export const INITIAL_LEARNING_TRACKS: LearningTrack[] = [
 // 3. Colaboradores em Treinamento Iniciais
 export const INITIAL_COLLABORATORS: Collaborator[] = [
   {
-    id: 'col-lucas-silveira',
-    fullName: 'Lucas Silveira',
-    username: 'lucas.silveira',
+    id: 'col-colaborador-teste',
+    fullName: 'Colaborador Teste',
+    username: 'colaborador.teste',
     roleTitle: 'Atendente de Recepção e Triagem',
     cellTeam: 'Laboratório',
-    registrationCode: 'COL-842',
+    registrationCode: 'COL-101',
     learningTrackId: 'track-lab-101',
     track: [
       {
@@ -190,7 +190,7 @@ export const INITIAL_COLLABORATORS: Collaborator[] = [
         status: 'concluido',
         completedAt: '2026-10-13T11:45:00Z',
         finalScore: 9.3,
-        collaboratorChecklistId: 'asg-lucas-01',
+        collaboratorChecklistId: 'asg-colab-01',
       },
       {
         id: 'track-step-2',
@@ -211,17 +211,7 @@ export const INITIAL_COLLABORATORS: Collaborator[] = [
         filledBy: 'evaluator',
         order: 3,
         status: 'disponivel',
-        collaboratorChecklistId: 'asg-lucas-02',
-      },
-      {
-        id: 'track-step-4',
-        type: 'checklist',
-        title: 'Orientações de Coleta e Preparo de Exames',
-        refId: 'chk-lab-03',
-        filledBy: 'collaborator',
-        order: 4,
-        status: 'bloqueado',
-        collaboratorChecklistId: 'asg-lucas-03',
+        collaboratorChecklistId: 'asg-colab-02',
       },
     ],
     status: 'em_treinamento',
@@ -232,8 +222,8 @@ export const INITIAL_COLLABORATORS: Collaborator[] = [
 
 export const INITIAL_COLLABORATOR_CHECKLISTS: CollaboratorChecklist[] = [
   {
-    id: 'asg-lucas-01',
-    collaboratorId: 'col-lucas-silveira',
+    id: 'asg-colab-01',
+    collaboratorId: 'col-colaborador-teste',
     checklistId: 'chk-lab-01',
     status: 'concluido',
     finalScore: 9.3,
@@ -273,22 +263,10 @@ export const INITIAL_COLLABORATOR_CHECKLISTS: CollaboratorChecklist[] = [
     updatedAt: '2026-10-13T11:45:00Z',
   },
   {
-    id: 'asg-lucas-02',
-    collaboratorId: 'col-lucas-silveira',
+    id: 'asg-colab-02',
+    collaboratorId: 'col-colaborador-teste',
     checklistId: 'chk-lab-02',
     status: 'em_andamento',
-    finalScore: null,
-    criteriaAnswers: [],
-    generalObservations: null,
-    completedAt: null,
-    createdAt: '2026-10-13T09:30:00Z',
-    updatedAt: '2026-10-13T09:30:00Z',
-  },
-  {
-    id: 'asg-lucas-03',
-    collaboratorId: 'col-lucas-silveira',
-    checklistId: 'chk-lab-03',
-    status: 'pendente',
     finalScore: null,
     criteriaAnswers: [],
     generalObservations: null,
@@ -312,7 +290,7 @@ export const INITIAL_AUDIT_LOGS: AuditLogEntry[] = [
   },
 ];
 
-// Usuários do Sistema: 4 Perfis Fundamentais Representativos para Validação Imediata
+// Usuários do Sistema: Estritamente David Furtado e os 3 perfis corporativos de teste solicitados
 export const INITIAL_USERS: UserProfile[] = [
   {
     id: 'usr-admin-master',
@@ -338,10 +316,10 @@ export const INITIAL_USERS: UserProfile[] = [
     lastLoginAt: '2026-10-13T08:00:00Z',
   },
   {
-    id: 'usr-eval-mariana',
-    username: 'mariana.avaliador',
-    fullName: 'Mariana Evaluator',
-    email: 'mariana.avaliador@portaldesempenho.corp',
+    id: 'usr-eval-teste',
+    username: 'avaliador.teste',
+    fullName: 'Avaliador Teste',
+    email: 'avaliador.teste@portaldesempenho.corp',
     role: 'avaliador',
     status: 'ativo',
     canChangePassword: true,
@@ -355,10 +333,10 @@ export const INITIAL_USERS: UserProfile[] = [
     lastLoginAt: '2026-10-13T08:00:00Z',
   },
   {
-    id: 'usr-aux-carlos',
-    username: 'carlos.ator',
-    fullName: 'Carlos Ator',
-    email: 'carlos.ator@portaldesempenho.corp',
+    id: 'usr-actor-teste',
+    username: 'ator.teste',
+    fullName: 'Ator Teste',
+    email: 'ator.teste@portaldesempenho.corp',
     role: 'auxiliar',
     status: 'ativo',
     canChangePassword: true,
@@ -372,17 +350,17 @@ export const INITIAL_USERS: UserProfile[] = [
     lastLoginAt: '2026-10-13T08:00:00Z',
   },
   {
-    id: 'usr-collab-lucas',
-    username: 'lucas.silveira',
-    fullName: 'Lucas Silveira',
-    email: 'lucas.silveira@portaldesempenho.corp',
+    id: 'usr-colab-teste',
+    username: 'colaborador.teste',
+    fullName: 'Colaborador Teste',
+    email: 'colaborador.teste@portaldesempenho.corp',
     role: 'colaborador',
     status: 'ativo',
     canChangePassword: true,
     isActive: true,
     password: '',
     department: 'Laboratório',
-    collaboratorId: 'col-lucas-silveira',
+    collaboratorId: 'col-colaborador-teste',
     individualPermissions: [],
     createdAt: '2026-10-13T09:30:00Z',
     lastLoginAt: '2026-10-13T09:30:00Z',

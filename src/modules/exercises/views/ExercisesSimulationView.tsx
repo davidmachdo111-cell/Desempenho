@@ -19,7 +19,7 @@ import {
 } from 'lucide-react';
 import { usePortalStore } from '../../../context/PortalStoreContext';
 import { GuideMirrorModal } from '../../../components/GuideMirrorModal';
-import { downloadGuidePdf } from '../../../lib/downloadHelpers';
+import { downloadGuidePdf, downloadMultipleGuidesPdf } from '../../../lib/downloadHelpers';
 import {
   Exercise,
   Character,
@@ -525,15 +525,6 @@ export const ExercisesSimulationView: React.FC = () => {
               <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => window.print()}
-                  className="px-3.5 py-1.5 text-xs font-bold text-[#0f3e2e] bg-white hover:bg-emerald-50 rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer shadow-sm"
-                  title="Baixar Roteiro em PDF ou Imprimir"
-                >
-                  <Printer className="w-3.5 h-3.5" />
-                  <span>📄 Baixar Roteiro (PDF)</span>
-                </button>
-                <button
-                  type="button"
                   onClick={() => setBriefingModalExercise(null)}
                   className="text-emerald-200 hover:text-white p-1 rounded-lg hover:bg-white/10 cursor-pointer"
                 >
@@ -679,51 +670,55 @@ export const ExercisesSimulationView: React.FC = () => {
                     })()}
 
                     {/* Guia do Cliente Anexa */}
-                    {activeBriefingChar.guideAttachmentUrl ? (
-                      <div className="flex flex-col sm:flex-row sm:items-center justify-between p-3 bg-white rounded-lg border border-emerald-200 print:hidden gap-2">
-                        <div className="flex items-center gap-2">
-                          <FileText className="w-4 h-4 text-emerald-700 shrink-0" />
-                          <div>
-                            <span className="font-bold text-slate-800 block text-xs">
-                              {activeBriefingChar.guideAttachmentName || 'Guia de Atendimento'}
-                            </span>
-                            <span className="text-[10px] text-slate-500">
-                              Documento anexo do beneficiário
-                            </span>
-                          </div>
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between p-3 bg-white rounded-lg border border-emerald-200 print:hidden gap-2">
+                      <div className="flex items-center gap-2">
+                        <FileText className="w-4 h-4 text-emerald-700 shrink-0" />
+                        <div>
+                          <span className="font-bold text-slate-800 block text-xs">
+                            {activeBriefingChar.guideAttachmentName || 'Guia de Atendimento do Paciente'}
+                          </span>
+                          <span className="text-[10px] text-slate-500">
+                            Documento técnico e requisição médica do beneficiário
+                          </span>
                         </div>
+                      </div>
 
-                        <div className="flex items-center gap-2 shrink-0">
-                          <button
-                            type="button"
-                            onClick={() => setGuideMirrorChar(activeBriefingChar)}
-                            className="px-3 py-1.5 text-xs font-bold text-emerald-900 bg-emerald-100 hover:bg-emerald-200 rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer"
-                          >
-                            <Eye className="w-3.5 h-3.5" />
-                            <span>Visualizar Guia</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => downloadGuidePdf(activeBriefingChar, briefingModalExercise?.title)}
-                            className="px-3 py-1.5 text-xs font-bold text-white bg-[#064e3b] hover:bg-emerald-900 rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer shadow-2xs"
-                            title={`Baixar Guia_${activeBriefingChar.name.replace(/\s+/g, '_')}.pdf`}
-                          >
-                            <Download className="w-3.5 h-3.5 text-emerald-200" />
-                            <span>Baixar PDF</span>
-                          </button>
-                        </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => setGuideMirrorChar(activeBriefingChar)}
+                          className="px-3 py-1.5 text-xs font-bold text-emerald-900 bg-emerald-100 hover:bg-emerald-200 rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer"
+                        >
+                          <Eye className="w-3.5 h-3.5" />
+                          <span>Visualizar Ficha</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => downloadGuidePdf(activeBriefingChar, briefingModalExercise?.title)}
+                          className="px-3 py-1.5 text-xs font-bold text-white bg-[#064e3b] hover:bg-emerald-900 rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                          title={`Baixar Cliente_${activeBriefingChar.name.replace(/\s+/g, '_')}.pdf`}
+                        >
+                          <Download className="w-3.5 h-3.5 text-emerald-200" />
+                          <span>Baixar PDF</span>
+                        </button>
                       </div>
-                    ) : (
-                      <div className="text-[11px] text-slate-400 italic print:hidden">
-                        Este cliente não possui guia de atendimento anexada.
-                      </div>
-                    )}
+                    </div>
                   </div>
                 )}
               </div>
             </div>
 
-            <div className="p-4 bg-slate-50 border-t border-slate-200 flex justify-end">
+            <div className="p-4 bg-slate-50 border-t border-slate-200 flex items-center justify-between">
+              {briefingCharacters.length > 1 ? (
+                <button
+                  type="button"
+                  onClick={() => downloadMultipleGuidesPdf(briefingCharacters, briefingModalExercise?.title)}
+                  className="px-4 py-2 font-bold text-xs text-white bg-[#064e3b] hover:bg-emerald-900 rounded-xl transition-all shadow-xs flex items-center gap-2 cursor-pointer"
+                >
+                  <Download className="w-4 h-4 text-emerald-200" />
+                  <span>Imprimir Todos ({briefingCharacters.length}) em PDF Único</span>
+                </button>
+              ) : <div />}
               <button
                 type="button"
                 onClick={() => setBriefingModalExercise(null)}

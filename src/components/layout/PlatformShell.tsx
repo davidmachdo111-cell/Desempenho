@@ -112,19 +112,17 @@ export const PlatformShell: React.FC<PlatformShellProps> = ({
   const isAuxiliar = currentUser.role === 'auxiliar';
   const isAdmin = currentUser.role === 'admin';
 
-  // Helper para formatar a badge oficial dos 4 papéis corporativos
+  // Helper para formatar a badge oficial dos perfis corporativos
   const getRoleBadge = (role: string) => {
     if (role === 'admin') return 'ADMIN';
-    if (role === 'avaliador') return 'AVALIADOR';
-    if (role === 'auxiliar') return 'AUXILIAR / ATOR';
+    if (role === 'avaliador' || role === 'auxiliar') return 'AVALIADOR / AUXILIAR';
     if (role === 'colaborador') return 'COLABORADOR';
     return role.toUpperCase();
   };
 
   const getRoleBadgeStyle = (role: string) => {
     if (role === 'admin') return 'bg-amber-100 text-amber-900 border-amber-300';
-    if (role === 'avaliador') return 'bg-blue-100 text-blue-900 border-blue-300';
-    if (role === 'auxiliar') return 'bg-purple-100 text-purple-900 border-purple-300';
+    if (role === 'avaliador' || role === 'auxiliar') return 'bg-blue-100 text-blue-900 border-blue-300';
     if (role === 'colaborador') return 'bg-emerald-100 text-emerald-900 border-emerald-300';
     return 'bg-slate-100 text-slate-800 border-slate-300';
   };
@@ -142,7 +140,26 @@ export const PlatformShell: React.FC<PlatformShellProps> = ({
   // 2. Avaliador (Instrutor/Supervisor): Colaboradores, Exercícios e Checklists (modo consulta/avaliação)
   // 3. Auxiliar/Ator (Simulador): Apenas "Cenários de Simulação / Casos Atrelados"
   // 4. Colaborador (Aluno): Estritamente "Minha Trilha / Avaliações"
-  const navItems: Array<{
+  // ORDENAÇÃO DE BAIXO PRA CIMA CONFORME SOLICITADO:
+  // Base (fundo): Administração -> Banco de Clientes -> Exercícios -> Checklists -> Pesquisas de Satisfação -> Colaboradores (topo)
+  // Ordem visual (do topo para o fundo):
+  // 1. Colaboradores
+  // 2. Pesquisas de Satisfação
+  // 3. Checklists
+  // 4. Exercícios
+  // 5. Banco de Clientes
+  // 6. Administração
+  const MASTER_NAV_ORDER: PortalRoute[] = [
+    'collaborators',
+    'surveys',
+    'checklists',
+    'exercises',
+    'characters',
+    'admin',
+    'my-development',
+  ];
+
+  const rawNavItems: Array<{
     id: PortalRoute;
     label: string;
     icon: React.ReactNode;
@@ -160,11 +177,11 @@ export const PlatformShell: React.FC<PlatformShellProps> = ({
     : isAuxiliar
     ? [
         {
-          id: 'actor-scenarios',
-          label: 'Cenários de Simulação / Casos Atrelados',
-          icon: <Theater className="w-4 h-4" />,
+          id: 'collaborators',
+          label: 'Colaboradores',
+          icon: <Users className="w-4 h-4" />,
           visible: true,
-          badgeCount: exercises.length,
+          badgeCount: collaborators.length,
         },
       ]
     : isEvaluator
@@ -177,42 +194,21 @@ export const PlatformShell: React.FC<PlatformShellProps> = ({
           badgeCount: collaborators.length,
         },
         {
-          id: 'exercises',
-          label: 'Exercícios',
-          icon: <FileText className="w-4 h-4" />,
-          visible: true,
-          badgeCount: exercises.length,
-        },
-        {
           id: 'checklists',
           label: 'Checklists',
           icon: <BookOpen className="w-4 h-4" />,
           visible: true,
           badgeCount: checklists.length,
+        },
+        {
+          id: 'exercises',
+          label: 'Exercícios',
+          icon: <FileText className="w-4 h-4" />,
+          visible: true,
+          badgeCount: exercises.length,
         },
       ]
     : [
-        {
-          id: 'characters',
-          label: 'Banco de Clientes',
-          icon: <UserCheck className="w-4 h-4" />,
-          visible: true,
-          badgeCount: characters.length,
-        },
-        {
-          id: 'exercises',
-          label: 'Exercícios',
-          icon: <FileText className="w-4 h-4" />,
-          visible: true,
-          badgeCount: exercises.length,
-        },
-        {
-          id: 'checklists',
-          label: 'Checklists',
-          icon: <BookOpen className="w-4 h-4" />,
-          visible: true,
-          badgeCount: checklists.length,
-        },
         {
           id: 'collaborators',
           label: 'Colaboradores',
@@ -228,6 +224,27 @@ export const PlatformShell: React.FC<PlatformShellProps> = ({
           badgeCount: surveys.length,
         },
         {
+          id: 'checklists',
+          label: 'Checklists',
+          icon: <BookOpen className="w-4 h-4" />,
+          visible: true,
+          badgeCount: checklists.length,
+        },
+        {
+          id: 'exercises',
+          label: 'Exercícios',
+          icon: <FileText className="w-4 h-4" />,
+          visible: true,
+          badgeCount: exercises.length,
+        },
+        {
+          id: 'characters',
+          label: 'Banco de Clientes',
+          icon: <UserCheck className="w-4 h-4" />,
+          visible: true,
+          badgeCount: characters.length,
+        },
+        {
           id: 'admin',
           label: 'Administração',
           icon: <ShieldCheck className="w-4 h-4" />,
@@ -235,9 +252,16 @@ export const PlatformShell: React.FC<PlatformShellProps> = ({
         },
       ];
 
-  // Ordenação prioritária dos 4 perfis essenciais no seletor do header
+  // Ordenação uniforme garantida com base no MASTER_NAV_ORDER para qualquer perfil
+  const navItems = [...rawNavItems].sort((a, b) => {
+    const idxA = MASTER_NAV_ORDER.indexOf(a.id);
+    const idxB = MASTER_NAV_ORDER.indexOf(b.id);
+    return (idxA !== -1 ? idxA : 99) - (idxB !== -1 ? idxB : 99);
+  });
+
+  // Ordenação prioritária dos perfis essenciais no seletor do header
   const selectorUsers = useMemo(() => {
-    const priority = ['david.furtado', 'mariana.avaliador', 'carlos.ator', 'lucas.silveira'];
+    const priority = ['david.furtado', 'avaliador.teste', 'ator.teste', 'colaborador.teste'];
     return [...users].sort((a, b) => {
       const idxA = priority.indexOf(a.username);
       const idxB = priority.indexOf(b.username);
@@ -258,12 +282,12 @@ export const PlatformShell: React.FC<PlatformShellProps> = ({
       if (targetUser?.role === 'colaborador') {
         onNavigate('my-development');
       } else if (targetUser?.role === 'auxiliar') {
-        onNavigate('actor-scenarios');
+        onNavigate('collaborators');
       } else if (targetUser?.role === 'avaliador') {
         onNavigate('collaborators');
       } else {
-        // Admin: se estava em rotas restritas de colaborador ou ator, vai para a gestão
-        if (activeRoute === 'my-development' || activeRoute === 'actor-scenarios') {
+        // Admin: se estava em rotas restritas de colaborador, vai para a gestão
+        if (activeRoute === 'my-development') {
           onNavigate('collaborators');
         }
       }

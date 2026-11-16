@@ -26,6 +26,7 @@ import {
   Download,
   GraduationCap,
   Layers,
+  Theater,
 } from 'lucide-react';
 import { usePortalStore } from '../../../context/PortalStoreContext';
 import {
@@ -46,6 +47,7 @@ import { DIFFICULTY_BADGES } from '../../exercises/views/ExercisesSimulationView
 import { GuideMirrorModal } from '../../../components/GuideMirrorModal';
 import {
   downloadGuidePdf,
+  downloadMultipleGuidesPdf,
   downloadReportPdf,
   downloadCollaboratorDossierPdf,
   DossierTrackItem,
@@ -60,12 +62,50 @@ interface CollaboratorsViewProps {
   onStartEvaluation: (assignmentId: string, collaboratorId?: string) => void;
 }
 
-const STATUS_BADGES: Record<CollaboratorStatus, { label: string; style: string }> = {
-  novo: { label: 'Novo', style: 'bg-blue-100 text-blue-800 border-blue-200' },
-  em_treinamento: { label: 'Em Treinamento', style: 'bg-amber-100 text-amber-800 border-amber-200' },
-  aprovado: { label: 'Aprovado', style: 'bg-emerald-100 text-emerald-800 border-emerald-200' },
-  necessita_reforco: { label: 'Necessita Reforço', style: 'bg-red-100 text-red-800 border-red-200' },
-};
+export function getCollaboratorProgressStatus(col: Collaborator): {
+  key: 'a_realizar' | 'em_treinamento' | 'concluido';
+  label: 'A Realizar' | 'Em Treinamento' | 'Concluído';
+  badgeStyle: string;
+  totalSteps: number;
+  completedSteps: number;
+  progressPct: number;
+} {
+  const track = col.track || [];
+  const totalSteps = track.length;
+  const completedSteps = track.filter((s) => s.status === 'concluido').length;
+  const progressPct = totalSteps > 0 ? Math.round((completedSteps / totalSteps) * 100) : 0;
+
+  if (totalSteps === 0 || completedSteps === 0) {
+    return {
+      key: 'a_realizar',
+      label: 'A Realizar',
+      badgeStyle: 'bg-slate-100 text-slate-700 border border-slate-200',
+      totalSteps,
+      completedSteps,
+      progressPct: 0,
+    };
+  }
+
+  if (completedSteps === totalSteps) {
+    return {
+      key: 'concluido',
+      label: 'Concluído',
+      badgeStyle: 'bg-emerald-50 text-emerald-700 border border-emerald-200',
+      totalSteps,
+      completedSteps,
+      progressPct: 100,
+    };
+  }
+
+  return {
+    key: 'em_treinamento',
+    label: 'Em Treinamento',
+    badgeStyle: 'bg-amber-50 text-amber-700 border border-amber-200',
+    totalSteps,
+    completedSteps,
+    progressPct,
+  };
+}
 
 export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
   initialCollaboratorId,
@@ -90,6 +130,8 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
   } = usePortalStore();
 
   const isAuxiliar = currentUser?.role === 'auxiliar';
+  const isAdmin = currentUser?.role === 'admin';
+  const isEvaluator = currentUser?.role === 'avaliador';
   const canApplyEvaluations = hasPermission('can_apply_evaluations') && !isAuxiliar;
   const canManageCollaborators = hasPermission('can_manage_collaborators');
 
@@ -141,11 +183,12 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
     return generateCorporateUsername(newFirstName, newLastName);
   }, [newFirstName, newLastName]);
 
-  // Filtro de listagem
+  // Filtro de listagem reativo pelo status calculado
   const filteredCollaborators = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     return collaborators.filter((col) => {
-      if (selectedStatusFilter !== 'all' && col.status !== selectedStatusFilter) return false;
+      const statusInfo = getCollaboratorProgressStatus(col);
+      if (selectedStatusFilter !== 'all' && statusInfo.key !== selectedStatusFilter) return false;
       if (selectedCellFilter !== 'all') {
         const colCell = getCellName(col.cellTeam);
         if (colCell !== selectedCellFilter) return false;
@@ -155,7 +198,8 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
         col.fullName.toLowerCase().includes(q) ||
         col.roleTitle.toLowerCase().includes(q) ||
         col.cellTeam.toLowerCase().includes(q) ||
-        (col.registrationCode && col.registrationCode.toLowerCase().includes(q))
+        (col.registrationCode && col.registrationCode.toLowerCase().includes(q)) ||
+        (col.username && col.username.toLowerCase().includes(q))
       );
     });
   }, [collaborators, searchQuery, selectedStatusFilter, selectedCellFilter]);
@@ -171,7 +215,7 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
     return collaboratorChecklists.filter((c) => c.collaboratorId === activeCollaborator.id);
   }, [collaboratorChecklists, activeCollaborator]);
 
-  // Exercícios vinculados aos checklists atribuídos ao colaborador
+  // Exercícios vinculados aos checklists atribuídos ou configurados na trilha do colaborador
   const activeLinkedExercises = useMemo(() => {
     if (!activeCollaborator) return [];
     const exerciseIdSet = new Set<string>();
@@ -183,15 +227,46 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
       }
     });
 
-    return Array.from(exerciseIdSet)
+    (activeCollaborator.track || []).forEach((step) => {
+      if (step.type === 'checklist') {
+        const chk = checklists.find((c) => c.id === step.refId);
+        if (chk && chk.exerciseIds) {
+          chk.exerciseIds.forEach((id) => exerciseIdSet.add(id));
+        }
+      } else if (exercises.some((e) => e.id === step.refId)) {
+        exerciseIdSet.add(step.refId);
+      }
+    });
+
+    const found = Array.from(exerciseIdSet)
       .map((exId) => exercises.find((e) => e.id === exId))
       .filter(Boolean) as Exercise[];
+
+    if (found.length > 0) return found;
+
+    if (activeCollaborator.cellTeam) {
+      const cellExs = exercises.filter(
+        (e) =>
+          e.cell === activeCollaborator.cellTeam ||
+          getCellName(e.cell) === getCellName(activeCollaborator.cellTeam)
+      );
+      if (cellExs.length > 0) return cellExs;
+    }
+
+    return exercises.slice(0, 2);
   }, [activeCollaborator, activeAssignments, checklists, exercises]);
+
+  useEffect(() => {
+    if (isAuxiliar && activeCollaboratorId) {
+      setActiveCollabViewTab('exercises');
+    }
+  }, [isAuxiliar, activeCollaboratorId]);
 
   // Exportação consolidada do Dossiê do Colaborador em PDF
   const handleExportCollaboratorDossier = () => {
     if (!activeCollaborator) return;
 
+    const statusInfo = getCollaboratorProgressStatus(activeCollaborator);
     const completedAssignments = activeAssignments.filter((a) => a.status === 'concluido');
     const totalScore = completedAssignments.reduce((acc, curr) => acc + (curr.finalScore || 0), 0);
     const avgScore = completedAssignments.length > 0 ? totalScore / completedAssignments.length : 0;
@@ -232,20 +307,47 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
         finalScore: a.finalScore || 0,
         completedAt: a.completedAt ? new Date(a.completedAt).toLocaleDateString('pt-BR') : 'Data não informada',
         observations: a.generalObservations || undefined,
+        criteriaAnswers: (a.criteriaAnswers || []).map((ans) => ({
+          name: ans.name,
+          checked: ans.checked,
+          weight: ans.weight,
+          notes: ans.notes,
+        })),
+      };
+    });
+
+    const userSurveyResponses = surveyResponses.filter((s) => s.collaboratorId === activeCollaborator.id);
+    const surveyResponsesSummary = userSurveyResponses.map((sr) => {
+      const srv = surveys.find((s) => s.id === sr.surveyId);
+      return {
+        surveyTitle: srv?.title || 'Pesquisa de Satisfação',
+        completedAt: sr.completedAt ? new Date(sr.completedAt).toLocaleDateString('pt-BR') : 'Data não informada',
+        questions: (srv?.questions || []).map((q) => {
+          const ans = sr.answers?.[q.id];
+          return {
+            questionText: q.text,
+            answer: ans?.selectedOption || 'Sem resposta',
+            notes: ans?.observation || undefined,
+          };
+        }),
       };
     });
 
     downloadCollaboratorDossierPdf({
       collaboratorName: activeCollaborator.fullName,
+      corporateUsername: activeCollaborator.username ? `@${activeCollaborator.username}` : `@${activeCollaborator.fullName.toLowerCase().replace(/\s+/g, '.')}`,
       roleTitle: activeCollaborator.roleTitle,
       registrationCode: activeCollaborator.registrationCode || '',
       cellTeam: getCellName(activeCollaborator.cellTeam),
-      status: activeCollaborator.status,
+      status: statusInfo.label,
       averageScore: avgScore,
+      completionRate: statusInfo.progressPct,
+      totalTrackSteps: statusInfo.totalSteps,
       totalEvaluations: completedAssignments.length,
-      totalSurveys: surveyResponses.filter((s) => s.collaboratorId === activeCollaborator.id).length,
+      totalSurveys: userSurveyResponses.length,
       trackSteps,
       evaluationHistory,
+      surveyResponsesSummary,
       generatedAt: new Date().toLocaleDateString('pt-BR', {
         day: '2-digit',
         month: '2-digit',
@@ -504,13 +606,19 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
                   <h1 className="text-xl font-bold font-display text-slate-900">
                     {activeCollaborator.fullName}
                   </h1>
-                  <span
-                    className={`inline-flex items-center px-2.5 py-0.5 rounded-full font-bold text-[11px] border whitespace-nowrap shrink-0 ${
-                      STATUS_BADGES[activeCollaborator.status].style
-                    }`}
-                  >
-                    {STATUS_BADGES[activeCollaborator.status].label}
-                  </span>
+                  {(() => {
+                    const statusInfo = getCollaboratorProgressStatus(activeCollaborator);
+                    return (
+                      <span
+                        className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full font-bold text-xs whitespace-nowrap shrink-0 ${statusInfo.badgeStyle}`}
+                      >
+                        {statusInfo.key === 'concluido' && (
+                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                        )}
+                        <span>{statusInfo.label}</span>
+                      </span>
+                    );
+                  })()}
                 </div>
                 <div className="text-xs text-slate-600 flex flex-wrap items-center gap-x-4 gap-y-1.5">
                   <span>
@@ -536,6 +644,24 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
 
             {/* Painel Resumo Compacto de Métricas */}
             {(() => {
+              if (isAuxiliar) {
+                return (
+                  <div className="flex items-center gap-3 bg-emerald-50/90 border border-emerald-200/90 px-4 py-3 rounded-xl shrink-0">
+                    <div className="w-9 h-9 rounded-lg bg-[#0f3e2e] text-white flex items-center justify-center font-bold">
+                      <Theater className="w-5 h-5 text-emerald-300" />
+                    </div>
+                    <div>
+                      <div className="text-[11px] font-bold text-emerald-950 uppercase tracking-wide">
+                        Perfil Cênico · Ator da Simulação
+                      </div>
+                      <div className="text-xs text-emerald-800 font-medium">
+                        {activeLinkedExercises.length} roteiro(s) de simulação vinculado(s)
+                      </div>
+                    </div>
+                  </div>
+                );
+              }
+
               const trackList = activeCollaborator.track || [];
               const doneTrack = trackList.filter((s) => s.status === 'concluido').length;
               const totalTrack = trackList.length;
@@ -588,52 +714,199 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
             })()}
           </div>
 
-          {/* Abas de Navegação Interna da Ficha do Colaborador */}
-          <div className="flex items-center gap-2 border-b border-slate-200 pb-px">
-            <button
-              type="button"
-              onClick={() => setActiveCollabViewTab('track_builder')}
-              className={`px-4 py-2.5 text-xs font-bold transition-all border-b-2 cursor-pointer flex items-center gap-2 ${
-                activeCollabViewTab === 'track_builder'
-                  ? 'border-emerald-700 text-emerald-900 bg-emerald-50/50'
-                  : 'border-transparent text-slate-500 hover:text-slate-800'
-              }`}
-            >
-              <GraduationCap className="w-4 h-4" />
-              <span>Configurar Trilha / Linha do Tempo ({activeCollaborator.track?.length || 0})</span>
-            </button>
+          {/* Se for ATOR (isAuxiliar): Exibe exclusivamente a visão do roteiro vinculado */}
+          {isAuxiliar ? (
+            <div className="space-y-4 pt-2">
+              <div className="bg-emerald-50/70 border border-emerald-200 rounded-2xl p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div>
+                  <div className="flex items-center gap-2 text-emerald-800 text-xs font-bold uppercase tracking-wider mb-1">
+                    <Theater className="w-4 h-4 text-emerald-700" />
+                    <span>Acesso Cênico · Roteiro de Simulação Vinculado</span>
+                  </div>
+                  <h2 className="text-base font-bold text-slate-900">
+                    Roteiro de Simulação para {activeCollaborator.fullName}
+                  </h2>
+                  <p className="text-xs text-slate-600 mt-0.5">
+                    Instruções cênicas, perfil de comportamento dos clientes e falas para interpretar na simulação deste colaborador.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className="text-xs font-bold px-3 py-1.5 rounded-xl bg-white border border-emerald-200 text-emerald-900 shadow-2xs">
+                    {activeLinkedExercises.length} Roteiro(s) Vinculado(s)
+                  </span>
+                </div>
+              </div>
 
-            <button
-              type="button"
-              onClick={() => setActiveCollabViewTab('checklists')}
-              className={`px-4 py-2.5 text-xs font-bold transition-all border-b-2 cursor-pointer flex items-center gap-2 ${
-                activeCollabViewTab === 'checklists'
-                  ? 'border-emerald-700 text-emerald-900 bg-emerald-50/50'
-                  : 'border-transparent text-slate-500 hover:text-slate-800'
-              }`}
-            >
-              <BookOpen className="w-4 h-4" />
-              <span>Avaliações & Checklists Atribuídos ({activeAssignments.length})</span>
-            </button>
+              {activeLinkedExercises.length === 0 ? (
+                <div className="bg-white border border-dashed border-slate-300 rounded-2xl p-8 text-center space-y-2">
+                  <Theater className="w-10 h-10 text-slate-300 mx-auto mb-1" />
+                  <h4 className="font-bold text-sm text-slate-800">Nenhum roteiro vinculado a este colaborador</h4>
+                  <p className="text-xs text-slate-500 max-w-md mx-auto">
+                    Os cenários de simulação serão vinculados pelo Administrador através dos checklists da trilha do colaborador.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {activeLinkedExercises.map((ex) => {
+                    const exChars = ex.characterIds
+                      .map((cId) => characters.find((c) => c.id === cId))
+                      .filter(Boolean) as Character[];
 
-            <button
-              type="button"
-              onClick={() => setActiveCollabViewTab('exercises')}
-              className={`px-4 py-2.5 text-xs font-bold transition-all border-b-2 cursor-pointer flex items-center gap-2 ${
-                activeCollabViewTab === 'exercises'
-                  ? 'border-emerald-700 text-emerald-900 bg-emerald-50/50'
-                  : 'border-transparent text-slate-500 hover:text-slate-800'
-              }`}
-            >
-              <FileText className="w-4 h-4" />
-              <span>Cenários de Simulação ({activeLinkedExercises.length})</span>
-            </button>
-          </div>
+                    return (
+                      <div
+                        key={ex.id}
+                        className="bg-white border border-slate-200 rounded-2xl p-6 shadow-xs space-y-5"
+                      >
+                        {/* Header do Roteiro */}
+                        <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3 pb-4 border-b border-slate-100">
+                          <div>
+                            <div className="flex items-center gap-2 mb-1.5 flex-wrap">
+                              <span className="text-[10px] font-bold text-emerald-900 bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded-full uppercase">
+                                Célula: {getCellName(ex.cell)}
+                              </span>
+                              <span className="text-[10px] font-bold text-slate-700 bg-slate-100 border border-slate-200 px-2.5 py-0.5 rounded-full uppercase">
+                                Dificuldade: {ex.difficulty || 'Mediano'}
+                              </span>
+                              <span className="text-[10px] font-bold text-emerald-800 bg-emerald-100/70 border border-emerald-300 px-2.5 py-0.5 rounded-full flex items-center gap-1">
+                                <Theater className="w-3 h-3 text-emerald-700" />
+                                <span>Roteiro Ativo</span>
+                              </span>
+                            </div>
+                            <h3 className="text-lg font-bold text-slate-900">{ex.title}</h3>
+                          </div>
 
-          {/* CONTEÚDO DA ABA SELECIONADA */}
-          {activeCollabViewTab === 'track_builder' && (
-            <CollaboratorTrackBuilder collaborator={activeCollaborator} />
-          )}
+                          <button
+                            type="button"
+                            onClick={() => setSelectedBriefingExercise(ex)}
+                            className="px-4 py-2 text-xs font-bold text-white bg-[#0f3e2e] hover:bg-emerald-900 rounded-xl transition-all shadow-xs flex items-center gap-1.5 cursor-pointer shrink-0"
+                          >
+                            <Play className="w-4 h-4 text-emerald-300" />
+                            <span>Abrir Simulação</span>
+                          </button>
+                        </div>
+
+                        {/* Instruções do Cenário para o Ator */}
+                        <div className="space-y-2">
+                          <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+                            <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
+                            <span>Instruções da Cena / Comportamento do Ator</span>
+                          </h4>
+                          <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-4 text-xs text-slate-700 leading-relaxed font-medium">
+                            {ex.scenarioInstructions}
+                          </div>
+                        </div>
+
+                        {/* Personagens / Clientes a Interpretar */}
+                        {exChars.length > 0 && (
+                          <div className="space-y-2.5">
+                            <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+                              <UserCheck className="w-3.5 h-3.5 text-emerald-600" />
+                              <span>Personagem(ns) do Roteiro a Interpretar ({exChars.length})</span>
+                            </h4>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                              {exChars.map((char) => (
+                                <div
+                                  key={char.id}
+                                  className="bg-emerald-50/30 border border-emerald-100 rounded-xl p-3.5 space-y-2"
+                                >
+                                  <div className="flex items-center gap-2.5">
+                                    <div className="w-8 h-8 rounded-full bg-emerald-800 text-white font-bold text-xs flex items-center justify-center shrink-0">
+                                      {char.name.charAt(0)}
+                                    </div>
+                                    <div>
+                                      <div className="font-bold text-xs text-slate-900">{char.name}</div>
+                                      <div className="text-[11px] text-slate-500">
+                                        {char.age} anos · {char.gender}
+                                      </div>
+                                    </div>
+                                  </div>
+                                  <div className="text-[11px] text-slate-600">
+                                    <strong className="text-slate-800">Temperamento/Comportamento: </strong>
+                                    {char.temperament || char.serviceContext || 'Paciente padrão'}
+                                  </div>
+                                  {(() => {
+                                    const phrases = normalizePhrases(char.typicalPhrases);
+                                    if (phrases.length === 0) return null;
+                                    return (
+                                      <div className="pt-2 border-t border-emerald-100/60">
+                                        <div className="text-[10px] font-bold text-emerald-900 uppercase">
+                                          Falas Típicas:
+                                        </div>
+                                        <ul className="text-[11px] text-slate-700 italic space-y-0.5 mt-0.5">
+                                          {phrases.slice(0, 2).map((phrase, pIdx) => (
+                                            <li key={pIdx}>"{phrase}"</li>
+                                          ))}
+                                        </ul>
+                                      </div>
+                                    );
+                                  })()}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          ) : (
+            <>
+              {/* Abas de Navegação Interna da Ficha do Colaborador (Admin e Avaliador) */}
+              <div className="flex items-center gap-2 border-b border-slate-200 pb-px">
+                <button
+                  type="button"
+                  onClick={() => setActiveCollabViewTab('track_builder')}
+                  className={`px-4 py-2.5 text-xs font-bold transition-all border-b-2 cursor-pointer flex items-center gap-2 ${
+                    activeCollabViewTab === 'track_builder'
+                      ? 'border-emerald-700 text-emerald-900 bg-emerald-50/50'
+                      : 'border-transparent text-slate-500 hover:text-slate-800'
+                  }`}
+                >
+                  <GraduationCap className="w-4 h-4" />
+                  <span>
+                    {isAdmin
+                      ? `Configurar Trilha / Linha do Tempo (${activeCollaborator.track?.length || 0})`
+                      : `Trilha de Desenvolvimento (${activeCollaborator.track?.length || 0})`}
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setActiveCollabViewTab('checklists')}
+                  className={`px-4 py-2.5 text-xs font-bold transition-all border-b-2 cursor-pointer flex items-center gap-2 ${
+                    activeCollabViewTab === 'checklists'
+                      ? 'border-emerald-700 text-emerald-900 bg-emerald-50/50'
+                      : 'border-transparent text-slate-500 hover:text-slate-800'
+                  }`}
+                >
+                  <BookOpen className="w-4 h-4" />
+                  <span>Avaliações & Checklists Atribuídos ({activeAssignments.length})</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setActiveCollabViewTab('exercises')}
+                  className={`px-4 py-2.5 text-xs font-bold transition-all border-b-2 cursor-pointer flex items-center gap-2 ${
+                    activeCollabViewTab === 'exercises'
+                      ? 'border-emerald-700 text-emerald-900 bg-emerald-50/50'
+                      : 'border-transparent text-slate-500 hover:text-slate-800'
+                  }`}
+                >
+                  <FileText className="w-4 h-4" />
+                  <span>Cenários de Simulação ({activeLinkedExercises.length})</span>
+                </button>
+              </div>
+
+              {/* CONTEÚDO DA ABA SELECIONADA */}
+              {activeCollabViewTab === 'track_builder' && (
+                <CollaboratorTrackBuilder
+                  collaborator={activeCollaborator}
+                  readOnly={!isAdmin}
+                  onStartEvaluation={onStartEvaluation}
+                />
+              )}
 
           {activeCollabViewTab === 'checklists' && (
             <div className="space-y-3">
@@ -818,8 +1091,8 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
                         onClick={() => setSelectedBriefingExercise(ex)}
                         className="text-xs font-bold text-emerald-800 hover:text-emerald-950 flex items-center gap-1 cursor-pointer"
                       >
-                        <Eye className="w-3.5 h-3.5" />
-                        <span>Ver Roteiro</span>
+                        <Play className="w-3.5 h-3.5 text-emerald-700" />
+                        <span>Abrir Simulação</span>
                       </button>
                     </div>
                   </div>
@@ -828,7 +1101,9 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
             )}
           </div>
           )}
-        </div>
+        </>
+      )}
+    </div>
       ) : (
         /* ======================================================== */
         /* MODO LISTAGEM GERAL DE COLABORADORES (TABELA + CADASTRO) */
@@ -920,13 +1195,12 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
                 <select
                   value={selectedStatusFilter}
                   onChange={(e) => setSelectedStatusFilter(e.target.value)}
-                  className="text-xs bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  className="text-xs bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer"
                 >
                   <option value="all">Todos os Status</option>
-                  <option value="novo">Novo</option>
+                  <option value="a_realizar">A Realizar</option>
                   <option value="em_treinamento">Em Treinamento</option>
-                  <option value="aprovado">Aprovado</option>
-                  <option value="necessita_reforco">Necessita Reforço</option>
+                  <option value="concluido">Concluído</option>
                 </select>
                 <div className="text-xs text-slate-500 font-medium ml-2">
                   {filteredCollaborators.length} colaborador(es)
@@ -945,7 +1219,9 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
                     <th className="px-5 py-3.5">Célula / Setor</th>
                     <th className="px-5 py-3.5">Status</th>
                     <th className="px-5 py-3.5">Trilha Atribuída</th>
-                    <th className="px-5 py-3.5 text-center">Nota Mais Recente</th>
+                    <th className="px-5 py-3.5 text-center">
+                      {isAuxiliar ? 'Roteiro da Simulação' : 'Nota Mais Recente'}
+                    </th>
                     <th className="px-5 py-3.5 text-right">Ação</th>
                   </tr>
                 </thead>
@@ -988,47 +1264,66 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
                         </td>
 
                         <td className="px-5 py-4">
-                          <span
-                            className={`inline-flex items-center px-2.5 py-0.5 rounded-full font-bold text-[11px] border whitespace-nowrap shrink-0 ${
-                              STATUS_BADGES[col.status].style
-                            }`}
-                          >
-                            {STATUS_BADGES[col.status].label}
-                          </span>
+                          {(() => {
+                            const statusInfo = getCollaboratorProgressStatus(col);
+                            return (
+                              <span
+                                className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full font-bold text-[11px] whitespace-nowrap shrink-0 border ${statusInfo.badgeStyle}`}
+                              >
+                                {statusInfo.key === 'concluido' && (
+                                  <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                                )}
+                                <span>{statusInfo.label}</span>
+                              </span>
+                            );
+                          })()}
                         </td>
 
                         <td className="px-5 py-4 text-slate-600">
                           {(() => {
-                            if (col.track && col.track.length > 0) {
-                              const done = col.track.filter((s) => s.status === 'concluido').length;
-                              return (
-                                <div className="space-y-1">
-                                  <span className="font-semibold text-emerald-950 bg-emerald-50 border border-emerald-300 px-2 py-0.5 rounded-md inline-flex items-center gap-1.5 text-[11px]">
-                                    <GraduationCap className="w-3 h-3 text-emerald-700" />
-                                    <span>{col.track.length} etapa(s) configurada(s)</span>
+                            const total = col.track?.length || 0;
+                            const done = col.track?.filter((s) => s.status === 'concluido').length || 0;
+                            const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+                            const barColor = pct === 100 ? 'bg-emerald-600' : 'bg-emerald-500';
+
+                            if (total === 0) {
+                              const track = learningTracks.find(
+                                (t) => t.id === col.learningTrackId || t.collaboratorIds.includes(col.id)
+                              );
+                              if (track) {
+                                return (
+                                  <span className="font-semibold text-emerald-900 bg-emerald-50/90 border border-emerald-200 px-2 py-0.5 rounded-md inline-block text-xs">
+                                    {track.title}
                                   </span>
-                                  <div className="text-[10px] text-slate-500 font-medium">
-                                    Progresso: {done} de {col.track.length} ({Math.round((done / col.track.length) * 100)}%)
-                                  </div>
+                                );
+                              }
+                              return <span className="text-slate-400 italic text-xs">Sem trilha configurada</span>;
+                            }
+
+                            return (
+                              <div className="flex flex-col gap-1.5 min-w-[120px] max-w-[150px]">
+                                <div className="flex items-center justify-between text-xs">
+                                  <span className="font-semibold text-slate-700">{pct}%</span>
+                                  <span className="text-slate-500">{done} de {total}</span>
                                 </div>
-                              );
-                            }
-                            const track = learningTracks.find(
-                              (t) => t.id === col.learningTrackId || t.collaboratorIds.includes(col.id)
+                                <div className="w-full h-2.5 bg-slate-100 rounded-full overflow-hidden border border-slate-200/60">
+                                  <div
+                                    className={`h-full ${barColor} rounded-full transition-all duration-300`}
+                                    style={{ width: `${pct}%` }}
+                                  />
+                                </div>
+                              </div>
                             );
-                            if (track) {
-                              return (
-                                <span className="font-semibold text-emerald-900 bg-emerald-50/90 border border-emerald-200 px-2 py-0.5 rounded-md inline-block">
-                                  {track.title}
-                                </span>
-                              );
-                            }
-                            return <span className="text-slate-400 italic">Sem trilha configurada</span>;
                           })()}
                         </td>
 
                         <td className="px-5 py-4 text-center">
-                          {completedAsg && typeof completedAsg.finalScore === 'number' ? (
+                          {isAuxiliar ? (
+                            <span className="inline-flex items-center gap-1.5 font-bold text-xs text-emerald-800 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200">
+                              <Theater className="w-3.5 h-3.5 text-emerald-600" />
+                              <span>Roteiro Disponível</span>
+                            </span>
+                          ) : completedAsg && typeof completedAsg.finalScore === 'number' ? (
                             <span className="font-mono font-bold text-sm text-emerald-800 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200">
                               {completedAsg.finalScore.toFixed(1)}
                             </span>
@@ -1043,7 +1338,7 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
                             onClick={() => setActiveCollaboratorId(col.id)}
                             className="inline-flex items-center gap-1 text-xs font-bold text-emerald-800 hover:text-emerald-950 bg-emerald-50 hover:bg-emerald-100 px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
                           >
-                            <span>Abrir Ficha</span>
+                            <span>{isAuxiliar ? 'Ver Roteiro' : 'Abrir Ficha'}</span>
                             <ChevronRight className="w-3.5 h-3.5" />
                           </button>
                         </td>
@@ -1246,15 +1541,6 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
               <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => window.print()}
-                  className="px-3.5 py-1.5 text-xs font-bold text-[#0f3e2e] bg-white hover:bg-emerald-50 rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer shadow-sm"
-                  title="Baixar Roteiro em PDF ou Imprimir"
-                >
-                  <Printer className="w-3.5 h-3.5" />
-                  <span>📄 Baixar Roteiro (PDF)</span>
-                </button>
-                <button
-                  type="button"
                   onClick={() => setSelectedBriefingExercise(null)}
                   className="text-emerald-200 hover:text-white p-1 rounded-lg hover:bg-white/10 cursor-pointer"
                 >
@@ -1374,27 +1660,25 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
                             );
                           })()}
 
-                          {char.guideAttachmentUrl && (
-                            <div className="pt-2 flex items-center gap-2">
-                              <button
-                                type="button"
-                                onClick={() => setGuideMirrorCharacter(char)}
-                                className="px-2.5 py-1 text-xs font-bold text-emerald-800 bg-emerald-100 hover:bg-emerald-200 rounded-lg flex items-center gap-1.5 cursor-pointer transition-colors"
-                              >
-                                <Eye className="w-3.5 h-3.5" />
-                                <span>Visualizar Guia</span>
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => downloadGuidePdf(char, selectedBriefingExercise?.title)}
-                                className="px-2.5 py-1 text-xs font-bold text-white bg-[#064e3b] hover:bg-emerald-900 rounded-lg flex items-center gap-1.5 cursor-pointer transition-colors shadow-2xs"
-                                title={`Baixar Guia_${char.name.replace(/\s+/g, '_')}.pdf`}
-                              >
-                                <Download className="w-3.5 h-3.5 text-emerald-200" />
-                                <span>Baixar PDF</span>
-                              </button>
-                            </div>
-                          )}
+                          <div className="pt-2 flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setGuideMirrorCharacter(char)}
+                              className="px-2.5 py-1 text-xs font-bold text-emerald-800 bg-emerald-100 hover:bg-emerald-200 rounded-lg flex items-center gap-1.5 cursor-pointer transition-colors"
+                            >
+                              <Eye className="w-3.5 h-3.5" />
+                              <span>Visualizar Ficha</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => downloadGuidePdf(char, selectedBriefingExercise?.title)}
+                              className="px-2.5 py-1 text-xs font-bold text-white bg-[#064e3b] hover:bg-emerald-900 rounded-lg flex items-center gap-1.5 cursor-pointer transition-colors shadow-2xs"
+                              title={`Baixar Cliente_${char.name.replace(/\s+/g, '_')}.pdf`}
+                            >
+                              <Download className="w-3.5 h-3.5 text-emerald-200" />
+                              <span>Baixar PDF</span>
+                            </button>
+                          </div>
                         </div>
                       );
                     })}
@@ -1403,7 +1687,22 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
               </div>
             </div>
 
-            <div className="px-6 py-3 bg-slate-50 border-t border-slate-200 flex justify-end">
+            <div className="px-6 py-3 bg-slate-50 border-t border-slate-200 flex items-center justify-between">
+              {selectedBriefingExercise.characterIds.length > 1 ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const chars = selectedBriefingExercise.characterIds
+                      .map((id) => characters.find((c) => c.id === id))
+                      .filter(Boolean) as Character[];
+                    downloadMultipleGuidesPdf(chars, selectedBriefingExercise.title);
+                  }}
+                  className="px-4 py-2 font-bold text-xs text-white bg-[#064e3b] hover:bg-emerald-900 rounded-xl transition-all shadow-xs flex items-center gap-2 cursor-pointer"
+                >
+                  <Download className="w-4 h-4 text-emerald-200" />
+                  <span>Imprimir Todos ({selectedBriefingExercise.characterIds.length}) em PDF Único</span>
+                </button>
+              ) : <div />}
               <button
                 type="button"
                 onClick={() => setSelectedBriefingExercise(null)}

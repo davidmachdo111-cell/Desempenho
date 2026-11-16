@@ -31,7 +31,7 @@ import {
 } from '../../../types/portal';
 import { CUSTOMER_TIER_BADGES } from '../../characters/views/CharactersManagementView';
 import { GuideMirrorModal } from '../../../components/GuideMirrorModal';
-import { downloadGuidePdf } from '../../../lib/downloadHelpers';
+import { downloadGuidePdf, downloadMultipleGuidesPdf } from '../../../lib/downloadHelpers';
 
 interface EvaluationExecutionViewProps {
   assignmentId: string;
@@ -446,15 +446,22 @@ export const EvaluationExecutionView: React.FC<EvaluationExecutionViewProps> = (
                 <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-50 text-emerald-700">
                   Dificuldade: {currentExercise.difficulty || 'Mediano'}
                 </span>
-                <button
-                  type="button"
-                  onClick={() => window.print()}
-                  className="px-2.5 py-1 text-[11px] font-bold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg flex items-center gap-1 cursor-pointer transition-colors shadow-2xs no-print"
-                  title="Baixar Roteiro em PDF ou Imprimir"
-                >
-                  <Printer className="w-3 h-3 text-emerald-700" />
-                  <span>Baixar Roteiro</span>
-                </button>
+                {currentExercise.characterIds.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const chars = currentExercise.characterIds
+                        .map((id) => characters.find((c) => c.id === id))
+                        .filter(Boolean) as Character[];
+                      downloadMultipleGuidesPdf(chars, currentExercise.title);
+                    }}
+                    className="px-2.5 py-1 text-[11px] font-bold text-white bg-[#064e3b] hover:bg-emerald-900 rounded-lg flex items-center gap-1 cursor-pointer transition-colors shadow-2xs no-print"
+                    title="Baixar todos os roteiros deste exercício em um único arquivo PDF"
+                  >
+                    <Download className="w-3 h-3 text-emerald-200" />
+                    <span>Imprimir Todos (PDF Único)</span>
+                  </button>
+                )}
               </div>
             )}
           </div>
@@ -565,27 +572,25 @@ export const EvaluationExecutionView: React.FC<EvaluationExecutionViewProps> = (
                             );
                           })()}
 
-                          {char.guideAttachmentUrl && (
-                            <div className="pt-2 flex items-center gap-2">
-                              <button
-                                type="button"
-                                onClick={() => setGuideModalChar(char)}
-                                className="flex-1 py-1.5 px-2 bg-emerald-100 hover:bg-emerald-200 text-emerald-900 font-bold rounded-lg transition-colors flex items-center justify-center gap-1.5 cursor-pointer text-xs"
-                              >
-                                <Eye className="w-3.5 h-3.5 text-emerald-700" />
-                                <span>Visualizar Guia</span>
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => downloadGuidePdf(char, currentExercise?.title)}
-                                className="py-1.5 px-2.5 bg-[#064e3b] hover:bg-emerald-900 text-white font-bold rounded-lg transition-colors flex items-center justify-center gap-1.5 cursor-pointer text-xs shadow-2xs"
-                                title={`Baixar Guia_${char.name.replace(/\s+/g, '_')}.pdf`}
-                              >
-                                <Download className="w-3.5 h-3.5 text-emerald-200" />
-                                <span>Baixar PDF</span>
-                              </button>
-                            </div>
-                          )}
+                          <div className="pt-2 flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setGuideModalChar(char)}
+                              className="flex-1 py-1.5 px-2 bg-emerald-100 hover:bg-emerald-200 text-emerald-900 font-bold rounded-lg transition-colors flex items-center justify-center gap-1.5 cursor-pointer text-xs"
+                            >
+                              <Eye className="w-3.5 h-3.5 text-emerald-700" />
+                              <span>Visualizar Ficha</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => downloadGuidePdf(char, currentExercise?.title)}
+                              className="py-1.5 px-2.5 bg-[#064e3b] hover:bg-emerald-900 text-white font-bold rounded-lg transition-colors flex items-center justify-center gap-1.5 cursor-pointer text-xs shadow-2xs"
+                              title={`Baixar Cliente_${char.name.replace(/\s+/g, '_')}.pdf`}
+                            >
+                              <Download className="w-3.5 h-3.5 text-emerald-200" />
+                              <span>Baixar PDF</span>
+                            </button>
+                          </div>
                         </div>
                       );
                     })}
