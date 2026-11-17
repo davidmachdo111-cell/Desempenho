@@ -6,9 +6,7 @@ import {
   CheckCircle2,
   ArrowRight,
   UserPlus,
-  KeyRound,
   Shield,
-  HelpCircle,
 } from 'lucide-react';
 import { usePortalStore } from '../context/PortalStoreContext';
 import { SetPasswordView } from './SetPasswordView';
@@ -17,7 +15,7 @@ export const AuthLoginView: React.FC = () => {
   const { users, loginWithUsername, requestAccess } = usePortalStore();
 
   const [authMode, setAuthMode] = useState<'login' | 'request-access' | 'set-password'>('login');
-  const [username, setUsername] = useState('david.furtado');
+  const [username, setUsername] = useState(import.meta.env.DEV ? 'david.furtado' : '');
   const [password, setPassword] = useState('');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [infoMsg, setInfoMsg] = useState<string | null>(null);
@@ -30,7 +28,9 @@ export const AuthLoginView: React.FC = () => {
   const [isSubmittingReq, setIsSubmittingReq] = useState(false);
 
   // Redirecionamento para tela de definição de senha
-  const [setPasswordTargetUsername, setSetPasswordTargetUsername] = useState('david.furtado');
+  const [setPasswordTargetUsername, setSetPasswordTargetUsername] = useState(
+    import.meta.env.DEV ? 'david.furtado' : ''
+  );
 
   const handleLoginSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -254,101 +254,110 @@ export const AuthLoginView: React.FC = () => {
                 </button>
               </div>
 
-              {/* Contas Rápidas para Demonstração e Validação de Fluxos */}
-              <div className="pt-3 border-t border-slate-200 space-y-2">
-                <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
-                  Acessos de Teste (Validação em 1 Clique):
-                </div>
+              {/* Contas Rápidas para Demonstração e Validação de Fluxos (apenas em ambiente DEV) */}
+              {import.meta.env.DEV && (
+                <div className="pt-3 border-t border-slate-200 space-y-2">
+                  <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                    Acessos de Teste (Validação em 1 Clique):
+                  </div>
 
-                <div className="space-y-1.5 max-h-52 overflow-y-auto pr-1">
-                  {[...users]
-                    .sort((a, b) => {
-                      const priority = ['david.furtado', 'mariana.avaliador', 'carlos.ator', 'lucas.silveira'];
-                      const idxA = priority.indexOf(a.username);
-                      const idxB = priority.indexOf(b.username);
-                      if (idxA !== -1 && idxB !== -1) return idxA - idxB;
-                      if (idxA !== -1) return -1;
-                      if (idxB !== -1) return 1;
-                      return a.fullName.localeCompare(b.fullName);
-                    })
-                    .map((u) => {
-                      const isMaster = u.username === 'david.furtado';
-                      const isPending = u.status === 'pendente_aprovacao';
-                      const isApprovedNoPass = u.status === 'aprovado_sem_senha';
-                      const isBlocked = u.status === 'bloqueado' || !u.isActive;
+                  <div className="space-y-1.5 max-h-52 overflow-y-auto pr-1">
+                    {[...users]
+                      .sort((a, b) => {
+                        const priority = ['david.furtado', 'mariana.avaliador', 'carlos.ator', 'lucas.silveira'];
+                        const idxA = priority.indexOf(a.username);
+                        const idxB = priority.indexOf(b.username);
+                        if (idxA !== -1 && idxB !== -1) return idxA - idxB;
+                        if (idxA !== -1) return -1;
+                        if (idxB !== -1) return 1;
+                        return a.fullName.localeCompare(b.fullName);
+                      })
+                      .map((u) => {
+                        const isMaster = u.username === 'david.furtado';
+                        const isPending = u.status === 'pendente_aprovacao';
+                        const isApprovedNoPass = u.status === 'aprovado_sem_senha';
+                        const isArchived = u.status === 'arquivado';
+                        const isBlocked = u.status === 'bloqueado' || (!isArchived && !u.isActive);
 
-                      return (
-                        <button
-                          key={u.id}
-                          type="button"
-                          onClick={() => handleQuickSelect(u.username)}
-                          className={`w-full text-left px-3 py-2 rounded-xl border text-xs flex items-center justify-between gap-2 transition-all cursor-pointer ${
-                            isMaster
-                              ? 'bg-amber-50/60 border-amber-300 hover:bg-amber-100/60'
-                              : u.role === 'avaliador'
-                              ? 'bg-blue-50/50 border-blue-200 hover:bg-blue-100/50'
-                              : u.role === 'auxiliar'
-                              ? 'bg-purple-50/50 border-purple-200 hover:bg-purple-100/50'
-                              : isPending
-                              ? 'bg-slate-50 border-slate-200 hover:bg-slate-100 opacity-75'
-                              : isBlocked
-                              ? 'bg-red-50/50 border-red-200 hover:bg-red-100/50'
-                              : 'bg-white border-slate-200 hover:border-emerald-500 hover:bg-emerald-50/30'
-                          }`}
-                        >
-                          <div className="truncate">
-                            <div className="font-bold text-slate-900 flex items-center gap-1.5 truncate">
-                              <span>{u.fullName}</span>
-                              <span className="font-mono text-[10px] text-slate-500">
-                                (@{u.username})
-                              </span>
-                              {u.role === 'admin' && (
-                                <span className="text-[9px] bg-amber-200 text-amber-900 border border-amber-300 px-1.5 py-0.2 rounded font-bold uppercase">
-                                  ADMIN
+                        return (
+                          <button
+                            key={u.id}
+                            type="button"
+                            onClick={() => handleQuickSelect(u.username)}
+                            className={`w-full text-left px-3 py-2 rounded-xl border text-xs flex items-center justify-between gap-2 transition-all cursor-pointer ${
+                              isMaster
+                                ? 'bg-amber-50/60 border-amber-300 hover:bg-amber-100/60'
+                                : u.role === 'avaliador'
+                                ? 'bg-blue-50/50 border-blue-200 hover:bg-blue-100/50'
+                                : u.role === 'auxiliar'
+                                ? 'bg-purple-50/50 border-purple-200 hover:bg-purple-100/50'
+                                : isPending
+                                ? 'bg-slate-50 border-slate-200 hover:bg-slate-100 opacity-75'
+                                : isArchived
+                                ? 'bg-slate-100/70 border-slate-300 hover:bg-slate-200/70 opacity-75'
+                                : isBlocked
+                                ? 'bg-red-50/50 border-red-200 hover:bg-red-100/50'
+                                : 'bg-white border-slate-200 hover:border-emerald-500 hover:bg-emerald-50/30'
+                            }`}
+                          >
+                            <div className="truncate">
+                              <div className="font-bold text-slate-900 flex items-center gap-1.5 truncate">
+                                <span>{u.fullName}</span>
+                                <span className="font-mono text-[10px] text-slate-500">
+                                  (@{u.username})
                                 </span>
-                              )}
-                              {u.role === 'avaliador' && (
-                                <span className="text-[9px] bg-blue-100 text-blue-900 border border-blue-300 px-1.5 py-0.2 rounded font-bold uppercase">
-                                  AVALIADOR
-                                </span>
-                              )}
-                              {u.role === 'auxiliar' && (
-                                <span className="text-[9px] bg-purple-100 text-purple-900 border border-purple-300 px-1.5 py-0.2 rounded font-bold uppercase">
-                                  AUXILIAR / ATOR
-                                </span>
-                              )}
-                              {u.role === 'colaborador' && (
-                                <span className="text-[9px] bg-emerald-100 text-emerald-900 border border-emerald-300 px-1.5 py-0.2 rounded font-bold uppercase">
-                                  COLABORADOR
-                                </span>
-                              )}
+                                {u.role === 'admin' && (
+                                  <span className="text-[9px] bg-amber-200 text-amber-900 border border-amber-300 px-1.5 py-0.2 rounded font-bold uppercase">
+                                    ADMIN
+                                  </span>
+                                )}
+                                {u.role === 'avaliador' && (
+                                  <span className="text-[9px] bg-blue-100 text-blue-900 border border-blue-300 px-1.5 py-0.2 rounded font-bold uppercase">
+                                    AVALIADOR
+                                  </span>
+                                )}
+                                {u.role === 'auxiliar' && (
+                                  <span className="text-[9px] bg-purple-100 text-purple-900 border border-purple-300 px-1.5 py-0.2 rounded font-bold uppercase">
+                                    AUXILIAR / ATOR
+                                  </span>
+                                )}
+                                {u.role === 'colaborador' && (
+                                  <span className="text-[9px] bg-emerald-100 text-emerald-900 border border-emerald-300 px-1.5 py-0.2 rounded font-bold uppercase">
+                                    COLABORADOR
+                                  </span>
+                                )}
+                              </div>
+                              <div className="text-[10px] text-slate-500 truncate">
+                                {isPending ? (
+                                  <span className="text-amber-700 font-semibold">
+                                    Pendente de aprovação
+                                  </span>
+                                ) : isApprovedNoPass ? (
+                                  <span className="text-emerald-700 font-semibold">
+                                    Aprovado sem senha (1º acesso)
+                                  </span>
+                                ) : isArchived ? (
+                                  <span className="text-slate-600 font-semibold">
+                                    Usuário arquivado
+                                  </span>
+                                ) : isBlocked ? (
+                                  <span className="text-red-700 font-semibold">
+                                    Bloqueado pela administração
+                                  </span>
+                                ) : (
+                                  <span className="text-slate-600">
+                                    Departamento: {u.department || 'Geral'}
+                                  </span>
+                                )}
+                              </div>
                             </div>
-                            <div className="text-[10px] text-slate-500 truncate">
-                              {isPending ? (
-                                <span className="text-amber-700 font-semibold">
-                                  Pendente de aprovação
-                                </span>
-                              ) : isApprovedNoPass ? (
-                                <span className="text-emerald-700 font-semibold">
-                                  Aprovado sem senha (1º acesso)
-                                </span>
-                              ) : isBlocked ? (
-                                <span className="text-red-700 font-semibold">
-                                  Bloqueado pela administração
-                                </span>
-                              ) : (
-                                <span className="text-slate-600">
-                                  Departamento: {u.department || 'Geral'}
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                          <ArrowRight className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                        </button>
-                      );
-                    })}
+                            <ArrowRight className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                          </button>
+                        );
+                      })}
+                  </div>
                 </div>
-              </div>
+              )}
             </>
           ) : (
             /* Modo de Solicitação de Primeiro Acesso */

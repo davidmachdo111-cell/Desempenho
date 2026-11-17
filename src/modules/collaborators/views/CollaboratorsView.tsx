@@ -5,50 +5,57 @@ import {
   Search,
   Building2,
   CheckCircle2,
-  AlertCircle,
   Play,
-  Award,
+  ChevronLeft,
   ChevronRight,
   ArrowLeft,
-  BookOpen,
   FileText,
   UserCheck,
   X,
-  SlidersHorizontal,
   Trash2,
   User,
   Eye,
-  Printer,
-  Calendar,
   CheckSquare,
   Square,
   Sparkles,
   Download,
   GraduationCap,
-  Layers,
   Theater,
+  CreditCard,
+  AlertTriangle,
+  Shield,
+  Lock,
+  RotateCcw,
 } from 'lucide-react';
 import { usePortalStore } from '../../../context/PortalStoreContext';
+import { useToast } from '../../../context/ToastContext';
+import { isActorOnlyUser } from '../../../lib/permissions';
 import {
   Collaborator,
   CollaboratorStatus,
   Exercise,
-  Checklist,
   Character,
-  CollaboratorChecklist,
   OfficialCell,
   OFFICIAL_CELLS,
+  getCharacterGuides,
+  getExerciseAttachments,
   normalizePhrases,
   getCellName,
+  getScorePerformanceMeta,
   generateCorporateUsername,
+  isGuardianHostUser,
+  canViewRestrictedItem,
+  canSeeFinalVerdict,
 } from '../../../types/portal';
 import { CUSTOMER_TIER_BADGES } from '../../characters/views/CharactersManagementView';
-import { DIFFICULTY_BADGES } from '../../exercises/views/ExercisesSimulationView';
 import { GuideMirrorModal } from '../../../components/GuideMirrorModal';
+import {
+  AttachedGuideViewerModal,
+  AttachedGuideViewerData,
+} from '../../../components/AttachedGuideViewerModal';
 import {
   downloadGuidePdf,
   downloadMultipleGuidesPdf,
-  downloadReportPdf,
   downloadCollaboratorDossierPdf,
   DossierTrackItem,
   DossierEvaluationHistoryItem,
@@ -59,12 +66,31 @@ const CLEAN_CELL_OPTIONS = ['Laboratório', 'Imagem', 'Consultas', 'Terapias', '
 
 interface CollaboratorsViewProps {
   initialCollaboratorId?: string | null;
+  onSelectCollaborator?: (id: string | null) => void;
   onStartEvaluation: (assignmentId: string, collaboratorId?: string) => void;
 }
 
-export function getCollaboratorProgressStatus(col: Collaborator): {
-  key: 'a_realizar' | 'em_treinamento' | 'concluido';
-  label: 'A Realizar' | 'Em Treinamento' | 'Concluído';
+export type CollaboratorProgressKey =
+  | 'a_realizar'
+  | 'em_treinamento'
+  | 'concluido'
+  | 'finalizado_aprovado'
+  | 'finalizado_validacao'
+  | 'finalizado';
+
+export function getCollaboratorProgressStatus(
+  col: Collaborator,
+  canSeeVerdict: boolean = true
+): {
+  key: CollaboratorProgressKey;
+  label:
+    | 'A Realizar'
+    | 'Em Treinamento'
+    | 'Concluído'
+    | 'Aprovado'
+    | 'Validação da liderança'
+    | 'Finalizado';
+  subtitle?: string;
   badgeStyle: string;
   totalSteps: number;
   completedSteps: number;
@@ -75,6 +101,42 @@ export function getCollaboratorProgressStatus(col: Collaborator): {
   const completedSteps = track.filter((s) => s.status === 'concluido').length;
   const progressPct = totalSteps > 0 ? Math.round((completedSteps / totalSteps) * 100) : 0;
 
+  // 1. Somente após finalização manual pelo Guardião Anfitrião / Admin
+  if (col.isTrackFinalized) {
+    if (!canSeeVerdict) {
+      return {
+        key: 'finalizado',
+        label: 'Finalizado',
+        badgeStyle: 'bg-slate-100 text-slate-700 border border-slate-300',
+        totalSteps,
+        completedSteps,
+        progressPct: totalSteps > 0 ? progressPct : 100,
+      };
+    }
+
+    if (col.guardianVerdict === 'necessita_reforco') {
+      return {
+        key: 'finalizado_validacao',
+        label: 'Validação da liderança',
+        subtitle: 'Verificar a continuidade com a liderança do colaborador',
+        badgeStyle: 'bg-amber-50 text-amber-900 border border-amber-300',
+        totalSteps,
+        completedSteps,
+        progressPct: totalSteps > 0 ? progressPct : 100,
+      };
+    }
+
+    return {
+      key: 'finalizado_aprovado',
+      label: 'Aprovado',
+      badgeStyle: 'bg-emerald-50 text-emerald-800 border border-emerald-300',
+      totalSteps,
+      completedSteps,
+      progressPct: totalSteps > 0 ? progressPct : 100,
+    };
+  }
+
+  // 2. Enquanto não finalizada, status depende exclusivamente das etapas concluídas
   if (totalSteps === 0 || completedSteps === 0) {
     return {
       key: 'a_realizar',
@@ -109,11 +171,11 @@ export function getCollaboratorProgressStatus(col: Collaborator): {
 
 export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
   initialCollaboratorId,
+  onSelectCollaborator,
   onStartEvaluation,
 }) => {
   const {
     collaborators,
-    cells,
     checklists,
     collaboratorChecklists,
     learningTracks,
@@ -126,14 +188,23 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
     surveyResponses,
     createCollaborator,
     deleteCollaborator,
-    updateCollaboratorChecklistAssignments,
+    finalizeCollaboratorTrack,
+    reopenCollaboratorTrack,
   } = usePortalStore();
+  const { showToast } = useToast();
 
-  const isAuxiliar = currentUser?.role === 'auxiliar';
   const isAdmin = currentUser?.role === 'admin';
-  const isEvaluator = currentUser?.role === 'avaliador';
-  const canApplyEvaluations = hasPermission('can_apply_evaluations') && !isAuxiliar;
+  const isGuardianHost = isGuardianHostUser(currentUser);
+  const canActAsGuardianOrAdmin = isAdmin || isGuardianHost;
+  const canSeeVerdict = canSeeFinalVerdict(currentUser);
+  const canOpenFinalizedFicha = canSeeVerdict;
+  const canApplyEvaluations = hasPermission('can_apply_evaluations');
   const canManageCollaborators = hasPermission('can_manage_collaborators');
+  const isActorOnlyMode = isActorOnlyUser(currentUser);
+
+  const pdfGeneratedBy = currentUser
+    ? { fullName: currentUser.fullName, username: currentUser.username }
+    : undefined;
 
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedStatusFilter, setSelectedStatusFilter] = useState<string>('all');
@@ -141,32 +212,43 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
   const [activeCollaboratorId, setActiveCollaboratorId] = useState<string | null>(
     initialCollaboratorId || null
   );
+  const [usedActorPhrases, setUsedActorPhrases] = useState<Record<string, boolean>>({});
+  const [activeActorSceneIndex, setActiveActorSceneIndex] = useState<number>(0);
 
-  useEffect(() => {
-    if (initialCollaboratorId) {
-      setActiveCollaboratorId(initialCollaboratorId);
+  const selectCollaborator = (id: string | null) => {
+    if (id) {
+      const target = collaborators.find((c) => c.id === id);
+      if (target?.isTrackFinalized && !canOpenFinalizedFicha) {
+        showToast(
+          'Esta trilha já foi finalizada. O acesso à ficha e ao roteiro está bloqueado para este perfil.',
+          'info'
+        );
+        setActiveCollaboratorId(null);
+        onSelectCollaborator?.(null);
+        return;
+      }
     }
-  }, [initialCollaboratorId]);
-
-  const handlePrintReport = (e?: React.MouseEvent) => {
-    if (e) {
-      e.preventDefault();
-      e.stopPropagation();
-    }
-    window.print();
+    setActiveCollaboratorId(id);
+    onSelectCollaborator?.(id);
   };
 
+  useEffect(() => {
+    setActiveCollaboratorId(initialCollaboratorId || null);
+  }, [initialCollaboratorId]);
+
   const [showCreateModal, setShowCreateModal] = useState(false);
-  const [showLinksModal, setShowLinksModal] = useState(false);
-  const [activeCollabViewTab, setActiveCollabViewTab] = useState<'track_builder' | 'checklists' | 'exercises'>('track_builder');
+  const [activeCollabViewTab, setActiveCollabViewTab] = useState<'track_builder' | 'exercises'>('track_builder');
   const [selectedBriefingExercise, setSelectedBriefingExercise] = useState<Exercise | null>(null);
 
-  // Modal do Laudo Oficial de Impressão
-  const [printReportModalAssignment, setPrintReportModalAssignment] =
-    useState<CollaboratorChecklist | null>(null);
+  // Modal de Finalização / Parecer Oficial do Guardião Anfitrião
+  const [showFinalizeModal, setShowFinalizeModal] = useState(false);
+  const [finalizeVerdict, setFinalizeVerdict] = useState<'aprovado' | 'necessita_reforco'>('aprovado');
+  const [finalizeOpinion, setFinalizeOpinion] = useState('');
+  const [isFinalizingTrack, setIsFinalizingTrack] = useState(false);
+  const [isReopeningTrack, setIsReopeningTrack] = useState(false);
+  const [acknowledgeIncompleteTrack, setAcknowledgeIncompleteTrack] = useState(false);
 
   const [deleteConfirmCollaborator, setDeleteConfirmCollaborator] = useState<Collaborator | null>(null);
-  const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   // Estados do formulário de criação (+ Novo Colaborador)
   const [newFirstName, setNewFirstName] = useState('');
@@ -175,7 +257,6 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
   const [newCellTeam, setNewCellTeam] = useState('Laboratório');
   const [newRegCode, setNewRegCode] = useState('');
   const [newStatus, setNewStatus] = useState<CollaboratorStatus>('novo');
-  const [newLearningTrackId, setNewLearningTrackId] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Geração em tempo real do Usuário de Acesso Corporativo no padrão nome.sobrenome
@@ -183,12 +264,61 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
     return generateCorporateUsername(newFirstName, newLastName);
   }, [newFirstName, newLastName]);
 
-  // Filtro de listagem reativo pelo status calculado
+  // Mapa consolidado de Média Geral por colaborador (avaliações concluídas visíveis ao usuário atual)
+  const collaboratorAverageMap = useMemo(() => {
+    const map = new Map<string, { average: number | null; count: number }>();
+    collaborators.forEach((col) => {
+      const completed = collaboratorChecklists.filter((asg) => {
+        if (
+          asg.collaboratorId !== col.id ||
+          asg.status !== 'concluido' ||
+          typeof asg.finalScore !== 'number'
+        ) {
+          return false;
+        }
+        const chk = checklists.find((c) => c.id === asg.checklistId);
+        return canViewRestrictedItem(currentUser, chk?.visibility);
+      });
+      if (completed.length === 0) {
+        map.set(col.id, { average: null, count: 0 });
+      } else {
+        const sum = completed.reduce((acc, curr) => acc + (curr.finalScore as number), 0);
+        map.set(col.id, { average: sum / completed.length, count: completed.length });
+      }
+    });
+    return map;
+  }, [collaborators, collaboratorChecklists, checklists, currentUser]);
+
+  // Contadores dos indicadores resumidos clicáveis (respeitando filtro de célula e sigilo de veredito)
+  const statusSummaryCounts = useMemo(() => {
+    const base = collaborators.filter((col) => {
+      if (selectedCellFilter !== 'all') {
+        if (getCellName(col.cellTeam) !== selectedCellFilter) return false;
+      }
+      return true;
+    });
+
+    const statuses = base.map((c) => getCollaboratorProgressStatus(c, canSeeVerdict));
+
+    return {
+      all: base.length,
+      a_realizar: statuses.filter((s) => s.key === 'a_realizar').length,
+      em_treinamento: statuses.filter((s) => s.key === 'em_treinamento').length,
+      concluido: statuses.filter((s) => s.key === 'concluido').length,
+      finalizado_aprovado: statuses.filter((s) => s.key === 'finalizado_aprovado').length,
+      finalizado_validacao: statuses.filter((s) => s.key === 'finalizado_validacao').length,
+      finalizado: statuses.filter((s) => s.key === 'finalizado').length,
+    };
+  }, [collaborators, selectedCellFilter, canSeeVerdict]);
+
+  // Filtro de listagem reativo pelo status calculado e indicadores rápidos
   const filteredCollaborators = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     return collaborators.filter((col) => {
-      const statusInfo = getCollaboratorProgressStatus(col);
-      if (selectedStatusFilter !== 'all' && statusInfo.key !== selectedStatusFilter) return false;
+      const statusInfo = getCollaboratorProgressStatus(col, canSeeVerdict);
+      if (selectedStatusFilter !== 'all' && statusInfo.key !== selectedStatusFilter) {
+        return false;
+      }
       if (selectedCellFilter !== 'all') {
         const colCell = getCellName(col.cellTeam);
         if (colCell !== selectedCellFilter) return false;
@@ -202,12 +332,31 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
         (col.username && col.username.toLowerCase().includes(q))
       );
     });
-  }, [collaborators, searchQuery, selectedStatusFilter, selectedCellFilter]);
+  }, [
+    collaborators,
+    searchQuery,
+    selectedStatusFilter,
+    selectedCellFilter,
+    canSeeVerdict,
+  ]);
 
-  const activeCollaborator = useMemo(
+  const rawActiveCollaborator = useMemo(
     () => collaborators.find((c) => c.id === activeCollaboratorId) || null,
     [collaborators, activeCollaboratorId]
   );
+
+  const isBlockedFinalizedView = Boolean(
+    rawActiveCollaborator?.isTrackFinalized && !canOpenFinalizedFicha
+  );
+
+  const activeCollaborator = isBlockedFinalizedView ? null : rawActiveCollaborator;
+
+  useEffect(() => {
+    if (isBlockedFinalizedView && activeCollaboratorId) {
+      setActiveCollaboratorId(null);
+      onSelectCollaborator?.(null);
+    }
+  }, [isBlockedFinalizedView, activeCollaboratorId, onSelectCollaborator]);
 
   // Checklists atribuídos ao colaborador ativo
   const activeAssignments = useMemo(() => {
@@ -215,14 +364,52 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
     return collaboratorChecklists.filter((c) => c.collaboratorId === activeCollaborator.id);
   }, [collaboratorChecklists, activeCollaborator]);
 
-  // Exercícios vinculados aos checklists atribuídos ou configurados na trilha do colaborador
+  // Etapa ativa atual da trilha (status === 'disponivel') para sincronização estrita da Visão do Ator
+  const currentAvailableTrackStep = useMemo(() => {
+    if (!activeCollaborator) return null;
+    return (activeCollaborator.track || []).find((step) => step.status === 'disponivel') || null;
+  }, [activeCollaborator]);
+
+  const currentAvailableStepNumber = useMemo(() => {
+    if (!activeCollaborator || !currentAvailableTrackStep) return null;
+    const idx = (activeCollaborator.track || []).findIndex(
+      (step) => step.id === currentAvailableTrackStep.id
+    );
+    return idx >= 0 ? idx + 1 : null;
+  }, [activeCollaborator, currentAvailableTrackStep]);
+
+  // Exercícios vinculados:
+  // - No modo Ator/Auxiliar (isActorOnlyMode): olha EXCLUSIVAMENTE para a etapa atualmente liberada (status === 'disponivel').
+  // - Sem nenhum fallback para exercícios da célula ou exercícios gerais do sistema.
   const activeLinkedExercises = useMemo(() => {
     if (!activeCollaborator) return [];
+
+    if (isActorOnlyMode) {
+      const currentAvailableStep = (activeCollaborator.track || []).find(
+        (s) => s.status === 'disponivel'
+      );
+      if (!currentAvailableStep || currentAvailableStep.type !== 'checklist') {
+        return [];
+      }
+
+      const chk = checklists.find((c) => c.id === currentAvailableStep.refId);
+      if (!chk || !chk.exerciseIds || chk.exerciseIds.length === 0) {
+        return [];
+      }
+      if (!canViewRestrictedItem(currentUser, chk.visibility)) {
+        return [];
+      }
+
+      return chk.exerciseIds
+        .map((exId) => exercises.find((e) => e.id === exId))
+        .filter(Boolean) as Exercise[];
+    }
+
     const exerciseIdSet = new Set<string>();
 
     activeAssignments.forEach((asg) => {
       const chk = checklists.find((c) => c.id === asg.checklistId);
-      if (chk && chk.exerciseIds) {
+      if (chk && chk.exerciseIds && canViewRestrictedItem(currentUser, chk.visibility)) {
         chk.exerciseIds.forEach((id) => exerciseIdSet.add(id));
       }
     });
@@ -230,7 +417,7 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
     (activeCollaborator.track || []).forEach((step) => {
       if (step.type === 'checklist') {
         const chk = checklists.find((c) => c.id === step.refId);
-        if (chk && chk.exerciseIds) {
+        if (chk && chk.exerciseIds && canViewRestrictedItem(currentUser, chk.visibility)) {
           chk.exerciseIds.forEach((id) => exerciseIdSet.add(id));
         }
       } else if (exercises.some((e) => e.id === step.refId)) {
@@ -238,51 +425,83 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
       }
     });
 
-    const found = Array.from(exerciseIdSet)
+    return Array.from(exerciseIdSet)
       .map((exId) => exercises.find((e) => e.id === exId))
       .filter(Boolean) as Exercise[];
-
-    if (found.length > 0) return found;
-
-    if (activeCollaborator.cellTeam) {
-      const cellExs = exercises.filter(
-        (e) =>
-          e.cell === activeCollaborator.cellTeam ||
-          getCellName(e.cell) === getCellName(activeCollaborator.cellTeam)
-      );
-      if (cellExs.length > 0) return cellExs;
-    }
-
-    return exercises.slice(0, 2);
-  }, [activeCollaborator, activeAssignments, checklists, exercises]);
+  }, [activeCollaborator, isActorOnlyMode, activeAssignments, checklists, exercises, currentUser]);
 
   useEffect(() => {
-    if (isAuxiliar && activeCollaboratorId) {
+    if (isActorOnlyMode && activeCollaboratorId) {
       setActiveCollabViewTab('exercises');
+    } else if (!isActorOnlyMode && activeCollaboratorId) {
+      setActiveCollabViewTab('track_builder');
     }
-  }, [isAuxiliar, activeCollaboratorId]);
+  }, [isActorOnlyMode, activeCollaboratorId]);
 
-  // Exportação consolidada do Dossiê do Colaborador em PDF
+  useEffect(() => {
+    setActiveActorSceneIndex(0);
+  }, [activeCollaboratorId, currentAvailableTrackStep?.id]);
+
+  const safeActorSceneIndex =
+    activeLinkedExercises.length > 0 &&
+    activeActorSceneIndex >= 0 &&
+    activeActorSceneIndex < activeLinkedExercises.length
+      ? activeActorSceneIndex
+      : 0;
+  const currentActorScene = activeLinkedExercises[safeActorSceneIndex] || null;
+
+  // Exportação consolidada do Dossiê do Colaborador em PDF (com filtragem de confidencialidade)
   const handleExportCollaboratorDossier = () => {
     if (!activeCollaborator) return;
 
-    const statusInfo = getCollaboratorProgressStatus(activeCollaborator);
-    const completedAssignments = activeAssignments.filter((a) => a.status === 'concluido');
-    const totalScore = completedAssignments.reduce((acc, curr) => acc + (curr.finalScore || 0), 0);
-    const avgScore = completedAssignments.length > 0 ? totalScore / completedAssignments.length : 0;
-
-    const trackSteps: DossierTrackItem[] = (activeCollaborator.track || []).map((step, idx) => {
-      let title = step.title;
+    const visibleRawSteps = (activeCollaborator.track || []).filter((step) => {
       if (step.type === 'checklist') {
         const chk = checklists.find((c) => c.id === step.refId);
-        if (chk) title = chk.title;
+        return canViewRestrictedItem(currentUser, chk?.visibility);
+      }
+      const srv = surveys.find((s) => s.id === step.refId);
+      return canViewRestrictedItem(currentUser, srv?.visibility);
+    });
+
+    const visibleCompletedCount = visibleRawSteps.filter((s) => s.status === 'concluido').length;
+    const visibleCompletionRate =
+      visibleRawSteps.length > 0
+        ? Math.round((visibleCompletedCount / visibleRawSteps.length) * 100)
+        : 0;
+
+    const visibleCompletedAssignments = activeAssignments.filter((a) => {
+      if (a.status !== 'concluido' || typeof a.finalScore !== 'number') return false;
+      const chk = checklists.find((c) => c.id === a.checklistId);
+      return canViewRestrictedItem(currentUser, chk?.visibility);
+    });
+    const totalScore = visibleCompletedAssignments.reduce((acc, curr) => acc + (curr.finalScore || 0), 0);
+    const avgScore =
+      visibleCompletedAssignments.length > 0 ? totalScore / visibleCompletedAssignments.length : 0;
+
+    const statusInfo = getCollaboratorProgressStatus(
+      { ...activeCollaborator, track: visibleRawSteps },
+      canSeeVerdict
+    );
+
+    const trackSteps: DossierTrackItem[] = visibleRawSteps.map((step, idx) => {
+      let title = step.title;
+      let isRestrictedStep = false;
+      if (step.type === 'checklist') {
+        const chk = checklists.find((c) => c.id === step.refId);
+        if (chk) {
+          title = chk.title;
+          isRestrictedStep = chk.visibility === 'restrito';
+        }
       } else if (step.type === 'survey') {
         const srv = surveys.find((s) => s.id === step.refId);
-        if (srv) title = srv.title;
+        if (srv) {
+          title = srv.title;
+          isRestrictedStep = srv.visibility === 'restrito';
+        }
       }
       return {
         orderIndex: step.order || idx + 1,
-        title,
+        title: isRestrictedStep ? `[RESTRITO] ${title}` : title,
         type: step.type,
         status: step.status,
         score: typeof step.finalScore === 'number' ? step.finalScore : undefined,
@@ -290,7 +509,7 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
       };
     });
 
-    const evaluationHistory: DossierEvaluationHistoryItem[] = completedAssignments.map((a) => {
+    const evaluationHistory: DossierEvaluationHistoryItem[] = visibleCompletedAssignments.map((a) => {
       const chk = checklists.find((c) => c.id === a.checklistId);
       const ex = chk?.exerciseIds?.[0]
         ? exercises.find((e) => e.id === chk.exerciseIds[0])
@@ -307,21 +526,22 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
         finalScore: a.finalScore || 0,
         completedAt: a.completedAt ? new Date(a.completedAt).toLocaleDateString('pt-BR') : 'Data não informada',
         observations: a.generalObservations || undefined,
-        criteriaAnswers: (a.criteriaAnswers || []).map((ans) => ({
-          name: ans.name,
-          checked: ans.checked,
-          weight: ans.weight,
-          notes: ans.notes,
-        })),
+        isRestricted: chk?.visibility === 'restrito',
       };
     });
 
-    const userSurveyResponses = surveyResponses.filter((s) => s.collaboratorId === activeCollaborator.id);
-    const surveyResponsesSummary = userSurveyResponses.map((sr) => {
+    const visibleSurveyResponses = surveyResponses.filter((sr) => {
+      if (sr.collaboratorId !== activeCollaborator.id) return false;
+      const srv = surveys.find((s) => s.id === sr.surveyId);
+      return canViewRestrictedItem(currentUser, srv?.visibility);
+    });
+
+    const surveyResponsesSummary = visibleSurveyResponses.map((sr) => {
       const srv = surveys.find((s) => s.id === sr.surveyId);
       return {
         surveyTitle: srv?.title || 'Pesquisa de Satisfação',
         completedAt: sr.completedAt ? new Date(sr.completedAt).toLocaleDateString('pt-BR') : 'Data não informada',
+        isRestricted: srv?.visibility === 'restrito',
         questions: (srv?.questions || []).map((q) => {
           const ans = sr.answers?.[q.id];
           return {
@@ -341,13 +561,34 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
       cellTeam: getCellName(activeCollaborator.cellTeam),
       status: statusInfo.label,
       averageScore: avgScore,
-      completionRate: statusInfo.progressPct,
-      totalTrackSteps: statusInfo.totalSteps,
-      totalEvaluations: completedAssignments.length,
-      totalSurveys: userSurveyResponses.length,
+      completionRate: visibleCompletionRate,
+      totalTrackSteps: visibleRawSteps.length,
+      totalEvaluations: visibleCompletedAssignments.length,
+      totalSurveys: visibleSurveyResponses.length,
+      isTrackFinalized: Boolean(activeCollaborator.isTrackFinalized),
+      isTrackComplete:
+        (activeCollaborator.track?.length || 0) > 0 &&
+        (activeCollaborator.track || []).every((s) => s.status === 'concluido'),
       trackSteps,
       evaluationHistory,
       surveyResponsesSummary,
+      guardianFinalization:
+        activeCollaborator.isTrackFinalized && canSeeVerdict
+          ? {
+              isFinalized: true,
+              hideVerdict: false,
+              verdict: activeCollaborator.guardianVerdict || 'aprovado',
+              opinion: activeCollaborator.guardianOpinion || '',
+              finalizedBy: activeCollaborator.guardianFinalizedBy || 'Guardião Anfitrião',
+              finalizedAt: activeCollaborator.guardianFinalizedAt
+                ? new Date(activeCollaborator.guardianFinalizedAt).toLocaleString('pt-BR', {
+                    dateStyle: 'short',
+                    timeStyle: 'short',
+                  })
+                : '',
+            }
+          : undefined,
+      generatedBy: pdfGeneratedBy,
       generatedAt: new Date().toLocaleDateString('pt-BR', {
         day: '2-digit',
         month: '2-digit',
@@ -358,63 +599,17 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
     });
   };
 
-  // Estados temporários do modal de gerenciar vínculos
-  const [tempAssignedChecklistIds, setTempAssignedChecklistIds] = useState<string[]>([]);
-  const [linksCellFilter, setLinksCellFilter] = useState<'all' | OfficialCell>('all');
   const [guideMirrorCharacter, setGuideMirrorCharacter] = useState<Character | null>(null);
-
-  const openLinksManager = () => {
-    if (!activeCollaborator) return;
-    const currentChkIds = activeAssignments.map((a) => a.checklistId);
-    setTempAssignedChecklistIds(currentChkIds);
-    setLinksCellFilter('all');
-    setShowLinksModal(true);
-  };
-
-  const handleToggleChecklistLink = (chkId: string) => {
-    setTempAssignedChecklistIds((prev) =>
-      prev.includes(chkId) ? prev.filter((id) => id !== chkId) : [...prev, chkId]
-    );
-  };
-
-  const handleSaveLinks = async () => {
-    if (!activeCollaborator) return;
-    setIsSubmitting(true);
-    const res = await updateCollaboratorChecklistAssignments(
-      activeCollaborator.id,
-      tempAssignedChecklistIds
-    );
-    setIsSubmitting(false);
-
-    if (res.success) {
-      setShowLinksModal(false);
-      setFeedback({ type: 'success', text: 'Vínculos de checklists atualizados com sucesso!' });
-    } else {
-      setFeedback({ type: 'error', text: res.message });
-    }
-  };
-
-  const handleRemoveSingleAssignment = async (checklistIdToRemove: string) => {
-    if (!activeCollaborator) return;
-    const updatedIds = activeAssignments
-      .map((a) => a.checklistId)
-      .filter((id) => id !== checklistIdToRemove);
-    const res = await updateCollaboratorChecklistAssignments(activeCollaborator.id, updatedIds);
-    if (res.success) {
-      setFeedback({ type: 'success', text: 'Checklist desvinculado com sucesso!' });
-    } else {
-      setFeedback({ type: 'error', text: res.message });
-    }
-  };
+  const [attachedGuideViewer, setAttachedGuideViewer] = useState<AttachedGuideViewerData | null>(null);
 
   const handleCreateCollaborator = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newFirstName.trim() || !newLastName.trim()) {
-      setFeedback({ type: 'error', text: 'Preencha o Nome e o Sobrenome do colaborador.' });
+      showToast('Preencha o Nome e o Sobrenome do colaborador.', 'error');
       return;
     }
     if (!newRoleTitle.trim()) {
-      setFeedback({ type: 'error', text: 'Informe o Cargo / Função do colaborador.' });
+      showToast('Informe o Cargo / Função do colaborador.', 'error');
       return;
     }
 
@@ -431,20 +626,19 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
     setIsSubmitting(false);
 
     if (res.success) {
-      setFeedback({
-        type: 'success',
-        text: res.message || `Colaborador cadastrado! Usuário: @${autoGeneratedUsername}`,
-      });
+      showToast(
+        res.message || `Colaborador cadastrado! Usuário: @${autoGeneratedUsername}`,
+        'success'
+      );
       setShowCreateModal(false);
       setNewFirstName('');
       setNewLastName('');
       setNewRegCode('');
-      setNewLearningTrackId('');
       if (res.collaboratorId) {
-        setActiveCollaboratorId(res.collaboratorId);
+        selectCollaborator(res.collaboratorId);
       }
     } else {
-      setFeedback({ type: 'error', text: res.message });
+      showToast(res.message, 'error');
     }
   };
 
@@ -454,103 +648,31 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
     const targetId = deleteConfirmCollaborator.id;
     setDeleteConfirmCollaborator(null);
     if (res.success) {
-      setFeedback({ type: 'success', text: 'Colaborador removido com sucesso.' });
+      showToast('Colaborador removido com sucesso.', 'success');
       if (activeCollaboratorId === targetId) {
-        setActiveCollaboratorId(null);
+        selectCollaborator(null);
       }
     } else {
-      setFeedback({ type: 'error', text: res.message });
+      showToast(res.message, 'error');
     }
   };
 
-  // Helper para dados do Laudo de Impressão
-  const printReportData = useMemo(() => {
-    if (!printReportModalAssignment || !activeCollaborator) return null;
-    const chk = checklists.find((c) => c.id === printReportModalAssignment.checklistId);
-    if (!chk) return null;
-
-    const instructor = users.find(
-      (u) => u.id === printReportModalAssignment.instructorAuxiliarId
-    );
-
-    const linkedExerciseList = (chk.exerciseIds || [])
-      .map((eid) => exercises.find((e) => e.id === eid))
-      .filter(Boolean) as Exercise[];
-
-    const linkedCharacterList: Character[] = [];
-    linkedExerciseList.forEach((ex) => {
-      ex.characterIds.forEach((cid) => {
-        const found = characters.find((c) => c.id === cid);
-        if (found && !linkedCharacterList.some((c) => c.id === found.id)) {
-          linkedCharacterList.push(found);
-        }
-      });
-    });
-
-    const isApproved =
-      activeCollaborator.status === 'aprovado' ||
-      (typeof printReportModalAssignment.finalScore === 'number' &&
-        printReportModalAssignment.finalScore >= 7);
-
-    return {
-      assignment: printReportModalAssignment,
-      collaborator: activeCollaborator,
-      checklist: chk,
-      instructorName: instructor?.fullName || 'Instrutor / Avaliador Oficial',
-      evaluationDate: printReportModalAssignment.completedAt
-        ? new Date(printReportModalAssignment.completedAt).toLocaleDateString('pt-BR', {
-            day: '2-digit',
-            month: '2-digit',
-            year: 'numeric',
-            hour: '2-digit',
-            minute: '2-digit',
-          })
-        : new Date().toLocaleDateString('pt-BR'),
-      exercises: linkedExerciseList,
-      characters: linkedCharacterList,
-      isApproved,
-    };
-  }, [printReportModalAssignment, activeCollaborator, checklists, users, exercises, characters]);
+  const toggleActorPhraseUsed = (key: string) => {
+    setUsedActorPhrases((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
 
   return (
-    <div className={`space-y-6 ${printReportData ? 'print:hidden' : ''}`}>
-      {/* Toast Feedback */}
-      {feedback && (
-        <div
-          className={`p-4 rounded-xl border flex items-center justify-between gap-4 text-sm shadow-sm transition-all ${
-            feedback.type === 'success'
-              ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
-              : 'bg-red-50 border-red-200 text-red-900'
-          }`}
-        >
-          <div className="flex items-center gap-2.5 font-medium">
-            {feedback.type === 'success' ? (
-              <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
-            ) : (
-              <AlertCircle className="w-5 h-5 text-red-600 shrink-0" />
-            )}
-            <span>{feedback.text}</span>
-          </div>
-          <button
-            type="button"
-            onClick={() => setFeedback(null)}
-            className="text-slate-400 hover:text-slate-700 cursor-pointer"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-      )}
-
+    <div className="space-y-6">
       {/* ======================================================== */}
       {/* MODO FICHA COMPLETA DO COLABORADOR COM GERENCIADOR DE VÍNCULOS */}
       {/* ======================================================== */}
       {activeCollaborator ? (
         <div className="space-y-6 animate-in fade-in duration-200">
           {/* Voltar para a listagem */}
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between flex-wrap gap-2">
             <button
               type="button"
-              onClick={() => setActiveCollaboratorId(null)}
+              onClick={() => selectCollaborator(null)}
               className="inline-flex items-center gap-2 text-xs font-bold text-slate-600 hover:text-[#0f3e2e] bg-white border border-slate-200 px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
             >
               <ArrowLeft className="w-4 h-4" />
@@ -558,39 +680,47 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
             </button>
 
             <div className="flex items-center gap-2 flex-wrap">
-              <button
-                type="button"
-                onClick={handleExportCollaboratorDossier}
-                className="px-3.5 py-1.5 text-xs font-bold text-white bg-[#0f3e2e] hover:bg-emerald-900 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer shadow-xs"
-              >
-                <Download className="w-3.5 h-3.5" />
-                <span>Exportar Dossiê do Colaborador (PDF)</span>
-              </button>
+              {!isActorOnlyMode && (
+                <button
+                  type="button"
+                  onClick={handleExportCollaboratorDossier}
+                  className="px-3.5 py-1.5 text-xs font-bold text-white bg-[#0f3e2e] hover:bg-emerald-900 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer shadow-xs"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Exportar Dossiê do Colaborador (PDF)</span>
+                </button>
+              )}
+
+              {!isActorOnlyMode && canActAsGuardianOrAdmin && !activeCollaborator.isTrackFinalized && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const avgInfo = collaboratorAverageMap.get(activeCollaborator.id);
+                    const defaultVerdict =
+                      avgInfo?.average !== null && avgInfo?.average !== undefined && avgInfo.average < 7
+                        ? 'necessita_reforco'
+                        : 'aprovado';
+                    setFinalizeVerdict(defaultVerdict);
+                    setFinalizeOpinion(activeCollaborator.guardianOpinion || '');
+                    setAcknowledgeIncompleteTrack(false);
+                    setShowFinalizeModal(true);
+                  }}
+                  className="px-3.5 py-1.5 text-xs font-bold text-amber-950 bg-amber-100 hover:bg-amber-200 border border-amber-300 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer shadow-xs"
+                >
+                  <Shield className="w-3.5 h-3.5 text-amber-800" />
+                  <span>Finalizar Trilha &amp; Emitir Parecer</span>
+                </button>
+              )}
 
               {canManageCollaborators && (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => setActiveCollabViewTab('track_builder')}
-                    className={`px-3.5 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 cursor-pointer shadow-xs ${
-                      activeCollabViewTab === 'track_builder'
-                        ? 'bg-[#0f3e2e] text-white'
-                        : 'bg-emerald-50 text-emerald-900 border border-emerald-300 hover:bg-emerald-100'
-                    }`}
-                  >
-                    <GraduationCap className="w-3.5 h-3.5" />
-                    <span>Configurar Trilha / Linha do Tempo</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setDeleteConfirmCollaborator(activeCollaborator)}
-                    className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
-                    title="Excluir Colaborador"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                </>
+                <button
+                  type="button"
+                  onClick={() => setDeleteConfirmCollaborator(activeCollaborator)}
+                  className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
+                  title="Excluir Colaborador"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
               )}
             </div>
           </div>
@@ -607,13 +737,27 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
                     {activeCollaborator.fullName}
                   </h1>
                   {(() => {
-                    const statusInfo = getCollaboratorProgressStatus(activeCollaborator);
+                    const statusInfo = getCollaboratorProgressStatus(
+                      activeCollaborator,
+                      canSeeVerdict
+                    );
+                    const isNeutralFinalized = statusInfo.key === 'finalizado';
                     return (
                       <span
+                        title={statusInfo.subtitle}
                         className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full font-bold text-xs whitespace-nowrap shrink-0 ${statusInfo.badgeStyle}`}
                       >
-                        {statusInfo.key === 'concluido' && (
-                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                        {(statusInfo.key === 'concluido' ||
+                          statusInfo.key === 'finalizado_aprovado' ||
+                          statusInfo.key === 'finalizado') && (
+                          <CheckCircle2
+                            className={`w-3.5 h-3.5 ${
+                              isNeutralFinalized ? 'text-slate-500' : 'text-emerald-600'
+                            }`}
+                          />
+                        )}
+                        {statusInfo.key === 'finalizado_validacao' && (
+                          <AlertTriangle className="w-3.5 h-3.5 text-amber-700" />
                         )}
                         <span>{statusInfo.label}</span>
                       </span>
@@ -644,7 +788,7 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
 
             {/* Painel Resumo Compacto de Métricas */}
             {(() => {
-              if (isAuxiliar) {
+              if (isActorOnlyMode) {
                 return (
                   <div className="flex items-center gap-3 bg-emerald-50/90 border border-emerald-200/90 px-4 py-3 rounded-xl shrink-0">
                     <div className="w-9 h-9 rounded-lg bg-[#0f3e2e] text-white flex items-center justify-center font-bold">
@@ -667,9 +811,10 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
               const totalTrack = trackList.length;
               const trackPct = totalTrack > 0 ? Math.round((doneTrack / totalTrack) * 100) : 0;
 
-              const completedAsgs = activeAssignments.filter((a) => a.status === 'concluido');
-              const totalScores = completedAsgs.reduce((acc, curr) => acc + (curr.finalScore || 0), 0);
-              const avgScore = completedAsgs.length > 0 ? (totalScores / completedAsgs.length).toFixed(1) : '—';
+              const avgInfo = collaboratorAverageMap.get(activeCollaborator.id);
+              const avgScoreValue = avgInfo?.average ?? null;
+              const completedCount = avgInfo?.count ?? 0;
+              const avgScore = avgScoreValue !== null ? avgScoreValue.toFixed(1) : '—';
 
               return (
                 <div className="flex flex-col sm:flex-row items-center gap-4 bg-slate-50 p-4 rounded-xl border border-slate-200 shrink-0">
@@ -690,11 +835,13 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
 
                   <div>
                     <div className="text-[11px] text-slate-500 font-medium">Média de Desempenho</div>
-                    <div className="text-base font-bold font-mono text-emerald-800">
+                    <div
+                      className={`text-base font-bold font-mono ${getScorePerformanceMeta(avgScoreValue).textClass}`}
+                    >
                       {avgScore !== '—' ? `${avgScore} / 10` : 'Pendente'}
                     </div>
                     <div className="text-[10px] text-slate-400">
-                      {completedAsgs.length} avaliação(ões)
+                      {completedCount} avaliação(ões)
                     </div>
                   </div>
 
@@ -704,7 +851,7 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
                     type="button"
                     onClick={handleExportCollaboratorDossier}
                     className="px-3 py-1.5 text-xs font-bold text-emerald-950 bg-emerald-100 hover:bg-emerald-200 border border-emerald-300 rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap"
-                    title="Baixar dossiê consolidado com métricas, histórico e assinaturas"
+                    title="Baixar dossiê consolidado com métricas, histórico e parecer"
                   >
                     <Download className="w-3.5 h-3.5 text-emerald-800" />
                     <span>Dossiê PDF</span>
@@ -714,134 +861,514 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
             })()}
           </div>
 
-          {/* Se for ATOR (isAuxiliar): Exibe exclusivamente a visão do roteiro vinculado */}
-          {isAuxiliar ? (
-            <div className="space-y-4 pt-2">
-              <div className="bg-emerald-50/70 border border-emerald-200 rounded-2xl p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                <div>
-                  <div className="flex items-center gap-2 text-emerald-800 text-xs font-bold uppercase tracking-wider mb-1">
-                    <Theater className="w-4 h-4 text-emerald-700" />
-                    <span>Acesso Cênico · Roteiro de Simulação Vinculado</span>
+          {/* Card de Parecer Oficial do Guardião Anfitrião (visível exclusivamente para Admin e Guardião Anfitrião) */}
+          {!isActorOnlyMode && activeCollaborator.isTrackFinalized && canSeeVerdict && (
+            <div
+              className={`rounded-2xl border-2 p-5 shadow-xs space-y-3 ${
+                activeCollaborator.guardianVerdict === 'necessita_reforco'
+                  ? 'bg-amber-50/70 border-amber-300'
+                  : 'bg-emerald-50/70 border-emerald-300'
+              }`}
+            >
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5 flex-wrap">
+                  <div
+                    className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${
+                      activeCollaborator.guardianVerdict === 'necessita_reforco'
+                        ? 'bg-amber-600 text-white'
+                        : 'bg-[#0f3e2e] text-white'
+                    }`}
+                  >
+                    <Shield className="w-4 h-4" />
                   </div>
-                  <h2 className="text-base font-bold text-slate-900">
-                    Roteiro de Simulação para {activeCollaborator.fullName}
+                  <div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h2 className="text-sm font-bold text-slate-900">
+                        Parecer Oficial do Guardião Anfitrião
+                      </h2>
+                      <span
+                        className={`text-[10px] font-extrabold uppercase tracking-wider px-2.5 py-0.5 rounded-full border ${
+                          activeCollaborator.guardianVerdict === 'necessita_reforco'
+                            ? 'bg-amber-100 text-amber-900 border-amber-300'
+                            : 'bg-emerald-100 text-emerald-900 border-emerald-300'
+                        }`}
+                      >
+                        {activeCollaborator.guardianVerdict === 'necessita_reforco'
+                          ? 'Validação da liderança'
+                          : 'Aprovado'}
+                      </span>
+                    </div>
+                    {activeCollaborator.guardianVerdict === 'necessita_reforco' && (
+                      <p className="text-[11px] font-semibold text-amber-900 mt-0.5">
+                        Verificar a continuidade com a liderança do colaborador.
+                      </p>
+                    )}
+                    <p className="text-[11px] text-slate-600 mt-0.5">
+                      Finalizado por{' '}
+                      <strong>{activeCollaborator.guardianFinalizedBy || 'Guardião Anfitrião'}</strong>
+                      {activeCollaborator.guardianFinalizedAt && (
+                        <>
+                          {' '}
+                          em{' '}
+                          {new Date(activeCollaborator.guardianFinalizedAt).toLocaleString('pt-BR', {
+                            dateStyle: 'short',
+                            timeStyle: 'short',
+                          })}
+                        </>
+                      )}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 flex-wrap shrink-0">
+                  <button
+                    type="button"
+                    onClick={handleExportCollaboratorDossier}
+                    className="px-3.5 py-2 text-xs font-bold text-white bg-[#0f3e2e] hover:bg-emerald-900 rounded-xl transition-all flex items-center gap-1.5 cursor-pointer shadow-xs"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>Baixar Dossiê Completo (PDF)</span>
+                  </button>
+
+                  {isAdmin && (
+                    <button
+                      type="button"
+                      disabled={isReopeningTrack}
+                      onClick={async () => {
+                        setIsReopeningTrack(true);
+                        const res = await reopenCollaboratorTrack(activeCollaborator.id);
+                        setIsReopeningTrack(false);
+                        showToast(res.message, res.success ? 'success' : 'error');
+                      }}
+                      className="px-3 py-2 text-xs font-bold text-slate-700 bg-white hover:bg-slate-100 border border-slate-300 rounded-xl transition-colors flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                      title="Reabrir trilha para ajustes (Acesso exclusivo Administrador)"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5" />
+                      <span>Reabrir Trilha</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              <div className="bg-white/90 border border-slate-200/80 rounded-xl p-3.5 text-xs text-slate-800 leading-relaxed whitespace-pre-line">
+                {activeCollaborator.guardianOpinion || 'Sem parecer descritivo registrado.'}
+              </div>
+            </div>
+          )}
+
+          {/* Modo Leitura Rápida de Alto Contraste (exclusivo para perfil somente roteiros/ator) */}
+          {isActorOnlyMode ? (
+            <div className="space-y-4 pt-2">
+              <div className="bg-[#0f3e2e] text-white border border-emerald-900 rounded-2xl p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-sm">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2 text-emerald-300 text-xs font-bold uppercase tracking-wider">
+                    <Theater className="w-4 h-4" />
+                    <span>Modo Leitura Rápida · Roteiro da Etapa Atual</span>
+                  </div>
+                  <h2 className="text-lg font-bold text-white">
+                    Roteiro Cênico para {activeCollaborator.fullName}
                   </h2>
-                  <p className="text-xs text-slate-600 mt-0.5">
-                    Instruções cênicas, perfil de comportamento dos clientes e falas para interpretar na simulação deste colaborador.
+                  {currentAvailableTrackStep ? (
+                    <div className="inline-flex items-center gap-2 px-3 py-1 rounded-lg bg-emerald-950/70 border border-emerald-500/40 text-xs font-semibold text-emerald-100 mt-1">
+                      <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0" />
+                      <span>
+                        Etapa Atual em Andamento:{' '}
+                        <strong className="text-white">
+                          Etapa {String(currentAvailableStepNumber || 1).padStart(2, '0')} •{' '}
+                          {currentAvailableTrackStep.title}
+                        </strong>
+                      </span>
+                    </div>
+                  ) : (
+                    <p className="text-xs text-amber-200 font-medium mt-0.5">
+                      Nenhuma etapa com status &ldquo;Disponível&rdquo; encontrada na trilha atual.
+                    </p>
+                  )}
+                  <p className="text-xs text-emerald-100/90 pt-0.5">
+                    Consulte rapidamente a carteirinha, a guia médica anexada, o contexto do atendimento e marque as falas utilizadas durante a encenação.
                   </p>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
-                  <span className="text-xs font-bold px-3 py-1.5 rounded-xl bg-white border border-emerald-200 text-emerald-900 shadow-2xs">
-                    {activeLinkedExercises.length} Roteiro(s) Vinculado(s)
+                  <span className="text-xs font-bold px-3.5 py-1.5 rounded-xl bg-white/10 border border-white/20 text-white">
+                    {activeLinkedExercises.length > 1
+                      ? `Cena ${safeActorSceneIndex + 1} de ${activeLinkedExercises.length}`
+                      : `${activeLinkedExercises.length} Cenário(s) Ativo(s)`}
                   </span>
                 </div>
               </div>
 
               {activeLinkedExercises.length === 0 ? (
-                <div className="bg-white border border-dashed border-slate-300 rounded-2xl p-8 text-center space-y-2">
+                <div className="bg-white border border-dashed border-slate-300 rounded-2xl p-8 text-center space-y-2.5">
                   <Theater className="w-10 h-10 text-slate-300 mx-auto mb-1" />
-                  <h4 className="font-bold text-sm text-slate-800">Nenhum roteiro vinculado a este colaborador</h4>
-                  <p className="text-xs text-slate-500 max-w-md mx-auto">
-                    Os cenários de simulação serão vinculados pelo Administrador através dos checklists da trilha do colaborador.
+                  <h4 className="font-bold text-sm text-slate-800">
+                    Nenhuma simulação ativa liberada no momento para este colaborador.
+                  </h4>
+                  <p className="text-xs text-slate-500 max-w-lg mx-auto leading-relaxed">
+                    {(() => {
+                      const track = activeCollaborator.track || [];
+                      if (track.length === 0) {
+                        return 'Status da trilha: Nenhuma etapa configurada na trilha de desenvolvimento até o momento.';
+                      }
+                      if (!currentAvailableTrackStep) {
+                        const allDone = track.every((s) => s.status === 'concluido');
+                        return allDone
+                          ? 'Status da trilha: Todas as etapas da trilha já foram concluídas e não há simulação ativa pendente.'
+                          : 'Status da trilha: Aguardando liberação de etapa pelo administrador ou guardião.';
+                      }
+                      if (currentAvailableTrackStep.type === 'survey') {
+                        return `Status da trilha: Etapa de pesquisa de feedback em andamento (${currentAvailableTrackStep.title}), sem roteiro de simulação vinculado.`;
+                      }
+                      return `Status da trilha: A etapa liberada atualmente (${currentAvailableTrackStep.title}) é um checklist direto sem exercícios de simulação vinculados.`;
+                    })()}
                   </p>
                 </div>
-              ) : (
+              ) : currentActorScene ? (
                 <div className="space-y-4">
-                  {activeLinkedExercises.map((ex) => {
+                  {/* Barra de Navegação Focada de Cenas (apenas 1 exercício visível por vez) */}
+                  {activeLinkedExercises.length > 1 && (
+                    <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-2xs space-y-3">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-800 block">
+                            Navegação de Cenas da Etapa ({activeLinkedExercises.length} exercícios vinculados)
+                          </span>
+                          <h3 className="text-sm font-bold text-slate-900 truncate mt-0.5">
+                            Cena {safeActorSceneIndex + 1} de {activeLinkedExercises.length}: {currentActorScene.title}
+                          </h3>
+                        </div>
+
+                        <div className="flex items-center gap-2 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setActiveActorSceneIndex((prev) => Math.max(0, prev - 1))
+                            }
+                            disabled={safeActorSceneIndex === 0}
+                            className="px-3 py-1.5 text-xs font-bold rounded-xl border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors inline-flex items-center gap-1 cursor-pointer"
+                          >
+                            <ChevronLeft className="w-3.5 h-3.5" />
+                            <span>Anterior</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setActiveActorSceneIndex((prev) =>
+                                Math.min(activeLinkedExercises.length - 1, prev + 1)
+                              )
+                            }
+                            disabled={safeActorSceneIndex >= activeLinkedExercises.length - 1}
+                            className="px-3.5 py-1.5 text-xs font-bold rounded-xl bg-[#0f3e2e] text-white hover:bg-emerald-900 disabled:opacity-40 disabled:cursor-not-allowed transition-colors inline-flex items-center gap-1 cursor-pointer shadow-2xs"
+                          >
+                            <span>Próxima Cena</span>
+                            <ChevronRight className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 flex-wrap pt-2 border-t border-slate-100">
+                        {activeLinkedExercises.map((sceneEx, idx) => {
+                          const isSelectedScene = idx === safeActorSceneIndex;
+                          return (
+                            <button
+                              key={sceneEx.id}
+                              type="button"
+                              onClick={() => setActiveActorSceneIndex(idx)}
+                              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer max-w-full truncate ${
+                                isSelectedScene
+                                  ? 'bg-[#0f3e2e] text-white shadow-xs'
+                                  : 'bg-slate-50 text-slate-700 border border-slate-200 hover:border-emerald-600 hover:bg-emerald-50/40'
+                              }`}
+                            >
+                              Cena {idx + 1} de {activeLinkedExercises.length}: {sceneEx.title}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {[currentActorScene].map((ex) => {
                     const exChars = ex.characterIds
                       .map((cId) => characters.find((c) => c.id === cId))
                       .filter(Boolean) as Character[];
+                    const exAttachments = getExerciseAttachments(ex);
 
                     return (
                       <div
                         key={ex.id}
-                        className="bg-white border border-slate-200 rounded-2xl p-6 shadow-xs space-y-5"
+                        className="bg-white border-2 border-slate-200 rounded-2xl p-6 shadow-sm space-y-5"
                       >
                         {/* Header do Roteiro */}
-                        <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3 pb-4 border-b border-slate-100">
+                        <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3 pb-4 border-b border-slate-200">
                           <div>
                             <div className="flex items-center gap-2 mb-1.5 flex-wrap">
-                              <span className="text-[10px] font-bold text-emerald-900 bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded-full uppercase">
+                              <span className="text-[10px] font-bold text-emerald-950 bg-emerald-100 border border-emerald-300 px-2.5 py-0.5 rounded-full uppercase">
                                 Célula: {getCellName(ex.cell)}
                               </span>
-                              <span className="text-[10px] font-bold text-slate-700 bg-slate-100 border border-slate-200 px-2.5 py-0.5 rounded-full uppercase">
+                              <span className="text-[10px] font-bold text-slate-800 bg-slate-100 border border-slate-300 px-2.5 py-0.5 rounded-full uppercase">
                                 Dificuldade: {ex.difficulty || 'Mediano'}
-                              </span>
-                              <span className="text-[10px] font-bold text-emerald-800 bg-emerald-100/70 border border-emerald-300 px-2.5 py-0.5 rounded-full flex items-center gap-1">
-                                <Theater className="w-3 h-3 text-emerald-700" />
-                                <span>Roteiro Ativo</span>
                               </span>
                             </div>
                             <h3 className="text-lg font-bold text-slate-900">{ex.title}</h3>
                           </div>
 
-                          <button
-                            type="button"
-                            onClick={() => setSelectedBriefingExercise(ex)}
-                            className="px-4 py-2 text-xs font-bold text-white bg-[#0f3e2e] hover:bg-emerald-900 rounded-xl transition-all shadow-xs flex items-center gap-1.5 cursor-pointer shrink-0"
-                          >
-                            <Play className="w-4 h-4 text-emerald-300" />
-                            <span>Abrir Simulação</span>
-                          </button>
+                          <div className="flex items-center gap-2 shrink-0 flex-wrap">
+                            {exChars.length > 1 && (
+                              <button
+                                type="button"
+                                onClick={() => downloadMultipleGuidesPdf(exChars, ex.title, undefined, pdfGeneratedBy)}
+                                className="px-3.5 py-2 text-xs font-bold text-[#0f3e2e] bg-emerald-100 hover:bg-emerald-200 rounded-xl transition-colors flex items-center gap-1.5 cursor-pointer"
+                              >
+                                <Download className="w-3.5 h-3.5" />
+                                <span>Baixar Roteiros (PDF)</span>
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => setSelectedBriefingExercise(ex)}
+                              className="px-4 py-2 text-xs font-bold text-white bg-[#0f3e2e] hover:bg-emerald-900 rounded-xl transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
+                            >
+                              <Play className="w-4 h-4 text-emerald-300" />
+                              <span>Abrir Modal Completo</span>
+                            </button>
+                          </div>
                         </div>
+
+                        {/* Anexo(s) de apoio do próprio exercício (se houver) */}
+                        {exAttachments.length > 0 && (
+                          <div className="flex items-center justify-between gap-2 bg-emerald-50 border border-emerald-200 rounded-xl px-3.5 py-2.5">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <FileText className="w-4 h-4 text-emerald-700 shrink-0" />
+                              <span className="text-xs font-semibold text-emerald-950 truncate">
+                                {exAttachments.length === 1
+                                  ? exAttachments[0].name
+                                  : `${exAttachments.length} Documentos de Apoio do Cenário`}
+                              </span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setAttachedGuideViewer({
+                                  title: `Documento do Caso · ${ex.title}`,
+                                  guides: exAttachments,
+                                })
+                              }
+                              className="px-3 py-1.5 text-xs font-bold text-white bg-[#0f3e2e] hover:bg-emerald-900 rounded-lg transition-colors cursor-pointer shrink-0"
+                            >
+                              {exAttachments.length > 1
+                                ? `Visualizar Guias (${exAttachments.length})`
+                                : 'Visualizar Guia Médica'}
+                            </button>
+                          </div>
+                        )}
 
                         {/* Instruções do Cenário para o Ator */}
                         <div className="space-y-2">
-                          <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
-                            <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
+                          <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
+                            <Sparkles className="w-3.5 h-3.5 text-emerald-700" />
                             <span>Instruções da Cena / Comportamento do Ator</span>
                           </h4>
-                          <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-4 text-xs text-slate-700 leading-relaxed font-medium">
+                          <div className="bg-slate-900 text-slate-100 rounded-xl p-4 text-xs leading-relaxed font-medium whitespace-pre-line">
                             {ex.scenarioInstructions}
                           </div>
                         </div>
 
-                        {/* Personagens / Clientes a Interpretar */}
+                        {/* Cards de Alto Contraste dos Personagens para Leitura Rápida */}
                         {exChars.length > 0 && (
-                          <div className="space-y-2.5">
-                            <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
-                              <UserCheck className="w-3.5 h-3.5 text-emerald-600" />
-                              <span>Personagem(ns) do Roteiro a Interpretar ({exChars.length})</span>
+                          <div className="space-y-3">
+                            <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
+                              <UserCheck className="w-3.5 h-3.5 text-emerald-700" />
+                              <span>Fichas de Leitura Rápida do(s) Cliente(s) ({exChars.length})</span>
                             </h4>
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                              {exChars.map((char) => (
-                                <div
-                                  key={char.id}
-                                  className="bg-emerald-50/30 border border-emerald-100 rounded-xl p-3.5 space-y-2"
-                                >
-                                  <div className="flex items-center gap-2.5">
-                                    <div className="w-8 h-8 rounded-full bg-emerald-800 text-white font-bold text-xs flex items-center justify-center shrink-0">
-                                      {char.name.charAt(0)}
-                                    </div>
-                                    <div>
-                                      <div className="font-bold text-xs text-slate-900">{char.name}</div>
-                                      <div className="text-[11px] text-slate-500">
-                                        {char.age} anos · {char.gender}
-                                      </div>
-                                    </div>
-                                  </div>
-                                  <div className="text-[11px] text-slate-600">
-                                    <strong className="text-slate-800">Temperamento/Comportamento: </strong>
-                                    {char.temperament || char.serviceContext || 'Paciente padrão'}
-                                  </div>
-                                  {(() => {
-                                    const phrases = normalizePhrases(char.typicalPhrases);
-                                    if (phrases.length === 0) return null;
-                                    return (
-                                      <div className="pt-2 border-t border-emerald-100/60">
-                                        <div className="text-[10px] font-bold text-emerald-900 uppercase">
-                                          Falas Típicas:
+                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                              {exChars.map((char) => {
+                                const phrases = normalizePhrases(char.typicalPhrases);
+                                const usedCount = phrases.filter(
+                                  (_, pIdx) => usedActorPhrases[`${ex.id}-${char.id}-${pIdx}`]
+                                ).length;
+
+                                return (
+                                  <div
+                                    key={char.id}
+                                    className="bg-white border-2 border-emerald-700/25 rounded-2xl overflow-hidden shadow-xs flex flex-col justify-between"
+                                  >
+                                    {/* Cabeçalho de Alto Contraste */}
+                                    <div className="bg-[#0f3e2e] text-white p-4 space-y-3">
+                                      <div className="flex items-start justify-between gap-2">
+                                        <div className="flex items-center gap-2.5">
+                                          <div className="w-9 h-9 rounded-xl bg-emerald-500 text-emerald-950 font-black text-sm flex items-center justify-center shrink-0">
+                                            {char.name.charAt(0)}
+                                          </div>
+                                          <div>
+                                            <div className="font-bold text-sm text-white leading-tight">
+                                              {char.name}
+                                            </div>
+                                            <div className="text-[11px] text-emerald-200">
+                                              {char.age} · {char.gender} · {char.city}
+                                            </div>
+                                          </div>
                                         </div>
-                                        <ul className="text-[11px] text-slate-700 italic space-y-0.5 mt-0.5">
-                                          {phrases.slice(0, 2).map((phrase, pIdx) => (
-                                            <li key={pIdx}>"{phrase}"</li>
-                                          ))}
-                                        </ul>
+                                        <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-white/15 text-emerald-100 shrink-0">
+                                          {char.customerTier || 'Mediano'}
+                                        </span>
                                       </div>
-                                    );
-                                  })()}
-                                </div>
-                              ))}
+
+                                      {/* Destaque: Número da Carteirinha */}
+                                      <div className="bg-emerald-950/80 border border-emerald-600/50 rounded-xl px-3.5 py-2.5 flex items-center justify-between gap-2">
+                                        <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-300 flex items-center gap-1.5">
+                                          <CreditCard className="w-4 h-4" />
+                                          <span>Nº da Carteirinha</span>
+                                        </span>
+                                        <span className="font-mono text-sm font-black text-white tracking-wide select-all">
+                                          {char.cardNumber || 'Não informada'}
+                                        </span>
+                                      </div>
+                                    </div>
+
+                                    <div className="p-4 space-y-3.5 text-xs flex-1">
+                                      {/* Destaque: Contexto do Atendimento */}
+                                      <div className="bg-amber-50 border-l-4 border-amber-500 rounded-r-xl p-3 space-y-1">
+                                        <div className="text-[10px] font-extrabold uppercase tracking-wider text-amber-900">
+                                          Contexto do Atendimento
+                                        </div>
+                                        <p className="text-slate-900 font-semibold leading-relaxed">
+                                          {char.serviceContext || char.history || 'Sem contexto cadastrado.'}
+                                        </p>
+                                      </div>
+
+                                      <div className="grid grid-cols-1 gap-2 bg-slate-50 border border-slate-200 rounded-xl p-3">
+                                        <div>
+                                          <span className="font-bold text-slate-800">Temperamento / Humor: </span>
+                                          <span className="text-slate-700">{char.temperament}</span>
+                                        </div>
+                                        {char.objectives && (
+                                          <div>
+                                            <span className="font-bold text-slate-800">Objetivo na Cena: </span>
+                                            <span className="text-slate-700">{char.objectives}</span>
+                                          </div>
+                                        )}
+                                      </div>
+
+                                      {/* Lista Interativa de Falas / Objeções com Checkbox Local ("Fala utilizada") */}
+                                      {phrases.length > 0 && (
+                                        <div className="space-y-2 pt-1">
+                                          <div className="flex items-center justify-between">
+                                            <span className="text-[10px] font-extrabold text-emerald-950 uppercase tracking-wider">
+                                              Falas & Objeções ({usedCount}/{phrases.length} utilizadas)
+                                            </span>
+                                            {usedCount > 0 && (
+                                              <button
+                                                type="button"
+                                                onClick={() => {
+                                                  setUsedActorPhrases((prev) => {
+                                                    const next = { ...prev };
+                                                    phrases.forEach((_, idx) => {
+                                                      delete next[`${ex.id}-${char.id}-${idx}`];
+                                                    });
+                                                    return next;
+                                                  });
+                                                }}
+                                                className="text-[10px] font-bold text-slate-500 hover:text-slate-800 underline cursor-pointer"
+                                              >
+                                                Limpar marcações
+                                              </button>
+                                            )}
+                                          </div>
+
+                                          <div className="space-y-1.5">
+                                            {phrases.map((phrase, pIdx) => {
+                                              const phraseKey = `${ex.id}-${char.id}-${pIdx}`;
+                                              const isUsed = Boolean(usedActorPhrases[phraseKey]);
+                                              return (
+                                                <button
+                                                  key={pIdx}
+                                                  type="button"
+                                                  onClick={() => toggleActorPhraseUsed(phraseKey)}
+                                                  className={`w-full text-left p-2.5 rounded-xl border transition-all flex items-start gap-2.5 cursor-pointer ${
+                                                    isUsed
+                                                      ? 'bg-emerald-50/70 border-emerald-300 text-slate-500'
+                                                      : 'bg-white border-slate-300 hover:border-emerald-600 text-slate-900 shadow-2xs'
+                                                  }`}
+                                                >
+                                                  {isUsed ? (
+                                                    <CheckSquare className="w-4 h-4 text-emerald-700 shrink-0 mt-0.5" />
+                                                  ) : (
+                                                    <Square className="w-4 h-4 text-slate-400 shrink-0 mt-0.5" />
+                                                  )}
+                                                  <div className="flex-1 min-w-0">
+                                                    <span
+                                                      className={`block text-xs font-medium leading-snug ${
+                                                        isUsed ? 'line-through text-slate-400' : 'text-slate-900'
+                                                      }`}
+                                                    >
+                                                      &ldquo;{phrase}&rdquo;
+                                                    </span>
+                                                    <span className="text-[10px] font-bold uppercase tracking-wide text-emerald-800 mt-0.5 block">
+                                                      {isUsed ? 'Fala utilizada ✓' : 'Fala utilizada'}
+                                                    </span>
+                                                  </div>
+                                                </button>
+                                              );
+                                            })}
+                                          </div>
+                                        </div>
+                                      )}
+                                    </div>
+
+                                    {(() => {
+                                      const charGuides = getCharacterGuides(char);
+                                      return (
+                                        <div className="px-4 py-3 bg-slate-50 border-t border-slate-200 flex items-center gap-2 flex-wrap">
+                                          {charGuides.length > 0 && (
+                                            <button
+                                              type="button"
+                                              onClick={() =>
+                                                setAttachedGuideViewer({
+                                                  title: `${
+                                                    charGuides.length > 1 ? 'Guias Médicas' : 'Guia Médica'
+                                                  } · ${char.name}`,
+                                                  subtitle: `${ex.title}${
+                                                    char.cardNumber
+                                                      ? ` · Carteirinha ${char.cardNumber}`
+                                                      : ''
+                                                  }`,
+                                                  guides: charGuides,
+                                                })
+                                              }
+                                              className="flex-1 min-w-[155px] py-1.5 px-3 text-xs font-bold text-white bg-[#0f3e2e] hover:bg-emerald-900 rounded-lg transition-colors flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs"
+                                            >
+                                              <FileText className="w-3.5 h-3.5 text-emerald-200" />
+                                              <span>
+                                                {charGuides.length > 1
+                                                  ? `Visualizar Guias (${charGuides.length})`
+                                                  : 'Visualizar Guia Médica'}
+                                              </span>
+                                            </button>
+                                          )}
+                                          <button
+                                            type="button"
+                                            onClick={() => setGuideMirrorCharacter(char)}
+                                            className={`${
+                                              charGuides.length > 0 ? '' : 'flex-1 '
+                                            }py-1.5 px-3 text-xs font-bold text-emerald-900 bg-emerald-100 hover:bg-emerald-200 rounded-lg transition-colors flex items-center justify-center gap-1.5 cursor-pointer`}
+                                          >
+                                            <Eye className="w-3.5 h-3.5" />
+                                            <span>Visualizar Ficha</span>
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() => downloadGuidePdf(char, ex.title, pdfGeneratedBy)}
+                                            className="py-1.5 px-3 text-xs font-bold text-slate-800 bg-white hover:bg-slate-100 border border-slate-300 rounded-lg transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+                                          >
+                                            <Download className="w-3.5 h-3.5 text-slate-700" />
+                                            <span>PDF</span>
+                                          </button>
+                                        </div>
+                                      );
+                                    })()}
+                                  </div>
+                                );
+                              })}
                             </div>
                           </div>
                         )}
@@ -849,7 +1376,7 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
                     );
                   })}
                 </div>
-              )}
+              ) : null}
             </div>
           ) : (
             <>
@@ -866,23 +1393,10 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
                 >
                   <GraduationCap className="w-4 h-4" />
                   <span>
-                    {isAdmin
+                    {canManageCollaborators
                       ? `Configurar Trilha / Linha do Tempo (${activeCollaborator.track?.length || 0})`
                       : `Trilha de Desenvolvimento (${activeCollaborator.track?.length || 0})`}
                   </span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setActiveCollabViewTab('checklists')}
-                  className={`px-4 py-2.5 text-xs font-bold transition-all border-b-2 cursor-pointer flex items-center gap-2 ${
-                    activeCollabViewTab === 'checklists'
-                      ? 'border-emerald-700 text-emerald-900 bg-emerald-50/50'
-                      : 'border-transparent text-slate-500 hover:text-slate-800'
-                  }`}
-                >
-                  <BookOpen className="w-4 h-4" />
-                  <span>Avaliações & Checklists Atribuídos ({activeAssignments.length})</span>
                 </button>
 
                 <button
@@ -903,146 +1417,10 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
               {activeCollabViewTab === 'track_builder' && (
                 <CollaboratorTrackBuilder
                   collaborator={activeCollaborator}
-                  readOnly={!isAdmin}
+                  readOnly={!canManageCollaborators}
                   onStartEvaluation={onStartEvaluation}
                 />
               )}
-
-          {activeCollabViewTab === 'checklists' && (
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-              <div>
-                <h2 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                  <BookOpen className="w-4 h-4 text-emerald-700" />
-                  <span>Checklists de Avaliação Atribuídos</span>
-                </h2>
-                <p className="text-[11px] text-slate-500">
-                  Checklists disponíveis para conduzir a simulação ou ver notas anteriores
-                </p>
-              </div>
-            </div>
-
-            {activeAssignments.length === 0 ? (
-              <div className="bg-white border border-dashed border-slate-200 rounded-xl p-8 text-center text-xs text-slate-500">
-                Nenhum checklist atribuído a este colaborador no momento.
-                {canManageCollaborators && (
-                  <div className="mt-3">
-                    <button
-                      type="button"
-                      onClick={openLinksManager}
-                      className="px-4 py-2 font-bold text-white bg-[#0f3e2e] hover:bg-emerald-900 rounded-lg cursor-pointer"
-                    >
-                      Vincular Checklist de Avaliação
-                    </button>
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {activeAssignments.map((asg) => {
-                  const chk = checklists.find((c) => c.id === asg.checklistId);
-                  if (!chk) return null;
-
-                  const isCompleted = asg.status === 'concluido';
-                  const isPending = asg.status === 'pendente';
-
-                  return (
-                    <div
-                      key={asg.id}
-                      className="bg-white border border-slate-200 hover:border-emerald-500 rounded-xl p-4.5 flex flex-col justify-between shadow-2xs transition-all space-y-3"
-                    >
-                      <div className="space-y-2">
-                        <div className="flex items-center justify-between">
-                          <span className="text-[10px] font-bold text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded-full uppercase">
-                            {chk.categoryName || 'Geral'}
-                          </span>
-                          <span
-                            className={`inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap shrink-0 ${
-                              isCompleted
-                                ? 'bg-emerald-100 text-emerald-800'
-                                : isPending
-                                ? 'bg-amber-100 text-amber-800'
-                                : 'bg-blue-100 text-blue-800'
-                            }`}
-                          >
-                            {isCompleted ? 'Concluído' : isPending ? 'Pendente' : 'Em Andamento'}
-                          </span>
-                        </div>
-
-                        <h3 className="font-bold text-slate-900 text-sm">{chk.title}</h3>
-                        <p className="text-[11px] text-slate-600 line-clamp-2">
-                          {chk.description || 'Avaliação operacional de atendimento.'}
-                        </p>
-
-                        <div className="flex items-center gap-3 pt-2 text-[11px] text-slate-500 border-t border-slate-100">
-                          <span>{chk.criteria.length} critérios</span>
-                          <span>·</span>
-                          <span>
-                            {chk.hasExercises ? `${chk.exerciseIds.length} exercício(s)` : 'Sem exercícios'}
-                          </span>
-                        </div>
-                      </div>
-
-                      {/* Nota e Ações: Iniciar e Imprimir */}
-                      <div className="pt-3 border-t border-slate-100 flex items-center justify-between gap-2">
-                        {isCompleted && typeof asg.finalScore === 'number' ? (
-                          <div className="flex items-center gap-1.5">
-                            <span className="text-[11px] text-slate-500">Nota:</span>
-                            <span className="text-base font-bold font-mono text-emerald-800">
-                              {asg.finalScore.toFixed(1)} / 10
-                            </span>
-                          </div>
-                        ) : (
-                          <span className="text-[11px] text-slate-400 font-medium italic">
-                            Aguardando aplicação
-                          </span>
-                        )}
-
-                        <div className="flex items-center gap-1.5">
-                          {/* Botão de Relatório de Impressão */}
-                          {isCompleted && (
-                            <button
-                              type="button"
-                              onClick={() => setPrintReportModalAssignment(asg)}
-                              className="px-2.5 py-1.5 text-xs font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded-lg flex items-center gap-1 transition-colors cursor-pointer"
-                              title="Visualizar e Imprimir Relatório Oficial"
-                            >
-                              <Printer className="w-3.5 h-3.5 text-slate-600" />
-                              <span className="hidden sm:inline">Imprimir Relatório</span>
-                            </button>
-                          )}
-
-                          {/* Botão Iniciar / Reavaliar: Oculto para perfil auxiliar */}
-                          {canApplyEvaluations && (
-                            <button
-                              type="button"
-                              onClick={() => onStartEvaluation(asg.id, activeCollaborator?.id)}
-                              className="px-3 py-1.5 text-xs font-bold text-white bg-emerald-700 hover:bg-emerald-800 rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
-                            >
-                              <Play className="w-3 h-3 fill-current" />
-                              <span>{isCompleted ? 'Reavaliar' : 'Iniciar'}</span>
-                            </button>
-                          )}
-
-                          {canManageCollaborators && (
-                            <button
-                              type="button"
-                              onClick={() => handleRemoveSingleAssignment(chk.id)}
-                              className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
-                              title="Desvincular checklist deste colaborador"
-                            >
-                              <X className="w-3.5 h-3.5" />
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-          )}
 
           {/* ========================================================= */}
           {/* SEÇÃO 2: EXERCÍCIOS E CLIENTES VINCULADOS (ROTEIRO) */}
@@ -1136,6 +1514,105 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
             )}
           </div>
 
+          {/* Indicadores Resumidos Clicáveis (Filtros Rápidos de Ação) */}
+          <div
+            className={`grid gap-3 ${
+              canSeeVerdict
+                ? 'grid-cols-2 sm:grid-cols-3 lg:grid-cols-6'
+                : 'grid-cols-2 lg:grid-cols-4'
+            }`}
+          >
+            {[
+              {
+                key: 'all',
+                label: 'Todos',
+                count: statusSummaryCounts.all,
+                accent: 'border-slate-200 bg-white text-slate-900 hover:border-[#0f3e2e]',
+                active: 'border-[#0f3e2e] bg-[#0f3e2e] text-white shadow-sm',
+                subActive: 'text-emerald-200',
+              },
+              {
+                key: 'a_realizar',
+                label: 'A Realizar',
+                count: statusSummaryCounts.a_realizar,
+                accent: 'border-slate-200 bg-white text-slate-900 hover:border-slate-400',
+                active: 'border-slate-800 bg-slate-800 text-white shadow-sm',
+                subActive: 'text-slate-300',
+              },
+              {
+                key: 'em_treinamento',
+                label: 'Em Treinamento',
+                count: statusSummaryCounts.em_treinamento,
+                accent: 'border-amber-200 bg-amber-50/40 text-amber-950 hover:border-amber-400',
+                active: 'border-amber-600 bg-amber-600 text-white shadow-sm',
+                subActive: 'text-amber-100',
+              },
+              {
+                key: 'concluido',
+                label: 'Concluído',
+                count: statusSummaryCounts.concluido,
+                accent: 'border-emerald-200 bg-emerald-50/40 text-emerald-950 hover:border-emerald-500',
+                active: 'border-emerald-700 bg-emerald-700 text-white shadow-sm',
+                subActive: 'text-emerald-100',
+              },
+              ...(canSeeVerdict
+                ? [
+                    {
+                      key: 'finalizado_aprovado',
+                      label: 'Aprovado',
+                      count: statusSummaryCounts.finalizado_aprovado,
+                      accent: 'border-emerald-300 bg-emerald-50/70 text-emerald-950 hover:border-emerald-600',
+                      active: 'border-[#0f3e2e] bg-[#0f3e2e] text-white shadow-sm',
+                      subActive: 'text-emerald-200',
+                    },
+                    {
+                      key: 'finalizado_validacao',
+                      label: 'Validação da liderança',
+                      count: statusSummaryCounts.finalizado_validacao,
+                      accent: 'border-amber-300 bg-amber-50/70 text-amber-950 hover:border-amber-500',
+                      active: 'border-amber-700 bg-amber-700 text-white shadow-sm',
+                      subActive: 'text-amber-100',
+                    },
+                  ]
+                : []),
+            ].map((item) => {
+              const isSelected = selectedStatusFilter === item.key;
+              return (
+                <button
+                  key={item.key}
+                  type="button"
+                  onClick={() => setSelectedStatusFilter(item.key)}
+                  className={`p-3.5 rounded-2xl border text-left transition-all cursor-pointer flex flex-col justify-between gap-1 ${
+                    isSelected ? item.active : item.accent
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[11px] font-bold leading-snug">{item.label}</span>
+                    {item.key === 'finalizado_validacao' && (
+                      <AlertTriangle
+                        className={`w-3.5 h-3.5 shrink-0 ${
+                          isSelected ? 'text-white' : 'text-amber-700'
+                        }`}
+                      />
+                    )}
+                  </div>
+                  <div className="flex items-baseline justify-between">
+                    <span className="text-2xl font-black font-mono tracking-tight">
+                      {item.count}
+                    </span>
+                    <span
+                      className={`text-[10px] font-semibold ${
+                        isSelected ? item.subActive : 'text-slate-500'
+                      }`}
+                    >
+                      {isSelected ? 'Ativo' : 'Filtrar'}
+                    </span>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+
           {/* Barra de Filtros e Busca */}
           <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-xs space-y-3">
             {/* Filtro por Célula (Padrão Corporativo Limpo) */}
@@ -1201,6 +1678,14 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
                   <option value="a_realizar">A Realizar</option>
                   <option value="em_treinamento">Em Treinamento</option>
                   <option value="concluido">Concluído</option>
+                  {canSeeVerdict ? (
+                    <>
+                      <option value="finalizado_aprovado">Aprovado</option>
+                      <option value="finalizado_validacao">Validação da liderança</option>
+                    </>
+                  ) : (
+                    <option value="finalizado">Finalizado</option>
+                  )}
                 </select>
                 <div className="text-xs text-slate-500 font-medium ml-2">
                   {filteredCollaborators.length} colaborador(es)
@@ -1220,33 +1705,41 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
                     <th className="px-5 py-3.5">Status</th>
                     <th className="px-5 py-3.5">Trilha Atribuída</th>
                     <th className="px-5 py-3.5 text-center">
-                      {isAuxiliar ? 'Roteiro da Simulação' : 'Nota Mais Recente'}
+                      {isActorOnlyMode ? 'Roteiro da Simulação' : 'Média Geral'}
                     </th>
                     <th className="px-5 py-3.5 text-right">Ação</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 text-xs">
                   {filteredCollaborators.map((col) => {
-                    const assignments = collaboratorChecklists.filter(
-                      (c) => c.collaboratorId === col.id
-                    );
-                    const completedAsg = assignments.find((c) => c.status === 'concluido');
-                    const latestAsg = assignments[0];
-                    const chk = latestAsg
-                      ? checklists.find((c) => c.id === latestAsg.checklistId)
-                      : null;
+                    const avgInfo = collaboratorAverageMap.get(col.id);
+                    const averageScore = avgInfo?.average ?? null;
+                    const evaluationCount = avgInfo?.count ?? 0;
+                    const scoreMeta = getScorePerformanceMeta(averageScore);
+                    const statusInfo = getCollaboratorProgressStatus(col, canSeeVerdict);
+                    const isNeutralFinalized = statusInfo.key === 'finalizado';
+                    const isLockedForRole = Boolean(col.isTrackFinalized) && !canOpenFinalizedFicha;
 
                     return (
                       <tr key={col.id} className="hover:bg-slate-50/80 transition-colors">
                         <td className="px-5 py-4">
                           <div className="flex items-center gap-1.5 flex-wrap">
-                            <button
-                              type="button"
-                              onClick={() => setActiveCollaboratorId(col.id)}
-                              className="font-bold text-slate-900 hover:text-emerald-800 text-sm text-left cursor-pointer"
-                            >
-                              {col.fullName}
-                            </button>
+                            {isLockedForRole ? (
+                              <span
+                                title="Trilha finalizada: acesso à ficha e ao roteiro bloqueado para este perfil"
+                                className="font-bold text-slate-600 text-sm text-left"
+                              >
+                                {col.fullName}
+                              </span>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => selectCollaborator(col.id)}
+                                className="font-bold text-slate-900 hover:text-emerald-800 text-sm text-left cursor-pointer"
+                              >
+                                {col.fullName}
+                              </button>
+                            )}
                             {col.username && (
                               <span className="font-mono text-[10px] text-emerald-800 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200 font-semibold">
                                 @{col.username}
@@ -1264,19 +1757,24 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
                         </td>
 
                         <td className="px-5 py-4">
-                          {(() => {
-                            const statusInfo = getCollaboratorProgressStatus(col);
-                            return (
-                              <span
-                                className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full font-bold text-[11px] whitespace-nowrap shrink-0 border ${statusInfo.badgeStyle}`}
-                              >
-                                {statusInfo.key === 'concluido' && (
-                                  <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                                )}
-                                <span>{statusInfo.label}</span>
-                              </span>
-                            );
-                          })()}
+                          <span
+                            title={statusInfo.subtitle}
+                            className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full font-bold text-[11px] whitespace-nowrap shrink-0 border ${statusInfo.badgeStyle}`}
+                          >
+                            {(statusInfo.key === 'concluido' ||
+                              statusInfo.key === 'finalizado_aprovado' ||
+                              statusInfo.key === 'finalizado') && (
+                              <CheckCircle2
+                                className={`w-3 h-3 ${
+                                  isNeutralFinalized ? 'text-slate-500' : 'text-emerald-600'
+                                }`}
+                              />
+                            )}
+                            {statusInfo.key === 'finalizado_validacao' && (
+                              <AlertTriangle className="w-3 h-3 text-amber-700" />
+                            )}
+                            <span>{statusInfo.label}</span>
+                          </span>
                         </td>
 
                         <td className="px-5 py-4 text-slate-600">
@@ -1318,29 +1816,51 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
                         </td>
 
                         <td className="px-5 py-4 text-center">
-                          {isAuxiliar ? (
-                            <span className="inline-flex items-center gap-1.5 font-bold text-xs text-emerald-800 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200">
-                              <Theater className="w-3.5 h-3.5 text-emerald-600" />
-                              <span>Roteiro Disponível</span>
-                            </span>
-                          ) : completedAsg && typeof completedAsg.finalScore === 'number' ? (
-                            <span className="font-mono font-bold text-sm text-emerald-800 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200">
-                              {completedAsg.finalScore.toFixed(1)}
+                          {isActorOnlyMode ? (
+                            col.isTrackFinalized ? (
+                              <span className="inline-flex items-center gap-1.5 font-semibold text-xs text-slate-500 bg-slate-100 px-2.5 py-1 rounded-lg border border-slate-200">
+                                <Lock className="w-3.5 h-3.5 text-slate-400" />
+                                <span>Roteiro Encerrado</span>
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1.5 font-bold text-xs text-emerald-800 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200">
+                                <Theater className="w-3.5 h-3.5 text-emerald-600" />
+                                <span>Roteiro Disponível</span>
+                              </span>
+                            )
+                          ) : averageScore !== null ? (
+                            <span
+                              className={`font-mono font-bold text-sm px-2.5 py-1 rounded-lg border ${scoreMeta.badgeClass}`}
+                              title={`${scoreMeta.label} · Média em ${evaluationCount} avaliação(ões) concluída(s)`}
+                            >
+                              {averageScore.toFixed(1)}
                             </span>
                           ) : (
-                            <span className="text-slate-400 font-mono text-[11px]">---</span>
+                            <span className="text-slate-400 font-mono text-[11px]">—</span>
                           )}
                         </td>
 
                         <td className="px-5 py-4 text-right">
-                          <button
-                            type="button"
-                            onClick={() => setActiveCollaboratorId(col.id)}
-                            className="inline-flex items-center gap-1 text-xs font-bold text-emerald-800 hover:text-emerald-950 bg-emerald-50 hover:bg-emerald-100 px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
-                          >
-                            <span>{isAuxiliar ? 'Ver Roteiro' : 'Abrir Ficha'}</span>
-                            <ChevronRight className="w-3.5 h-3.5" />
-                          </button>
+                          {isLockedForRole ? (
+                            <button
+                              type="button"
+                              disabled
+                              title="Trilha finalizada: acesso à ficha e ao roteiro bloqueado para este perfil"
+                              className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-400 bg-slate-100 border border-slate-200 px-3 py-1.5 rounded-lg cursor-not-allowed opacity-85"
+                            >
+                              <Lock className="w-3.5 h-3.5 text-slate-400" />
+                              <span>Finalizado</span>
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => selectCollaborator(col.id)}
+                              className="inline-flex items-center gap-1 text-xs font-bold text-emerald-800 hover:text-emerald-950 bg-emerald-50 hover:bg-emerald-100 px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
+                            >
+                              <span>{isActorOnlyMode ? 'Ver Roteiro' : 'Abrir Ficha'}</span>
+                              <ChevronRight className="w-3.5 h-3.5" />
+                            </button>
+                          )}
                         </td>
                       </tr>
                     );
@@ -1369,159 +1889,7 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
         </div>
       )}
 
-      {/* ========================================================= */}
-      {/* MODAL: GERENCIADOR DE VÍNCULOS (CHECKLISTS) */}
-      {/* ========================================================= */}
-      {showLinksModal && activeCollaborator && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl border border-slate-200 overflow-hidden animate-in fade-in zoom-in-95 duration-200 max-h-[90vh] flex flex-col">
-            <div className="px-6 py-4 bg-[#0f3e2e] text-white flex items-center justify-between shrink-0">
-              <div>
-                <h3 className="font-bold text-base">Gerenciar Vínculos de Avaliação</h3>
-                <p className="text-[11px] text-emerald-200">
-                  Colaborador: {activeCollaborator.fullName}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowLinksModal(false)}
-                className="text-emerald-200 hover:text-white p-1 rounded-lg hover:bg-white/10 cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
 
-            <div className="p-6 overflow-y-auto space-y-4 flex-1 text-xs">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                <div>
-                  <h4 className="font-bold text-slate-900 text-sm mb-0.5">
-                    Selecione os Checklists que Compõem a Trilha
-                  </h4>
-                  <p className="text-[11px] text-slate-500">
-                    Marque os checklists que este colaborador precisará cumprir durante sua formação.
-                  </p>
-                </div>
-              </div>
-
-              {/* Barra de Filtros por Célula (Padrão Corporativo Limpo) */}
-              <div className="flex items-center gap-1.5 flex-wrap pt-2 pb-1 border-t border-slate-100">
-                <span className="text-[11px] font-semibold text-slate-500 mr-1">Célula:</span>
-                {[
-                  { key: 'all', label: 'Todas' },
-                  { key: 'LAB', label: 'Laboratório' },
-                  { key: 'IMG', label: 'Imagem' },
-                  { key: 'CONSULTA', label: 'Consultas' },
-                  { key: 'TERAPIA', label: 'Terapias' },
-                  { key: 'OPERADORA', label: 'Operadora' },
-                ].map((item) => {
-                  const isSel = linksCellFilter === item.key;
-                  return (
-                    <button
-                      key={item.key}
-                      type="button"
-                      onClick={() => setLinksCellFilter(item.key as 'all' | OfficialCell)}
-                      className={`px-3 py-1.5 rounded-lg text-xs transition-colors cursor-pointer ${
-                        isSel
-                          ? 'bg-[#0f3e2e] text-white border border-[#0f3e2e] font-bold shadow-xs'
-                          : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 hover:border-slate-300 font-medium'
-                      }`}
-                    >
-                      {item.label}
-                    </button>
-                  );
-                })}
-              </div>
-
-              <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
-                {(() => {
-                  const filteredChecklists = checklists.filter((chk) => {
-                    if (linksCellFilter === 'all') return true;
-                    return (chk.cell || 'OPERADORA') === linksCellFilter;
-                  });
-
-                  if (filteredChecklists.length === 0) {
-                    return (
-                      <div className="p-8 text-center text-slate-400 bg-slate-50 rounded-xl border border-dashed border-slate-200 text-xs">
-                        Nenhum checklist cadastrado para esta célula de atendimento.
-                      </div>
-                    );
-                  }
-
-                  return filteredChecklists.map((chk) => {
-                    const isChecked = tempAssignedChecklistIds.includes(chk.id);
-                    return (
-                      <label
-                        key={chk.id}
-                        className={`flex items-start gap-3 p-3.5 rounded-xl border cursor-pointer transition-all ${
-                          isChecked
-                            ? 'bg-emerald-50/70 border-emerald-400 shadow-2xs'
-                            : 'bg-white border-slate-200 hover:border-slate-300'
-                        }`}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={isChecked}
-                          onChange={() => handleToggleChecklistLink(chk.id)}
-                          className="mt-0.5 rounded text-emerald-700 focus:ring-emerald-500 h-4 w-4"
-                        />
-                        <div className="flex-1">
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="font-bold text-slate-900 text-xs leading-snug">
-                              {chk.title}
-                            </span>
-                            <span className="text-[10px] font-semibold text-slate-700 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-md shrink-0">
-                              {chk.categoryName || 'Geral'}
-                            </span>
-                          </div>
-                          <p className="text-[11px] text-slate-500 mt-0.5">
-                            {chk.description || 'Critérios de atendimento padronizado.'}
-                          </p>
-                          <div className="text-[10px] text-slate-400 mt-1 flex items-center gap-2">
-                            <span className="font-medium text-emerald-800 bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-200/50">
-                              {getCellName(chk.cell)}
-                            </span>
-                            <span>·</span>
-                            <span>{chk.criteria.length} critérios</span>
-                            <span>·</span>
-                            <span>
-                              {chk.hasExercises
-                                ? `${chk.exerciseIds.length} caso(s) simulado(s)`
-                                : 'Sem exercício'}
-                            </span>
-                          </div>
-                        </div>
-                      </label>
-                    );
-                  });
-                })()}
-              </div>
-            </div>
-
-            <div className="p-4 bg-slate-50 border-t border-slate-200 flex items-center justify-between shrink-0">
-              <span className="text-[11px] text-slate-500 font-medium">
-                {tempAssignedChecklistIds.length} checklist(s) selecionado(s)
-              </span>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setShowLinksModal(false)}
-                  className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-200 rounded-xl transition-colors cursor-pointer"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="button"
-                  onClick={handleSaveLinks}
-                  disabled={isSubmitting}
-                  className="px-5 py-2 text-xs font-bold text-white bg-[#0f3e2e] hover:bg-emerald-900 rounded-xl transition-all shadow-sm cursor-pointer disabled:opacity-50"
-                >
-                  Salvar Vínculos
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* ========================================================= */}
       {/* MODAL: ROTEIRO DO ATENDIMENTO (ROLEPLAY) */}
@@ -1660,25 +2028,54 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
                             );
                           })()}
 
-                          <div className="pt-2 flex items-center gap-2">
-                            <button
-                              type="button"
-                              onClick={() => setGuideMirrorCharacter(char)}
-                              className="px-2.5 py-1 text-xs font-bold text-emerald-800 bg-emerald-100 hover:bg-emerald-200 rounded-lg flex items-center gap-1.5 cursor-pointer transition-colors"
-                            >
-                              <Eye className="w-3.5 h-3.5" />
-                              <span>Visualizar Ficha</span>
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => downloadGuidePdf(char, selectedBriefingExercise?.title)}
-                              className="px-2.5 py-1 text-xs font-bold text-white bg-[#064e3b] hover:bg-emerald-900 rounded-lg flex items-center gap-1.5 cursor-pointer transition-colors shadow-2xs"
-                              title={`Baixar Cliente_${char.name.replace(/\s+/g, '_')}.pdf`}
-                            >
-                              <Download className="w-3.5 h-3.5 text-emerald-200" />
-                              <span>Baixar PDF</span>
-                            </button>
-                          </div>
+                          {(() => {
+                            const charGuides = getCharacterGuides(char);
+                            return (
+                              <div className="pt-2 flex items-center gap-2 flex-wrap">
+                                {charGuides.length > 0 && (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setAttachedGuideViewer({
+                                        title: `${
+                                          charGuides.length > 1 ? 'Guias Médicas' : 'Guia Médica'
+                                        } · ${char.name}`,
+                                        subtitle: `${selectedBriefingExercise?.title || ''}${
+                                          char.cardNumber ? ` · Carteirinha ${char.cardNumber}` : ''
+                                        }`,
+                                        guides: charGuides,
+                                      })
+                                    }
+                                    className="px-2.5 py-1 text-xs font-bold text-white bg-[#0f3e2e] hover:bg-emerald-900 rounded-lg flex items-center gap-1.5 cursor-pointer transition-colors shadow-2xs"
+                                  >
+                                    <FileText className="w-3.5 h-3.5 text-emerald-200" />
+                                    <span>
+                                      {charGuides.length > 1
+                                        ? `Visualizar Guias (${charGuides.length})`
+                                        : 'Visualizar Guia Médica'}
+                                    </span>
+                                  </button>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={() => setGuideMirrorCharacter(char)}
+                                  className="px-2.5 py-1 text-xs font-bold text-emerald-800 bg-emerald-100 hover:bg-emerald-200 rounded-lg flex items-center gap-1.5 cursor-pointer transition-colors"
+                                >
+                                  <Eye className="w-3.5 h-3.5" />
+                                  <span>Visualizar Ficha</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => downloadGuidePdf(char, selectedBriefingExercise?.title, pdfGeneratedBy)}
+                                  className="px-2.5 py-1 text-xs font-bold text-white bg-[#064e3b] hover:bg-emerald-900 rounded-lg flex items-center gap-1.5 cursor-pointer transition-colors shadow-2xs"
+                                  title={`Baixar Cliente_${char.name.replace(/\s+/g, '_')}.pdf`}
+                                >
+                                  <Download className="w-3.5 h-3.5 text-emerald-200" />
+                                  <span>Baixar PDF</span>
+                                </button>
+                              </div>
+                            );
+                          })()}
                         </div>
                       );
                     })}
@@ -1695,7 +2092,7 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
                     const chars = selectedBriefingExercise.characterIds
                       .map((id) => characters.find((c) => c.id === id))
                       .filter(Boolean) as Character[];
-                    downloadMultipleGuidesPdf(chars, selectedBriefingExercise.title);
+                    downloadMultipleGuidesPdf(chars, selectedBriefingExercise.title, undefined, pdfGeneratedBy);
                   }}
                   className="px-4 py-2 font-bold text-xs text-white bg-[#064e3b] hover:bg-emerald-900 rounded-xl transition-all shadow-xs flex items-center gap-2 cursor-pointer"
                 >
@@ -1715,352 +2112,7 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
         </div>
       )}
 
-      {/* ========================================================= */}
-      {/* MODAL: RELATÓRIO OFICIAL DE AVALIAÇÃO / IMPRESSÃO */}
-      {/* ========================================================= */}
-      {printReportData && (
-        <div className="fixed inset-0 z-60 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto print:static print:inset-auto print:bg-white print:p-0 print:m-0 print:z-[99999] print:block print:overflow-visible">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl my-8 border border-slate-200 overflow-hidden animate-in fade-in zoom-in-95 duration-200 flex flex-col max-h-[92vh] print:max-h-none print:my-0 print:border-none print:shadow-none print:rounded-none print:w-full print:max-w-none print:block print:overflow-visible">
-            {/* Header da Barra de Ações (Oculta na impressão real) */}
-            <div className="px-6 py-4 bg-[#0f3e2e] text-white flex items-center justify-between shrink-0 print:hidden">
-              <div className="flex items-center gap-2">
-                <Printer className="w-5 h-5 text-emerald-300" />
-                <div>
-                  <h3 className="font-bold text-base text-white">
-                    Relatório Oficial de Avaliação de Desempenho
-                  </h3>
-                  <span className="text-xs text-emerald-200">
-                    Documento consolidado pronto para impressão ou salvar em PDF
-                  </span>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (!printReportData) return;
-                    downloadReportPdf({
-                      collaboratorName: printReportData.collaborator.fullName,
-                      department: printReportData.collaborator.roleTitle,
-                      cell: getCellName(printReportData.collaborator.cellTeam),
-                      checklistTitle: printReportData.checklist.title,
-                      checklistCategory: printReportData.checklist.categoryName || 'Geral',
-                      finalScore: printReportData.assignment.finalScore ?? 0,
-                      evaluatedAt: printReportData.evaluationDate,
-                      evaluatorName: printReportData.instructorName,
-                      notes: printReportData.assignment.generalObservations || undefined,
-                      items: (printReportData.assignment.criteriaAnswers || []).map((ans) => ({
-                        name: ans.name,
-                        weight: ans.weight,
-                        checked: ans.checked,
-                      })),
-                    });
-                  }}
-                  className="px-3.5 py-1.5 text-xs font-bold text-[#064e3b] bg-emerald-100 hover:bg-white rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer shadow-sm"
-                  title="Baixar Relatório Oficial em formato PDF"
-                >
-                  <Download className="w-3.5 h-3.5" />
-                  <span>Baixar Relatório (PDF)</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={handlePrintReport}
-                  className="px-4 py-1.5 text-xs font-bold text-[#0f3e2e] bg-white hover:bg-emerald-50 rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer shadow-sm"
-                >
-                  <Printer className="w-3.5 h-3.5" />
-                  <span>Imprimir Relatório</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPrintReportModalAssignment(null)}
-                  className="text-emerald-200 hover:text-white p-1 rounded-lg hover:bg-white/10 cursor-pointer"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-            </div>
 
-            {/* Documento Imprimível Formal */}
-            <div
-              id="printable-report"
-              className="p-8 overflow-y-auto space-y-6 flex-1 text-slate-900 font-sans print:p-8 print:m-0 print:overflow-visible print:block print:bg-white print:text-black"
-            >
-              {/* 1. Cabeçalho Oficial */}
-              <div className="border-b-2 border-emerald-900 pb-4 flex items-center justify-between">
-                <div>
-                  <div className="text-xs font-bold uppercase tracking-wider text-emerald-800">
-                    Portal de Desempenho & Desenvolvimento Operacional
-                  </div>
-                  <h1 className="text-xl font-black text-slate-900 mt-0.5">
-                    RELATÓRIO DE AVALIAÇÃO PRÁTICA E SIMULAÇÃO
-                  </h1>
-                  <span className="text-xs text-slate-500 font-medium">
-                    Certificado de Verificação de Competências e Atendimento
-                  </span>
-                </div>
-
-                <div className="text-right text-xs space-y-0.5">
-                  <div className="font-bold text-slate-700">Data de Emissão:</div>
-                  <div className="font-mono text-slate-900">{printReportData.evaluationDate}</div>
-                  <div className="text-[10px] text-slate-400">Doc ID: {printReportData.assignment.id}</div>
-                </div>
-              </div>
-
-              {/* 2. Dados do Colaborador e Avaliação */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-slate-50 p-4 rounded-xl border border-slate-200 text-xs">
-                <div>
-                  <span className="text-[10px] font-bold text-slate-500 uppercase block">
-                    Colaborador
-                  </span>
-                  <span className="font-bold text-slate-900 text-sm">
-                    {printReportData.collaborator.fullName}
-                  </span>
-                </div>
-
-                <div>
-                  <span className="text-[10px] font-bold text-slate-500 uppercase block">
-                    Cargo / Função
-                  </span>
-                  <span className="font-medium text-slate-800">
-                    {printReportData.collaborator.roleTitle}
-                  </span>
-                </div>
-
-                <div>
-                  <span className="text-[10px] font-bold text-slate-500 uppercase block">
-                    Célula / Equipe
-                  </span>
-                  <span className="font-medium text-slate-800">
-                    {getCellName(printReportData.collaborator.cellTeam)}
-                  </span>
-                </div>
-
-                <div>
-                  <span className="text-[10px] font-bold text-slate-500 uppercase block">
-                    Matrícula
-                  </span>
-                  <span className="font-mono font-medium text-slate-800">
-                    {printReportData.collaborator.registrationCode || 'N/A'}
-                  </span>
-                </div>
-
-                <div className="sm:col-span-2 pt-2 border-t border-slate-200">
-                  <span className="text-[10px] font-bold text-slate-500 uppercase block">
-                    Checklist Aplicado
-                  </span>
-                  <span className="font-bold text-emerald-950">
-                    {printReportData.checklist.title}
-                  </span>
-                </div>
-
-                <div className="sm:col-span-2 pt-2 border-t border-slate-200">
-                  <span className="text-[10px] font-bold text-slate-500 uppercase block">
-                    Instrutor Responsável
-                  </span>
-                  <span className="font-medium text-slate-800">
-                    {printReportData.instructorName}
-                  </span>
-                </div>
-              </div>
-
-              {/* 3. Cenários e Clientes Interpretados na Simulação */}
-              {printReportData.characters.length > 0 && (
-                <div className="space-y-2">
-                  <h4 className="text-xs font-bold uppercase text-slate-700 tracking-wider flex items-center gap-1.5">
-                    <FileText className="w-3.5 h-3.5 text-emerald-800" />
-                    <span>Cenários e Clientes Simulados</span>
-                  </h4>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
-                    {printReportData.characters.map((char) => (
-                      <div
-                        key={char.id}
-                        className="p-3 bg-white border border-slate-200 rounded-lg space-y-1"
-                      >
-                        <div className="flex items-center justify-between">
-                          <span className="font-bold text-slate-900">{char.name}</span>
-                          <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-slate-100 text-slate-700">
-                            {char.customerTier}
-                          </span>
-                        </div>
-                        <div className="text-[11px] text-slate-500">
-                          Carteirinha: {char.cardNumber} · {char.city}
-                        </div>
-                        <p className="text-[11px] text-slate-600 line-clamp-2 italic">
-                          "{char.serviceContext || char.history}"
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* 4. Tabela de Critérios Avaliados */}
-              <div className="space-y-2">
-                <h4 className="text-xs font-bold uppercase text-slate-700 tracking-wider">
-                  Detalhamento de Critérios Avaliados & Observações
-                </h4>
-                <table className="w-full text-left border-collapse border border-slate-200 text-xs">
-                  <thead className="bg-slate-100 text-slate-700 font-bold">
-                    <tr>
-                      <th className="p-2.5 border-b border-slate-200 w-12 text-center">Status</th>
-                      <th className="p-2.5 border-b border-slate-200">Critério de Avaliação</th>
-                      <th className="p-2.5 border-b border-slate-200 w-16 text-center">Peso</th>
-                      <th className="p-2.5 border-b border-slate-200">Observações do Instrutor</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-200">
-                    {printReportData.assignment.criteriaAnswers &&
-                    printReportData.assignment.criteriaAnswers.length > 0 ? (
-                      printReportData.assignment.criteriaAnswers.map((ans, idx) => (
-                        <tr key={idx} className={ans.checked ? 'bg-white' : 'bg-red-50/30'}>
-                          <td className="p-2.5 text-center">
-                            {ans.checked ? (
-                              <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-emerald-100 text-emerald-800 font-bold text-xs">
-                                ✓
-                              </span>
-                            ) : (
-                              <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-red-100 text-red-800 font-bold text-xs">
-                                ✕
-                              </span>
-                            )}
-                          </td>
-                          <td className="p-2.5 font-medium text-slate-800">{ans.name}</td>
-                          <td className="p-2.5 text-center font-mono font-bold text-slate-600">
-                            {ans.weight || 1}
-                          </td>
-                          <td className="p-2.5 text-slate-600 italic">
-                            {ans.notes ? ans.notes : '---'}
-                          </td>
-                        </tr>
-                      ))
-                    ) : (
-                      printReportData.checklist.criteria.map((crit, idx) => (
-                        <tr key={idx}>
-                          <td className="p-2.5 text-center">
-                            <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-emerald-100 text-emerald-800 font-bold text-xs">
-                              ✓
-                            </span>
-                          </td>
-                          <td className="p-2.5 font-medium text-slate-800">{crit.name}</td>
-                          <td className="p-2.5 text-center font-mono font-bold text-slate-600">
-                            {crit.weight}
-                          </td>
-                          <td className="p-2.5 text-slate-400 italic">Atendido conforme padrão.</td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-
-              {/* 5. Observações Gerais do Avaliador */}
-              <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-2">
-                <h4 className="text-xs font-bold uppercase text-slate-700 tracking-wider flex items-center gap-1.5">
-                  <FileText className="w-3.5 h-3.5 text-emerald-800" />
-                  <span>Observações Gerais do Avaliador</span>
-                </h4>
-                {printReportData.assignment.generalObservations ? (
-                  <p className="text-xs text-slate-800 whitespace-pre-wrap leading-relaxed font-sans bg-white p-3 rounded-lg border border-slate-200">
-                    {printReportData.assignment.generalObservations}
-                  </p>
-                ) : (
-                  <p className="text-xs text-slate-500 italic bg-white p-3 rounded-lg border border-slate-200">
-                    Nenhuma observação geral complementar registrada nesta avaliação.
-                  </p>
-                )}
-              </div>
-
-              {/* 6. Resultado Final & Parecer Oficial */}
-              <div className="bg-slate-50 border-2 border-slate-300 rounded-2xl p-5 flex flex-col sm:flex-row items-center justify-between gap-4">
-                <div className="space-y-1 text-center sm:text-left">
-                  <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
-                    Parecer Oficial da Avaliação
-                  </span>
-                  <div className="flex items-center gap-3">
-                    <span
-                      className={`text-lg font-black px-4 py-1.5 rounded-xl border ${
-                        printReportData.isApproved
-                          ? 'bg-emerald-100 text-emerald-900 border-emerald-300'
-                          : 'bg-red-100 text-red-900 border-red-300'
-                      }`}
-                    >
-                      {printReportData.isApproved ? 'APROVADO' : 'NECESSITA REFORÇO'}
-                    </span>
-                    <span className="text-xs text-slate-600 font-medium">
-                      {printReportData.isApproved
-                        ? 'Apto para o fluxo operacional padrão.'
-                        : 'Recomenda-se reciclagem nos critérios não atendidos.'}
-                    </span>
-                  </div>
-                </div>
-
-                <div className="text-center sm:text-right bg-white px-5 py-3 rounded-xl border border-slate-200">
-                  <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
-                    Nota Consolidada
-                  </span>
-                  <div className="text-3xl font-black font-mono text-[#0f3e2e]">
-                    {typeof printReportData.assignment.finalScore === 'number'
-                      ? printReportData.assignment.finalScore.toFixed(1)
-                      : '10.0'}{' '}
-                    <span className="text-base text-slate-400 font-normal">/ 10</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Rodapé Oficial Limpo: Data, Status e Nota Consolidada (Sem Assinaturas) */}
-              <div className="pt-4 border-t border-slate-300 flex flex-col sm:flex-row items-center justify-between gap-2 text-xs text-slate-600">
-                <div className="text-[11px]">
-                  Data e Hora do Registro:{' '}
-                  <strong className="text-slate-800">{printReportData.evaluationDate}</strong>
-                </div>
-                <div className="flex items-center gap-3 font-medium text-xs">
-                  <span>
-                    Status Final:{' '}
-                    <strong
-                      className={
-                        printReportData.isApproved
-                          ? 'text-emerald-700 uppercase font-bold'
-                          : 'text-red-700 uppercase font-bold'
-                      }
-                    >
-                      {printReportData.isApproved ? 'Aprovado' : 'Necessita Reforço'}
-                    </strong>
-                  </span>
-                  <span className="text-slate-300">•</span>
-                  <span>
-                    Nota Consolidada:{' '}
-                    <strong className="font-mono text-slate-900 font-bold">
-                      {typeof printReportData.assignment.finalScore === 'number'
-                        ? printReportData.assignment.finalScore.toFixed(1)
-                        : '10.0'}{' '}
-                      / 10
-                    </strong>
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {/* Rodapé do Modal */}
-            <div className="p-4 bg-slate-50 border-t border-slate-200 flex justify-end gap-3 shrink-0 print:hidden">
-              <button
-                type="button"
-                onClick={() => setPrintReportModalAssignment(null)}
-                className="px-4 py-2 font-semibold text-slate-600 hover:bg-slate-200 rounded-xl transition-colors cursor-pointer text-xs"
-              >
-                Fechar
-              </button>
-              <button
-                type="button"
-                onClick={handlePrintReport}
-                className="px-5 py-2 font-bold text-white bg-[#0f3e2e] hover:bg-emerald-900 rounded-xl transition-all shadow-sm flex items-center gap-2 cursor-pointer text-xs"
-              >
-                <Printer className="w-4 h-4" />
-                <span>Imprimir Relatório</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* ========================================================= */}
       {/* MODAL: NOVO COLABORADOR */}
@@ -2190,7 +2242,7 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
                     <option value="novo">Novo</option>
                     <option value="em_treinamento">Em Treinamento</option>
                     <option value="aprovado">Aprovado</option>
-                    <option value="necessita_reforco">Necessita Reforço</option>
+                    <option value="necessita_reforco">Validação da liderança</option>
                   </select>
                 </div>
               </div>
@@ -2252,11 +2304,192 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
         </div>
       )}
 
+      {/* MODAL: FINALIZAR TRILHA & EMITIR PARECER OFICIAL (GUARDIÃO ANFITRIÃO) */}
+      {showFinalizeModal && activeCollaborator && (() => {
+        const trackItems = activeCollaborator.track || [];
+        const totalTrackSteps = trackItems.length;
+        const completedTrackSteps = trackItems.filter((s) => s.status === 'concluido').length;
+        const remainingTrackSteps = Math.max(0, totalTrackSteps - completedTrackSteps);
+        const isTrackIncomplete = totalTrackSteps === 0 || completedTrackSteps < totalTrackSteps;
+
+        return (
+          <div className="fixed inset-0 z-60 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full border border-slate-200 overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+              <div className="px-6 py-4 bg-[#0f3e2e] text-white flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-lg bg-amber-400/20 border border-amber-300/40 flex items-center justify-center">
+                    <Shield className="w-4 h-4 text-amber-300" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-sm">Finalizar Trilha &amp; Emitir Parecer Oficial</h3>
+                    <p className="text-[11px] text-emerald-200">
+                      Colaborador: {activeCollaborator.fullName}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowFinalizeModal(false)}
+                  className="text-emerald-200 hover:text-white p-1 rounded-lg hover:bg-white/10 cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <form
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  if (isTrackIncomplete && !acknowledgeIncompleteTrack) {
+                    showToast(
+                      'Confirme que está ciente da finalização com etapas pendentes.',
+                      'error'
+                    );
+                    return;
+                  }
+                  if (!finalizeOpinion.trim()) {
+                    showToast('Escreva o parecer conclusivo do Guardião Anfitrião.', 'error');
+                    return;
+                  }
+                  setIsFinalizingTrack(true);
+                  const res = await finalizeCollaboratorTrack(activeCollaborator.id, {
+                    verdict: finalizeVerdict,
+                    opinion: finalizeOpinion.trim(),
+                  });
+                  setIsFinalizingTrack(false);
+                  if (res.success) {
+                    showToast(res.message, 'success');
+                    setShowFinalizeModal(false);
+                  } else {
+                    showToast(res.message, 'error');
+                  }
+                }}
+                className="p-6 space-y-4 text-xs"
+              >
+                <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-amber-950 text-[11px] leading-relaxed">
+                  Ao finalizar a trilha, o histórico é congelado para edições operacionais e o parecer oficial passará a integrar o <strong>Dossiê Completo (PDF)</strong> para os perfis autorizados.
+                </div>
+
+                {isTrackIncomplete && (
+                  <div className="p-3.5 bg-red-50 border border-red-200 rounded-xl space-y-2.5">
+                    <div className="flex items-start gap-2 text-red-900">
+                      <AlertTriangle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+                      <div className="text-[11px] leading-relaxed">
+                        <div className="font-bold">Atenção: Trilha com etapas pendentes</div>
+                        <p className="mt-0.5 text-red-800">
+                          {totalTrackSteps === 0
+                            ? 'Esta trilha ainda não possui nenhuma etapa cadastrada.'
+                            : `Atualmente ${completedTrackSteps} de ${totalTrackSteps} etapa(s) foram concluídas (restam ${remainingTrackSteps} etapa(s) pendente(s)).`}
+                        </p>
+                      </div>
+                    </div>
+
+                    <label className="flex items-start gap-2.5 pt-2 border-t border-red-200/80 cursor-pointer select-none text-red-950">
+                      <input
+                        type="checkbox"
+                        checked={acknowledgeIncompleteTrack}
+                        onChange={(e) => setAcknowledgeIncompleteTrack(e.target.checked)}
+                        className="mt-0.5 w-4 h-4 rounded text-red-700 border-red-300 focus:ring-red-500 cursor-pointer shrink-0"
+                      />
+                      <span className="text-[11px] font-semibold leading-snug">
+                        Estou ciente de que a trilha não está 100% concluída e desejo finalizá-la mesmo assim.
+                      </span>
+                    </label>
+                  </div>
+                )}
+
+                <div className="space-y-1.5">
+                  <label className="block font-bold text-slate-800">Parecer Conclusivo *</label>
+                  <div className="grid grid-cols-2 gap-2.5">
+                    <button
+                      type="button"
+                      onClick={() => setFinalizeVerdict('aprovado')}
+                      className={`p-3 rounded-xl border-2 text-left transition-all cursor-pointer ${
+                        finalizeVerdict === 'aprovado'
+                          ? 'bg-emerald-50 border-emerald-600 text-emerald-950 shadow-xs'
+                          : 'bg-white border-slate-200 text-slate-700 hover:border-slate-300'
+                      }`}
+                    >
+                      <div className="font-bold text-xs flex items-center gap-1.5">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                        <span>Aprovado</span>
+                      </div>
+                      <p className="text-[10px] text-slate-500 mt-1">
+                        Apto para atuar no fluxo operacional padrão.
+                      </p>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setFinalizeVerdict('necessita_reforco')}
+                      className={`p-3 rounded-xl border-2 text-left transition-all cursor-pointer ${
+                        finalizeVerdict === 'necessita_reforco'
+                          ? 'bg-amber-50 border-amber-500 text-amber-950 shadow-xs'
+                          : 'bg-white border-slate-200 text-slate-700 hover:border-slate-300'
+                      }`}
+                    >
+                      <div className="font-bold text-xs flex items-center gap-1.5">
+                        <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                        <span>Validação da liderança</span>
+                      </div>
+                      <p className="text-[10px] text-slate-500 mt-1">
+                        Verificar a continuidade com a liderança do colaborador.
+                      </p>
+                    </button>
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="block font-bold text-slate-800">
+                    Parecer Oficial do Guardião Anfitrião *
+                  </label>
+                  <textarea
+                    rows={4}
+                    required
+                    value={finalizeOpinion}
+                    onChange={(e) => setFinalizeOpinion(e.target.value)}
+                    placeholder="Descreva os pontos fortes observados, recomendações finais e decisão oficial de finalização..."
+                    className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 text-slate-900 leading-relaxed resize-none"
+                  />
+                </div>
+
+                <div className="flex justify-end gap-2.5 pt-2 border-t border-slate-200">
+                  <button
+                    type="button"
+                    onClick={() => setShowFinalizeModal(false)}
+                    className="px-4 py-2 font-semibold text-slate-600 hover:bg-slate-100 rounded-xl cursor-pointer"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={
+                      isFinalizingTrack ||
+                      !finalizeOpinion.trim() ||
+                      (isTrackIncomplete && !acknowledgeIncompleteTrack)
+                    }
+                    className="px-5 py-2 font-bold text-white bg-[#0f3e2e] hover:bg-emerald-900 rounded-xl shadow-sm cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
+                  >
+                    <Shield className="w-3.5 h-3.5 text-amber-300" />
+                    <span>{isFinalizingTrack ? 'Finalizando...' : 'Finalizar & Emitir Parecer'}</span>
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Modal de Espelho da Guia */}
       <GuideMirrorModal
         character={guideMirrorCharacter}
         exerciseTitle={selectedBriefingExercise?.title}
         onClose={() => setGuideMirrorCharacter(null)}
+      />
+
+      {/* Visualizador Popup de Guia Médica Anexada */}
+      <AttachedGuideViewerModal
+        attachment={attachedGuideViewer}
+        onClose={() => setAttachedGuideViewer(null)}
       />
     </div>
   );

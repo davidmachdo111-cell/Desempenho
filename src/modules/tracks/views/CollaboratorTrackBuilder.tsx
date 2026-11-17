@@ -14,18 +14,19 @@ import {
   Lock,
   UserCheck,
   User,
-  AlertCircle,
-  HelpCircle,
   X,
-  Sparkles,
+  Shield,
 } from 'lucide-react';
 import { usePortalStore } from '../../../context/PortalStoreContext';
+import { useToast } from '../../../context/ToastContext';
 import {
+  canViewRestrictedItem,
   Collaborator,
   CollaboratorTrackStep,
   Checklist,
   Survey,
   getCellName,
+  getScorePerformanceMeta,
   OfficialCell,
 } from '../../../types/portal';
 
@@ -38,27 +39,32 @@ interface CollaboratorTrackBuilderProps {
 
 export const CollaboratorTrackBuilder: React.FC<CollaboratorTrackBuilderProps> = ({
   collaborator,
-  onClose,
   readOnly,
   onStartEvaluation,
 }) => {
   const {
     checklists,
     surveys,
+    categories,
     currentUser,
+    hasPermission,
     updateCollaboratorTrack,
     addStepToCollaboratorTrack,
     removeStepFromCollaboratorTrack,
     ensureCollaboratorChecklistAssignment,
   } = usePortalStore();
+  const { showToast } = useToast();
 
-  const isAdmin = currentUser?.role === 'admin';
-  const isReadOnly = readOnly !== undefined ? readOnly : !isAdmin;
+  const canManageTracks = hasPermission('can_manage_collaborators');
+  const isReadOnly = readOnly !== undefined ? readOnly : !canManageTracks;
+  const isFinalized = Boolean(collaborator.isTrackFinalized);
+  const canEditStructure = !isReadOnly && !isFinalized;
 
   // Tab da biblioteca (Checklists ou Pesquisas)
   const [libraryTab, setLibraryTab] = useState<'checklists' | 'surveys'>('checklists');
   const [searchQuery, setSearchQuery] = useState('');
   const [cellFilter, setCellFilter] = useState<'all' | OfficialCell>('all');
+  const [categoryFilter, setCategoryFilter] = useState<string>('all');
   const [draggedItem, setDraggedItem] = useState<{
     type: 'checklist' | 'survey';
     id: string;
@@ -68,9 +74,6 @@ export const CollaboratorTrackBuilder: React.FC<CollaboratorTrackBuilderProps> =
   const [draggedStepIndex, setDraggedStepIndex] = useState<number | null>(null);
   const [dragOverStepIndex, setDragOverStepIndex] = useState<number | null>(null);
   const [isSaving, setIsSaving] = useState(false);
-  const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(
-    null
-  );
 
   // Trilha reativa do colaborador
   const currentTrack: CollaboratorTrackStep[] = useMemo(() => {
@@ -82,11 +85,19 @@ export const CollaboratorTrackBuilder: React.FC<CollaboratorTrackBuilderProps> =
   const completedSteps = currentTrack.filter((s) => s.status === 'concluido').length;
   const progressPct = totalSteps > 0 ? Math.round((completedSteps / totalSteps) * 100) : 0;
 
+  const availableCategories = useMemo(() => {
+    return categories.filter((c) => c.type === 'checklist' || c.type === 'geral');
+  }, [categories]);
+
   // Filtragem da biblioteca de Checklists
   const filteredChecklists = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     return checklists.filter((chk) => {
       if (cellFilter !== 'all' && chk.cell !== cellFilter) return false;
+      if (categoryFilter !== 'all') {
+        const chkCatName = chk.categoryName || 'Geral';
+        if (chkCatName !== categoryFilter && chk.categoryId !== categoryFilter) return false;
+      }
       if (!q) return true;
       return (
         chk.title.toLowerCase().includes(q) ||
@@ -94,7 +105,7 @@ export const CollaboratorTrackBuilder: React.FC<CollaboratorTrackBuilderProps> =
         chk.description.toLowerCase().includes(q)
       );
     });
-  }, [checklists, searchQuery, cellFilter]);
+  }, [checklists, searchQuery, cellFilter, categoryFilter]);
 
   // Filtragem da biblioteca de Pesquisas
   const filteredSurveys = useMemo(() => {
@@ -109,34 +120,37 @@ export const CollaboratorTrackBuilder: React.FC<CollaboratorTrackBuilderProps> =
     });
   }, [surveys, searchQuery]);
 
-  // Ação: Incluir item na trilha
+  // Ação: Incluir item na trilha (Checklists nascem com 'evaluator' por padrão)
   const handleIncludeItem = async (type: 'checklist' | 'survey', item: Checklist | Survey) => {
-    setFeedback(null);
+    if (currentTrack.some((s) => s.type === type && s.refId === item.id)) {
+      showToast('Esta atividade já está vinculada na trilha deste colaborador.', 'info');
+      return;
+    }
+
     setIsSaving(true);
     const res = await addStepToCollaboratorTrack(collaborator.id, {
       type,
       title: item.title,
       refId: item.id,
-      filledBy: 'collaborator',
+      filledBy: type === 'checklist' ? 'evaluator' : 'collaborator',
     });
     setIsSaving(false);
     if (res.success) {
-      setFeedback({ type: 'success', text: `"${item.title}" incluído na trilha!` });
+      showToast(`"${item.title}" incluído na trilha!`, 'success');
     } else {
-      setFeedback({ type: 'error', text: res.message });
+      showToast(res.message, 'error');
     }
   };
 
   // Ação: Remover item da trilha
   const handleRemoveStep = async (stepId: string) => {
-    setFeedback(null);
     setIsSaving(true);
     const res = await removeStepFromCollaboratorTrack(collaborator.id, stepId);
     setIsSaving(false);
     if (res.success) {
-      setFeedback({ type: 'success', text: 'Etapa removida da trilha.' });
+      showToast('Etapa removida da trilha.', 'success');
     } else {
-      setFeedback({ type: 'error', text: res.message });
+      showToast(res.message, 'error');
     }
   };
 
@@ -173,13 +187,13 @@ export const CollaboratorTrackBuilder: React.FC<CollaboratorTrackBuilderProps> =
   const handleDropFromLibrary = async (e: React.DragEvent) => {
     e.preventDefault();
     if (!draggedItem) return;
-    await handleIncludeItem(
-      draggedItem.type,
+    const targetItem =
       draggedItem.type === 'checklist'
-        ? checklists.find((c) => c.id === draggedItem.id)!
-        : surveys.find((s) => s.id === draggedItem.id)!
-    );
+        ? checklists.find((c) => c.id === draggedItem.id)
+        : surveys.find((s) => s.id === draggedItem.id);
     setDraggedItem(null);
+    if (!targetItem) return;
+    await handleIncludeItem(draggedItem.type, targetItem);
   };
 
   // Drag-and-Drop: Reordenar na Linha do Tempo
@@ -207,32 +221,6 @@ export const CollaboratorTrackBuilder: React.FC<CollaboratorTrackBuilderProps> =
 
   return (
     <div className="space-y-4">
-      {/* Toast Feedback */}
-      {feedback && (
-        <div
-          className={`p-3.5 rounded-xl flex items-center justify-between text-xs font-medium border shadow-xs animate-in fade-in duration-150 ${
-            feedback.type === 'success'
-              ? 'bg-emerald-50 text-emerald-950 border-emerald-300'
-              : 'bg-red-50 text-red-950 border-red-300'
-          }`}
-        >
-          <div className="flex items-center gap-2">
-            {feedback.type === 'success' ? (
-              <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0" />
-            ) : (
-              <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
-            )}
-            <span>{feedback.text}</span>
-          </div>
-          <button
-            type="button"
-            onClick={() => setFeedback(null)}
-            className="text-slate-400 hover:text-slate-700 font-bold ml-3 cursor-pointer"
-          >
-            ✕
-          </button>
-        </div>
-      )}
 
       {/* Header do Construtor */}
       <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -282,6 +270,25 @@ export const CollaboratorTrackBuilder: React.FC<CollaboratorTrackBuilderProps> =
         </div>
       </div>
 
+      {/* Banner de Trilha Finalizada e Bloqueada */}
+      {isFinalized && (
+        <div className="bg-amber-50 border border-amber-300 rounded-2xl p-4 flex items-center gap-3 text-xs text-amber-950 shadow-xs">
+          <div className="w-8 h-8 rounded-xl bg-amber-200/80 text-amber-900 flex items-center justify-center shrink-0">
+            <Shield className="w-4 h-4" />
+          </div>
+          <div>
+            <div className="font-bold">
+              Trilha Finalizada e Bloqueada para Edições
+            </div>
+            <p className="text-[11px] text-amber-900/90 mt-0.5">
+              Esta jornada já recebeu parecer oficial do Guardião Anfitrião
+              {collaborator.guardianFinalizedBy ? ` (${collaborator.guardianFinalizedBy})` : ''}.
+              Inclusões, remoções, reordenações e novas avaliações estão travadas.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* ========================================================= */}
       {/* LAYOUT: BIBLIOTECA (ESQ - ADMIN) & TRILHA DO COLAB (DIR) */}
       {/* ========================================================= */}
@@ -289,7 +296,7 @@ export const CollaboratorTrackBuilder: React.FC<CollaboratorTrackBuilderProps> =
         {/* ========================================================= */}
         {/* PAINEL DA ESQUERDA: BIBLIOTECA DE ATIVIDADES PRONTAS (ADMIN) */}
         {/* ========================================================= */}
-        {!isReadOnly && (
+        {canEditStructure && (
           <div className="lg:col-span-5 bg-white border border-slate-200 rounded-2xl shadow-xs overflow-hidden flex flex-col">
             {/* Header do Painel */}
             <div className="p-4 bg-slate-50/80 border-b border-slate-200 space-y-3">
@@ -358,34 +365,54 @@ export const CollaboratorTrackBuilder: React.FC<CollaboratorTrackBuilderProps> =
               )}
             </div>
 
-            {/* Filtro por Célula apenas na aba de Checklists */}
+            {/* Filtros por Categoria e Célula apenas na aba de Checklists */}
             {libraryTab === 'checklists' && (
-              <div className="flex items-center gap-1 overflow-x-auto pb-1 text-[11px]">
-                <span className="text-slate-400 font-semibold mr-1">Célula:</span>
-                {[
-                  { key: 'all', label: 'Todas' },
-                  { key: 'LAB', label: 'Laboratório' },
-                  { key: 'IMG', label: 'Imagem' },
-                  { key: 'CONSULTA', label: 'Consultas' },
-                  { key: 'TERAPIA', label: 'Terapias' },
-                  { key: 'OPERADORA', label: 'Operadora' },
-                ].map((item) => {
-                  const isSel = cellFilter === item.key;
-                  return (
-                    <button
-                      key={item.key}
-                      type="button"
-                      onClick={() => setCellFilter(item.key as 'all' | OfficialCell)}
-                      className={`px-2 py-0.5 rounded-md transition-colors cursor-pointer whitespace-nowrap ${
-                        isSel
-                          ? 'bg-[#0f3e2e] text-white font-bold'
-                          : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
-                      }`}
-                    >
-                      {item.label}
-                    </button>
-                  );
-                })}
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] font-semibold text-slate-500 shrink-0">
+                    Categoria:
+                  </span>
+                  <select
+                    value={categoryFilter}
+                    onChange={(e) => setCategoryFilter(e.target.value)}
+                    className="flex-1 px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-[11px] font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  >
+                    <option value="all">Todas as Categorias</option>
+                    {availableCategories.map((cat) => (
+                      <option key={cat.id} value={cat.name}>
+                        {cat.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="flex items-center gap-1 overflow-x-auto pb-1 text-[11px]">
+                  <span className="text-slate-400 font-semibold mr-1">Célula:</span>
+                  {[
+                    { key: 'all', label: 'Todas' },
+                    { key: 'LAB', label: 'Laboratório' },
+                    { key: 'IMG', label: 'Imagem' },
+                    { key: 'CONSULTA', label: 'Consultas' },
+                    { key: 'TERAPIA', label: 'Terapias' },
+                    { key: 'OPERADORA', label: 'Operadora' },
+                  ].map((item) => {
+                    const isSel = cellFilter === item.key;
+                    return (
+                      <button
+                        key={item.key}
+                        type="button"
+                        onClick={() => setCellFilter(item.key as 'all' | OfficialCell)}
+                        className={`px-2 py-0.5 rounded-md transition-colors cursor-pointer whitespace-nowrap ${
+                          isSel
+                            ? 'bg-[#0f3e2e] text-white font-bold'
+                            : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
+                        }`}
+                      >
+                        {item.label}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
             )}
           </div>
@@ -398,98 +425,162 @@ export const CollaboratorTrackBuilder: React.FC<CollaboratorTrackBuilderProps> =
                   Nenhum checklist encontrado com o filtro atual.
                 </div>
               ) : (
-                filteredChecklists.map((chk) => (
-                  <div
-                    key={chk.id}
-                    draggable
-                    onDragStart={() =>
-                      setDraggedItem({ type: 'checklist', id: chk.id, title: chk.title })
-                    }
-                    className="p-3 rounded-xl border border-slate-200 bg-white hover:border-emerald-400 hover:shadow-xs transition-all flex flex-col justify-between gap-2.5 cursor-grab active:cursor-grabbing group"
-                  >
-                    <div className="space-y-1">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-[10px] font-bold text-emerald-900 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md uppercase">
-                          {chk.categoryName || 'Geral'}
-                        </span>
-                        <span className="text-[10px] text-slate-400 font-medium">
-                          {getCellName(chk.cell)}
-                        </span>
+                filteredChecklists.map((chk) => {
+                  const isAlreadyInTrack = currentTrack.some(
+                    (s) => s.type === 'checklist' && s.refId === chk.id
+                  );
+
+                  return (
+                    <div
+                      key={chk.id}
+                      draggable={!isAlreadyInTrack}
+                      onDragStart={
+                        isAlreadyInTrack
+                          ? undefined
+                          : () =>
+                              setDraggedItem({ type: 'checklist', id: chk.id, title: chk.title })
+                      }
+                      className={`p-3 rounded-xl border transition-all flex flex-col justify-between gap-2.5 group ${
+                        isAlreadyInTrack
+                          ? 'border-emerald-200 bg-emerald-50/30 opacity-85'
+                          : 'border-slate-200 bg-white hover:border-emerald-400 hover:shadow-xs cursor-grab active:cursor-grabbing'
+                      }`}
+                    >
+                      <div className="space-y-1">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="text-[10px] font-bold text-emerald-900 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md uppercase">
+                              {chk.categoryName || 'Geral'}
+                            </span>
+                            {chk.visibility === 'restrito' && (
+                              <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-900 bg-amber-50 border border-amber-300 px-1.5 py-0.5 rounded-md">
+                                <Lock className="w-2.5 h-2.5 text-amber-700" />
+                                <span>Restrito</span>
+                              </span>
+                            )}
+                          </div>
+                          <span className="text-[10px] text-slate-400 font-medium">
+                            {getCellName(chk.cell)}
+                          </span>
+                        </div>
+                        <h4 className="font-bold text-xs text-slate-900 group-hover:text-emerald-950 leading-snug">
+                          {chk.title}
+                        </h4>
+                        <p className="text-[11px] text-slate-500 line-clamp-1 leading-relaxed">
+                          {chk.description || 'Critérios operacionais de atendimento.'}
+                        </p>
                       </div>
-                      <h4 className="font-bold text-xs text-slate-900 group-hover:text-emerald-950 leading-snug">
-                        {chk.title}
-                      </h4>
-                      <p className="text-[11px] text-slate-500 line-clamp-1 leading-relaxed">
-                        {chk.description || 'Critérios operacionais de atendimento.'}
-                      </p>
-                    </div>
 
-                    <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
-                      <span className="text-[10px] text-slate-400">
-                        {chk.criteria.length} critérios
-                      </span>
+                      <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
+                        <span className="text-[10px] text-slate-400">
+                          {chk.criteria.length} critérios
+                        </span>
 
-                      <button
-                        type="button"
-                        onClick={() => handleIncludeItem('checklist', chk)}
-                        disabled={isSaving}
-                        className="px-2.5 py-1 text-[11px] font-bold text-white bg-[#0f3e2e] hover:bg-emerald-900 rounded-lg transition-colors flex items-center gap-1 cursor-pointer shadow-2xs"
-                      >
-                        <Plus className="w-3 h-3" />
-                        <span>Incluir na Trilha</span>
-                      </button>
+                        {isAlreadyInTrack ? (
+                          <button
+                            type="button"
+                            disabled
+                            className="px-2.5 py-1 text-[11px] font-bold text-emerald-800 bg-emerald-100/80 border border-emerald-200 rounded-lg flex items-center gap-1 cursor-not-allowed"
+                          >
+                            <CheckCircle2 className="w-3 h-3 text-emerald-700" />
+                            <span>Já na trilha</span>
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => handleIncludeItem('checklist', chk)}
+                            disabled={isSaving}
+                            className="px-2.5 py-1 text-[11px] font-bold text-white bg-[#0f3e2e] hover:bg-emerald-900 rounded-lg transition-colors flex items-center gap-1 cursor-pointer shadow-2xs"
+                          >
+                            <Plus className="w-3 h-3" />
+                            <span>Incluir na Trilha</span>
+                          </button>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                ))
+                  );
+                })
               )
             ) : filteredSurveys.length === 0 ? (
               <div className="p-8 text-center text-slate-400 bg-slate-50 rounded-xl border border-dashed border-slate-200 text-xs">
                 Nenhuma pesquisa de satisfação cadastrada no momento.
               </div>
             ) : (
-              filteredSurveys.map((survey) => (
-                <div
-                  key={survey.id}
-                  draggable
-                  onDragStart={() =>
-                    setDraggedItem({ type: 'survey', id: survey.id, title: survey.title })
-                  }
-                  className="p-3 rounded-xl border border-slate-200 bg-white hover:border-emerald-400 hover:shadow-xs transition-all flex flex-col justify-between gap-2.5 cursor-grab active:cursor-grabbing group"
-                >
-                  <div className="space-y-1">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-[10px] font-bold text-purple-900 bg-purple-50 border border-purple-200 px-2 py-0.5 rounded-md uppercase">
-                        Pesquisa de Satisfação
-                      </span>
-                      <span className="text-[10px] text-slate-400 font-medium">
-                        {survey.targetCell || 'Todas'}
-                      </span>
+              filteredSurveys.map((survey) => {
+                const isAlreadyInTrack = currentTrack.some(
+                  (s) => s.type === 'survey' && s.refId === survey.id
+                );
+
+                return (
+                  <div
+                    key={survey.id}
+                    draggable={!isAlreadyInTrack}
+                    onDragStart={
+                      isAlreadyInTrack
+                        ? undefined
+                        : () =>
+                            setDraggedItem({ type: 'survey', id: survey.id, title: survey.title })
+                    }
+                    className={`p-3 rounded-xl border transition-all flex flex-col justify-between gap-2.5 group ${
+                      isAlreadyInTrack
+                        ? 'border-emerald-200 bg-emerald-50/30 opacity-85'
+                        : 'border-slate-200 bg-white hover:border-emerald-400 hover:shadow-xs cursor-grab active:cursor-grabbing'
+                    }`}
+                  >
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="text-[10px] font-bold text-purple-900 bg-purple-50 border border-purple-200 px-2 py-0.5 rounded-md uppercase">
+                            Pesquisa de Satisfação
+                          </span>
+                          {survey.visibility === 'restrito' && (
+                            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-900 bg-amber-50 border border-amber-300 px-1.5 py-0.5 rounded-md">
+                              <Lock className="w-2.5 h-2.5 text-amber-700" />
+                              <span>Restrito</span>
+                            </span>
+                          )}
+                        </div>
+                        <span className="text-[10px] text-slate-400 font-medium">
+                          {survey.targetCell || 'Todas'}
+                        </span>
+                      </div>
+                      <h4 className="font-bold text-xs text-slate-900 group-hover:text-emerald-950 leading-snug">
+                        {survey.title}
+                      </h4>
+                      <p className="text-[11px] text-slate-500 line-clamp-1 leading-relaxed">
+                        {survey.description || 'Avaliação da experiência e satisfação.'}
+                      </p>
                     </div>
-                    <h4 className="font-bold text-xs text-slate-900 group-hover:text-emerald-950 leading-snug">
-                      {survey.title}
-                    </h4>
-                    <p className="text-[11px] text-slate-500 line-clamp-1 leading-relaxed">
-                      {survey.description || 'Avaliação da experiência e satisfação.'}
-                    </p>
-                  </div>
 
-                  <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
-                    <span className="text-[10px] text-slate-400">
-                      {survey.questions.length} pergunta(s)
-                    </span>
+                    <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
+                      <span className="text-[10px] text-slate-400">
+                        {survey.questions.length} pergunta(s)
+                      </span>
 
-                    <button
-                      type="button"
-                      onClick={() => handleIncludeItem('survey', survey)}
-                      disabled={isSaving}
-                      className="px-2.5 py-1 text-[11px] font-bold text-white bg-[#0f3e2e] hover:bg-emerald-900 rounded-lg transition-colors flex items-center gap-1 cursor-pointer shadow-2xs"
-                    >
-                      <Plus className="w-3 h-3" />
-                      <span>Incluir na Trilha</span>
-                    </button>
+                      {isAlreadyInTrack ? (
+                        <button
+                          type="button"
+                          disabled
+                          className="px-2.5 py-1 text-[11px] font-bold text-emerald-800 bg-emerald-100/80 border border-emerald-200 rounded-lg flex items-center gap-1 cursor-not-allowed"
+                        >
+                          <CheckCircle2 className="w-3 h-3 text-emerald-700" />
+                          <span>Já na trilha</span>
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => handleIncludeItem('survey', survey)}
+                          disabled={isSaving}
+                          className="px-2.5 py-1 text-[11px] font-bold text-white bg-[#0f3e2e] hover:bg-emerald-900 rounded-lg transition-colors flex items-center gap-1 cursor-pointer shadow-2xs"
+                        >
+                          <Plus className="w-3 h-3" />
+                          <span>Incluir na Trilha</span>
+                        </button>
+                      )}
+                    </div>
                   </div>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
         </div>
@@ -499,10 +590,10 @@ export const CollaboratorTrackBuilder: React.FC<CollaboratorTrackBuilderProps> =
         {/* PAINEL DA DIREITA: TRILHA INDIVIDUAL DO COLABORADOR */}
         {/* ========================================================= */}
         <div
-          onDragOver={isReadOnly ? undefined : (e) => e.preventDefault()}
-          onDrop={isReadOnly ? undefined : handleDropFromLibrary}
+          onDragOver={!canEditStructure ? undefined : (e) => e.preventDefault()}
+          onDrop={!canEditStructure ? undefined : handleDropFromLibrary}
           className={`${
-            isReadOnly ? 'lg:col-span-12 w-full' : 'lg:col-span-7'
+            !canEditStructure ? 'lg:col-span-12 w-full' : 'lg:col-span-7'
           } bg-white border border-slate-200 rounded-2xl shadow-xs overflow-hidden flex flex-col`}
         >
           {/* Header da Trilha */}
@@ -545,30 +636,41 @@ export const CollaboratorTrackBuilder: React.FC<CollaboratorTrackBuilderProps> =
             ) : (
               currentTrack.map((step, index) => {
                 const isChecklist = step.type === 'checklist';
+                const linkedItem = isChecklist
+                  ? checklists.find((c) => c.id === step.refId)
+                  : surveys.find((s) => s.id === step.refId);
+                const isRestrictedStep = linkedItem?.visibility === 'restrito';
+                const canViewThisStep = canViewRestrictedItem(currentUser, linkedItem?.visibility);
+
                 const isCompleted = step.status === 'concluido';
                 const isAvailable = step.status === 'disponivel';
-                const isLocked = step.status === 'bloqueado';
+                const hasNumericScore = typeof step.finalScore === 'number';
+                const scoreMeta = getScorePerformanceMeta(
+                  hasNumericScore ? step.finalScore : undefined
+                );
 
                 return (
                   <div
                     key={step.id}
-                    draggable={!isReadOnly}
-                    onDragStart={!isReadOnly ? (e) => handleTimelineDragStart(e, index) : undefined}
+                    draggable={canEditStructure}
+                    onDragStart={canEditStructure ? (e) => handleTimelineDragStart(e, index) : undefined}
                     onDragOver={
-                      !isReadOnly
+                      canEditStructure
                         ? (e) => {
                             e.preventDefault();
                             setDragOverStepIndex(index);
                           }
                         : undefined
                     }
-                    onDragLeave={!isReadOnly ? () => setDragOverStepIndex(null) : undefined}
-                    onDrop={!isReadOnly ? (e) => handleTimelineDrop(e, index) : undefined}
+                    onDragLeave={canEditStructure ? () => setDragOverStepIndex(null) : undefined}
+                    onDrop={canEditStructure ? (e) => handleTimelineDrop(e, index) : undefined}
                     className={`border rounded-2xl p-4 transition-all shadow-xs relative ${
                       dragOverStepIndex === index
                         ? 'border-emerald-600 ring-2 ring-emerald-300'
                         : isCompleted
-                        ? 'border-emerald-200 bg-emerald-50/20'
+                        ? hasNumericScore && canViewThisStep
+                          ? `${scoreMeta.borderClass} bg-white`
+                          : 'border-slate-300 bg-slate-50/40'
                         : isAvailable
                         ? 'border-slate-300 bg-white hover:border-emerald-400'
                         : 'border-slate-200 bg-slate-50/60 opacity-80'
@@ -577,7 +679,7 @@ export const CollaboratorTrackBuilder: React.FC<CollaboratorTrackBuilderProps> =
                     <div className="flex items-start gap-3">
                       {/* Alça de Arraste (apenas Admin) e Número da Etapa */}
                       <div className="flex items-center gap-1.5 shrink-0 pt-0.5">
-                        {!isReadOnly && (
+                        {canEditStructure && (
                           <button
                             type="button"
                             className="text-slate-300 hover:text-slate-600 cursor-grab active:cursor-grabbing p-0.5"
@@ -589,7 +691,7 @@ export const CollaboratorTrackBuilder: React.FC<CollaboratorTrackBuilderProps> =
                         <span
                           className={`w-7 h-7 rounded-full font-bold text-xs flex items-center justify-center shrink-0 ${
                             isCompleted
-                              ? 'bg-emerald-700 text-white shadow-2xs'
+                              ? 'bg-slate-700 text-white shadow-2xs'
                               : isAvailable
                               ? 'bg-[#0f3e2e] text-white shadow-2xs'
                               : 'bg-slate-200 text-slate-600'
@@ -618,11 +720,21 @@ export const CollaboratorTrackBuilder: React.FC<CollaboratorTrackBuilderProps> =
                               {isChecklist ? 'Checklist' : 'Pesquisa de Satisfação'}
                             </span>
 
-                            {/* Badge do Status Sequencial */}
+                            {isRestrictedStep && (
+                              <span
+                                title="Conteúdo restrito ao Guardião Anfitrião / Admin"
+                                className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-900 bg-amber-50 border border-amber-300 px-2 py-0.5 rounded-full"
+                              >
+                                <Lock className="w-2.5 h-2.5 text-amber-700" />
+                                <span>Restrito</span>
+                              </span>
+                            )}
+
+                            {/* Badge do Status Sequencial (neutro para Concluído, separado da nota) */}
                             <span
                               className={`inline-flex items-center gap-1 text-[10px] font-bold px-2.5 py-0.5 rounded-full border ${
                                 isCompleted
-                                  ? 'bg-emerald-100 text-emerald-900 border-emerald-300'
+                                  ? 'bg-slate-100 text-slate-700 border-slate-200'
                                   : isAvailable
                                   ? 'bg-blue-50 text-blue-900 border-blue-200'
                                   : 'bg-slate-100 text-slate-600 border-slate-200'
@@ -630,7 +742,7 @@ export const CollaboratorTrackBuilder: React.FC<CollaboratorTrackBuilderProps> =
                             >
                               {isCompleted ? (
                                 <>
-                                  <CheckCircle2 className="w-3 h-3 text-emerald-700" />
+                                  <CheckCircle2 className="w-3 h-3 text-slate-500" />
                                   <span>Concluído</span>
                                 </>
                               ) : isAvailable ? (
@@ -647,8 +759,8 @@ export const CollaboratorTrackBuilder: React.FC<CollaboratorTrackBuilderProps> =
                             </span>
                           </div>
 
-                          {/* Botões de Ordenação e Exclusão (Apenas ADMIN em modo edição) */}
-                          {!isReadOnly && (
+                          {/* Botões de Ordenação e Exclusão (Apenas ADMIN em modo edição não finalizado) */}
+                          {canEditStructure && (
                             <div className="flex items-center gap-1 shrink-0">
                               <button
                                 type="button"
@@ -682,8 +794,8 @@ export const CollaboratorTrackBuilder: React.FC<CollaboratorTrackBuilderProps> =
 
                         {/* Linha de Responsabilidade / Ação Funcional de Avaliação */}
                         <div className="pt-2 border-t border-slate-100 flex flex-wrap items-center justify-between gap-3 text-xs">
-                          {/* Quem Preenche: Seletor para ADMIN vs Badge Somente Leitura para Avaliador */}
-                          {!isReadOnly ? (
+                          {/* Quem Preenche: Seletor para ADMIN vs Badge Somente Leitura */}
+                          {canEditStructure ? (
                             isChecklist ? (
                               <div className="flex items-center gap-2">
                                 <span className="text-slate-500 font-medium text-[11px]">
@@ -747,19 +859,27 @@ export const CollaboratorTrackBuilder: React.FC<CollaboratorTrackBuilderProps> =
                           )}
 
                           {/* AÇÃO DO AVALIADOR: Botão "Avaliar Checklist" ou Status de Conclusão */}
-                          {isReadOnly && isChecklist && step.filledBy === 'evaluator' ? (
+                          {!canViewThisStep ? (
+                            <span className="text-[11px] font-semibold text-amber-900 bg-amber-50 px-2.5 py-1 rounded-md border border-amber-200 inline-flex items-center gap-1.5">
+                              <Lock className="w-3 h-3 text-amber-700" />
+                              <span>Conteúdo restrito (Guardião Anfitrião / Admin)</span>
+                            </span>
+                          ) : isReadOnly && isChecklist && step.filledBy === 'evaluator' ? (
                             isCompleted ? (
-                              <div className="flex items-center gap-2">
-                                <span className="text-[11px] font-bold text-emerald-800 bg-emerald-50 px-2.5 py-1 rounded-md border border-emerald-200 inline-flex items-center gap-1">
-                                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                                  <span>
-                                    Concluído{' '}
-                                    {typeof step.finalScore === 'number'
-                                      ? `(${step.finalScore.toFixed(1)}/10)`
-                                      : ''}
-                                  </span>
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="text-[11px] font-bold text-slate-700 bg-slate-100 px-2.5 py-1 rounded-md border border-slate-200 inline-flex items-center gap-1">
+                                  <CheckCircle2 className="w-3.5 h-3.5 text-slate-500" />
+                                  <span>Concluído</span>
                                 </span>
-                                {onStartEvaluation && (
+                                {hasNumericScore && (
+                                  <span
+                                    className={`text-[11px] font-bold font-mono px-2.5 py-1 rounded-md border ${scoreMeta.badgeClass}`}
+                                    title={scoreMeta.label}
+                                  >
+                                    {step.finalScore!.toFixed(1)}/10 · {scoreMeta.label}
+                                  </span>
+                                )}
+                                {onStartEvaluation && !isFinalized && (
                                   <button
                                     type="button"
                                     onClick={() => {
@@ -776,7 +896,7 @@ export const CollaboratorTrackBuilder: React.FC<CollaboratorTrackBuilderProps> =
                                   </button>
                                 )}
                               </div>
-                            ) : isAvailable ? (
+                            ) : isAvailable && !isFinalized ? (
                               <button
                                 type="button"
                                 onClick={() => {
@@ -797,16 +917,23 @@ export const CollaboratorTrackBuilder: React.FC<CollaboratorTrackBuilderProps> =
                             ) : (
                               <span className="text-[11px] font-medium text-slate-400 bg-slate-100 px-2.5 py-1 rounded-md border border-slate-200 inline-flex items-center gap-1">
                                 <Lock className="w-3 h-3 text-slate-400" />
-                                <span>Bloqueado (Conclua a etapa anterior)</span>
+                                <span>
+                                  {isFinalized
+                                    ? 'Trilha finalizada'
+                                    : 'Bloqueado (Conclua a etapa anterior)'}
+                                </span>
                               </span>
                             )
                           ) : (
-                            /* Se Concluído (modo Admin ou Colaborador): Exibe Nota e Data */
+                            /* Se Concluído (modo Admin ou Colaborador): Exibe Nota com Semáforo e Data */
                             isCompleted && (
-                              <div className="text-[11px] text-emerald-900 font-semibold flex items-center gap-2">
-                                {typeof step.finalScore === 'number' && (
-                                  <span className="font-mono bg-emerald-100/80 px-2 py-0.5 rounded border border-emerald-300">
-                                    Nota: {step.finalScore.toFixed(1)}/10
+                              <div className="text-[11px] font-semibold flex items-center gap-2 flex-wrap">
+                                {hasNumericScore && (
+                                  <span
+                                    className={`font-mono font-bold px-2.5 py-0.5 rounded-md border ${scoreMeta.badgeClass}`}
+                                    title={scoreMeta.label}
+                                  >
+                                    Nota: {step.finalScore!.toFixed(1)}/10 · {scoreMeta.label}
                                   </span>
                                 )}
                                 {step.completedAt && (

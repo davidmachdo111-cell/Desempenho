@@ -5,29 +5,28 @@ import {
   Search,
   Eye,
   Edit3,
+  Copy,
   Trash2,
-  CheckCircle2,
-  AlertCircle,
   X,
   CreditCard,
-  ExternalLink,
-  ChevronRight,
-  Filter,
-  Printer,
-  Building2,
   Download,
 } from 'lucide-react';
 import { usePortalStore } from '../../../context/PortalStoreContext';
+import { useToast } from '../../../context/ToastContext';
 import { GuideMirrorModal } from '../../../components/GuideMirrorModal';
+import {
+  AttachedGuideViewerModal,
+  AttachedGuideViewerData,
+} from '../../../components/AttachedGuideViewerModal';
 import { downloadGuidePdf, downloadMultipleGuidesPdf } from '../../../lib/downloadHelpers';
 import {
   Exercise,
   Character,
   ExerciseDifficulty,
-  CustomerTier,
   OfficialCell,
   OFFICIAL_CELLS,
   OFFICIAL_CELL_LIST,
+  getCharacterGuides,
   normalizePhrases,
 } from '../../../types/portal';
 import { CUSTOMER_TIER_BADGES } from '../../characters/views/CharactersManagementView';
@@ -72,10 +71,22 @@ export const ExercisesSimulationView: React.FC = () => {
   const {
     exercises,
     characters,
+    categories,
+    currentUser,
     hasPermission,
     saveExercise,
     deleteExercise,
   } = usePortalStore();
+  const { showToast } = useToast();
+
+  const pdfGeneratedBy = currentUser
+    ? { fullName: currentUser.fullName, username: currentUser.username }
+    : undefined;
+
+  const exerciseCategories = useMemo(
+    () => categories.filter((c) => c.type === 'exercise' || c.type === 'geral'),
+    [categories]
+  );
 
   const canManageExercises = hasPermission('can_manage_exercises');
 
@@ -91,14 +102,6 @@ export const ExercisesSimulationView: React.FC = () => {
   }>({ open: false });
 
   const [deleteConfirmExercise, setDeleteConfirmExercise] = useState<Exercise | null>(null);
-  const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
-
-  // Modal para visualização da guia do cliente
-  const [viewGuideModal, setViewGuideModal] = useState<{
-    clientName: string;
-    guideUrl: string;
-    guideName: string;
-  } | null>(null);
 
   const filteredExercises = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -119,9 +122,12 @@ export const ExercisesSimulationView: React.FC = () => {
 
   // Estados do formulário de criação/edição vinculando até 4 clientes
   const [guideMirrorChar, setGuideMirrorChar] = useState<Character | null>(null);
+  const [attachedGuideModal, setAttachedGuideModal] = useState<AttachedGuideViewerData | null>(null);
   const [formTitle, setFormTitle] = useState('');
   const [formCell, setFormCell] = useState<OfficialCell>('OPERADORA');
   const [formDifficulty, setFormDifficulty] = useState<ExerciseDifficulty>('Mediano');
+  const [formCategoryId, setFormCategoryId] = useState('');
+  const [formCategoryName, setFormCategoryName] = useState('');
   const [formInstructions, setFormInstructions] = useState('');
   const [formSelectedCharacterIds, setFormSelectedCharacterIds] = useState<string[]>([]);
   const [modalCharCellFilter, setModalCharCellFilter] = useState<string>('all');
@@ -130,9 +136,15 @@ export const ExercisesSimulationView: React.FC = () => {
   const openEditor = (exercise?: Exercise) => {
     setModalCharCellFilter('all');
     if (exercise) {
+      const matchedCat =
+        exerciseCategories.find(
+          (c) => c.id === exercise.categoryId || c.name === exercise.categoryName
+        ) || exerciseCategories[0];
       setFormTitle(exercise.title);
       setFormCell(exercise.cell || 'OPERADORA');
       setFormDifficulty(exercise.difficulty || 'Mediano');
+      setFormCategoryId(exercise.categoryId || matchedCat?.id || '');
+      setFormCategoryName(exercise.categoryName || matchedCat?.name || '');
       setFormInstructions(exercise.scenarioInstructions);
       setFormSelectedCharacterIds(exercise.characterIds || []);
       setEditorModalExercise({ open: true, exercise });
@@ -140,6 +152,8 @@ export const ExercisesSimulationView: React.FC = () => {
       setFormTitle('');
       setFormCell('OPERADORA');
       setFormDifficulty('Mediano');
+      setFormCategoryId(exerciseCategories[0]?.id || '');
+      setFormCategoryName(exerciseCategories[0]?.name || '');
       setFormInstructions('');
       // Seleciona o primeiro cliente por padrão se houver
       setFormSelectedCharacterIds(characters.slice(0, 1).map((c) => c.id));
@@ -153,7 +167,7 @@ export const ExercisesSimulationView: React.FC = () => {
         return prev.filter((id) => id !== charId);
       }
       if (prev.length >= 4) {
-        setFeedback({ type: 'error', text: 'Você pode selecionar até no máximo 4 clientes por exercício.' });
+        showToast('Você pode selecionar até no máximo 4 clientes por exercício.', 'error');
         return prev;
       }
       return [...prev, charId];
@@ -163,11 +177,11 @@ export const ExercisesSimulationView: React.FC = () => {
   const handleSaveExercise = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formTitle.trim()) {
-      setFeedback({ type: 'error', text: 'Informe o título do exercício.' });
+      showToast('Informe o título do exercício.', 'error');
       return;
     }
     if (formSelectedCharacterIds.length === 0) {
-      setFeedback({ type: 'error', text: 'Vincule ao menos 1 cliente ao exercício (máximo 4).' });
+      showToast('Vincule ao menos 1 cliente ao exercício (máximo 4).', 'error');
       return;
     }
 
@@ -177,21 +191,44 @@ export const ExercisesSimulationView: React.FC = () => {
       title: formTitle.trim(),
       cell: formCell,
       difficulty: formDifficulty,
+      categoryId: formCategoryId || undefined,
+      categoryName: formCategoryName || undefined,
       scenarioInstructions: formInstructions.trim(),
       characterIds: formSelectedCharacterIds.slice(0, 4),
     });
     setIsSubmitting(false);
 
     if (res.success) {
-      setFeedback({
-        type: 'success',
-        text: editorModalExercise.exercise
+      showToast(
+        editorModalExercise.exercise
           ? 'Exercício atualizado com sucesso!'
           : 'Novo exercício criado com sucesso e pronto para uso!',
-      });
+        'success'
+      );
       setEditorModalExercise({ open: false });
     } else {
-      setFeedback({ type: 'error', text: res.message });
+      showToast(res.message, 'error');
+    }
+  };
+
+  const handleDuplicateExercise = async (exercise: Exercise) => {
+    const res = await saveExercise({
+      title: `${exercise.title} (Cópia)`,
+      cell: (exercise.cell as OfficialCell) || 'OPERADORA',
+      difficulty: exercise.difficulty || 'Mediano',
+      categoryId: exercise.categoryId,
+      categoryName: exercise.categoryName,
+      scenarioInstructions: exercise.scenarioInstructions,
+      characterIds: [...exercise.characterIds],
+      attachments: exercise.attachments ? [...exercise.attachments] : undefined,
+      attachmentUrl: exercise.attachmentUrl ?? null,
+      attachmentName: exercise.attachmentName ?? null,
+    });
+
+    if (res.success) {
+      showToast(`Exercício "${exercise.title} (Cópia)" criado com sucesso!`, 'success');
+    } else {
+      showToast(res.message, 'error');
     }
   };
 
@@ -201,9 +238,9 @@ export const ExercisesSimulationView: React.FC = () => {
     setDeleteConfirmExercise(null);
 
     if (res.success) {
-      setFeedback({ type: 'success', text: 'Exercício removido com sucesso.' });
+      showToast('Exercício removido com sucesso.', 'success');
     } else {
-      setFeedback({ type: 'error', text: res.message });
+      showToast(res.message, 'error');
     }
   };
 
@@ -219,33 +256,6 @@ export const ExercisesSimulationView: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      {/* Toast Feedback */}
-      {feedback && (
-        <div
-          className={`p-4 rounded-xl border flex items-center justify-between gap-4 text-sm shadow-sm transition-all ${
-            feedback.type === 'success'
-              ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
-              : 'bg-red-50 border-red-200 text-red-900'
-          }`}
-        >
-          <div className="flex items-center gap-2.5 font-medium">
-            {feedback.type === 'success' ? (
-              <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
-            ) : (
-              <AlertCircle className="w-5 h-5 text-red-600 shrink-0" />
-            )}
-            <span>{feedback.text}</span>
-          </div>
-          <button
-            type="button"
-            onClick={() => setFeedback(null)}
-            className="text-slate-400 hover:text-slate-700 cursor-pointer"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-      )}
-
       {/* Header Corporativo do Módulo */}
       <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
@@ -467,6 +477,15 @@ export const ExercisesSimulationView: React.FC = () => {
                     <div className="flex items-center gap-1">
                       <button
                         type="button"
+                        onClick={() => handleDuplicateExercise(exercise)}
+                        className="px-2.5 py-2 text-xs font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors flex items-center gap-1 cursor-pointer"
+                        title="Duplicar Exercício"
+                      >
+                        <Copy className="w-3.5 h-3.5" />
+                        <span>Duplicar</span>
+                      </button>
+                      <button
+                        type="button"
                         onClick={() => openEditor(exercise)}
                         className="p-2 text-slate-400 hover:text-emerald-800 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
                         title="Editar Exercício"
@@ -671,37 +690,74 @@ export const ExercisesSimulationView: React.FC = () => {
 
                     {/* Guia do Cliente Anexa */}
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between p-3 bg-white rounded-lg border border-emerald-200 print:hidden gap-2">
-                      <div className="flex items-center gap-2">
-                        <FileText className="w-4 h-4 text-emerald-700 shrink-0" />
-                        <div>
-                          <span className="font-bold text-slate-800 block text-xs">
-                            {activeBriefingChar.guideAttachmentName || 'Guia de Atendimento do Paciente'}
-                          </span>
-                          <span className="text-[10px] text-slate-500">
-                            Documento técnico e requisição médica do beneficiário
-                          </span>
-                        </div>
-                      </div>
+                      {(() => {
+                        const charGuides = getCharacterGuides(activeBriefingChar);
+                        return (
+                          <>
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              <FileText className="w-5 h-5 text-emerald-700 shrink-0" />
+                              <div className="min-w-0">
+                                <span className="font-bold text-slate-800 block truncate">
+                                  {charGuides.length === 0
+                                    ? 'Guia de Atendimento do Paciente'
+                                    : charGuides.length === 1
+                                    ? charGuides[0].name
+                                    : `${charGuides.length} Guias Médicas Anexadas`}
+                                </span>
+                                <span className="text-[10px] text-slate-500">
+                                  Documento técnico e requisição médica do beneficiário
+                                </span>
+                              </div>
+                            </div>
 
-                      <div className="flex items-center gap-2 shrink-0">
-                        <button
-                          type="button"
-                          onClick={() => setGuideMirrorChar(activeBriefingChar)}
-                          className="px-3 py-1.5 text-xs font-bold text-emerald-900 bg-emerald-100 hover:bg-emerald-200 rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer"
-                        >
-                          <Eye className="w-3.5 h-3.5" />
-                          <span>Visualizar Ficha</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => downloadGuidePdf(activeBriefingChar, briefingModalExercise?.title)}
-                          className="px-3 py-1.5 text-xs font-bold text-white bg-[#064e3b] hover:bg-emerald-900 rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer shadow-2xs"
-                          title={`Baixar Cliente_${activeBriefingChar.name.replace(/\s+/g, '_')}.pdf`}
-                        >
-                          <Download className="w-3.5 h-3.5 text-emerald-200" />
-                          <span>Baixar PDF</span>
-                        </button>
-                      </div>
+                            <div className="flex items-center gap-2 shrink-0 flex-wrap">
+                              {charGuides.length > 0 && (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setAttachedGuideModal({
+                                      title: `${
+                                        charGuides.length > 1 ? 'Guias Médicas' : 'Guia Médica'
+                                      } · ${activeBriefingChar.name}`,
+                                      subtitle: `${briefingModalExercise?.title || ''}${
+                                        activeBriefingChar.cardNumber
+                                          ? ` · Carteirinha ${activeBriefingChar.cardNumber}`
+                                          : ''
+                                      }`,
+                                      guides: charGuides,
+                                    })
+                                  }
+                                  className="px-3 py-1.5 text-xs font-bold text-white bg-[#0f3e2e] hover:bg-emerald-900 rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                                >
+                                  <FileText className="w-3.5 h-3.5 text-emerald-200" />
+                                  <span>
+                                    {charGuides.length > 1
+                                      ? `Visualizar Guias (${charGuides.length})`
+                                      : 'Visualizar Guia Médica'}
+                                  </span>
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => setGuideMirrorChar(activeBriefingChar)}
+                                className="px-3 py-1.5 text-xs font-bold text-emerald-900 bg-emerald-100 hover:bg-emerald-200 rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer"
+                              >
+                                <Eye className="w-3.5 h-3.5" />
+                                <span>Visualizar Ficha</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => downloadGuidePdf(activeBriefingChar, briefingModalExercise?.title, pdfGeneratedBy)}
+                                className="px-3 py-1.5 text-xs font-bold text-white bg-[#064e3b] hover:bg-emerald-900 rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                                title={`Baixar Cliente_${activeBriefingChar.name.replace(/\s+/g, '_')}.pdf`}
+                              >
+                                <Download className="w-3.5 h-3.5 text-emerald-200" />
+                                <span>Baixar PDF</span>
+                              </button>
+                            </div>
+                          </>
+                        );
+                      })()}
                     </div>
                   </div>
                 )}
@@ -712,7 +768,7 @@ export const ExercisesSimulationView: React.FC = () => {
               {briefingCharacters.length > 1 ? (
                 <button
                   type="button"
-                  onClick={() => downloadMultipleGuidesPdf(briefingCharacters, briefingModalExercise?.title)}
+                  onClick={() => downloadMultipleGuidesPdf(briefingCharacters, briefingModalExercise?.title, undefined, pdfGeneratedBy)}
                   className="px-4 py-2 font-bold text-xs text-white bg-[#064e3b] hover:bg-emerald-900 rounded-xl transition-all shadow-xs flex items-center gap-2 cursor-pointer"
                 >
                   <Download className="w-4 h-4 text-emerald-200" />
@@ -809,6 +865,46 @@ export const ExercisesSimulationView: React.FC = () => {
                     <option value="Crítico">Crítico</option>
                   </select>
                 </div>
+              </div>
+
+              {/* Categoria Padronizada */}
+              <div>
+                <label className="block text-xs font-bold text-slate-800 mb-1">
+                  Categoria Padronizada
+                </label>
+                <select
+                  value={formCategoryName}
+                  disabled={exerciseCategories.length === 0}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setFormCategoryName(val);
+                    const matched = exerciseCategories.find((c) => c.name === val);
+                    setFormCategoryId(matched?.id || '');
+                  }}
+                  className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 font-medium text-slate-900 disabled:bg-slate-100 disabled:text-slate-500"
+                >
+                  {exerciseCategories.length === 0 ? (
+                    <option value="">Nenhuma categoria disponível</option>
+                  ) : (
+                    <>
+                      {formCategoryName &&
+                        !exerciseCategories.some((c) => c.name === formCategoryName) && (
+                          <option value={formCategoryName}>{formCategoryName}</option>
+                        )}
+                      {exerciseCategories.map((cat) => (
+                        <option key={cat.id} value={cat.name}>
+                          {cat.name}
+                        </option>
+                      ))}
+                    </>
+                  )}
+                </select>
+                {exerciseCategories.length === 0 && (
+                  <p className="text-[11px] text-amber-700 mt-1">
+                    Nenhuma categoria disponível. O cadastro de categorias é realizado em{' '}
+                    <strong>Administração &gt; Categorias</strong>.
+                  </p>
+                )}
               </div>
 
               {/* Instruções do Caso */}
@@ -999,6 +1095,12 @@ export const ExercisesSimulationView: React.FC = () => {
         character={guideMirrorChar}
         exerciseTitle={briefingModalExercise?.title}
         onClose={() => setGuideMirrorChar(null)}
+      />
+
+      {/* Visualizador Popup de Guias Médicas Anexadas */}
+      <AttachedGuideViewerModal
+        attachment={attachedGuideModal}
+        onClose={() => setAttachedGuideModal(null)}
       />
     </div>
   );

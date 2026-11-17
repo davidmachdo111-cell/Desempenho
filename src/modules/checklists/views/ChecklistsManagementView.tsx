@@ -6,34 +6,33 @@ import {
   CheckSquare,
   Trash2,
   Edit3,
-  CheckCircle2,
-  AlertCircle,
+  Copy,
   X,
   Sparkles,
   Filter,
   Building2,
-  Download,
+  Lock,
 } from 'lucide-react';
 import { usePortalStore } from '../../../context/PortalStoreContext';
-import { downloadChecklistPdf } from '../../../lib/downloadHelpers';
+import { useToast } from '../../../context/ToastContext';
 import {
   Checklist,
   OfficialCell,
   OFFICIAL_CELLS,
   OFFICIAL_CELL_LIST,
+  VisibilityLevel,
 } from '../../../types/portal';
 
 export const ChecklistsManagementView: React.FC = () => {
   const {
     checklists,
     exercises,
-    characters,
     categories,
     hasPermission,
     saveChecklist,
     deleteChecklist,
-    createCategory,
   } = usePortalStore();
+  const { showToast } = useToast();
 
   const canManageChecklists = hasPermission('can_manage_checklists');
 
@@ -46,14 +45,8 @@ export const ChecklistsManagementView: React.FC = () => {
     checklist?: Checklist;
   }>({ open: false });
 
-  // Modal rápido de + Nova Categoria
-  const [showNewCategoryModal, setShowNewCategoryModal] = useState(false);
-  const [newCategoryName, setNewCategoryName] = useState('');
-
   // Modal de Confirmação de Exclusão do Checklist
   const [deleteConfirmChecklist, setDeleteConfirmChecklist] = useState<Checklist | null>(null);
-
-  const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   const checklistCategories = useMemo(() => {
     return categories.filter((c) => c.type === 'checklist' || c.type === 'geral');
@@ -80,8 +73,9 @@ export const ChecklistsManagementView: React.FC = () => {
   const [formTitle, setFormTitle] = useState('');
   const [formCell, setFormCell] = useState<OfficialCell>('OPERADORA');
   const [formDescription, setFormDescription] = useState('');
-  const [formCategoryId, setFormCategoryId] = useState('');
-  const [formCategoryName, setFormCategoryName] = useState(checklistCategories[0]?.name || 'Atendimento SAC');
+  const [formCategoryId, setFormCategoryId] = useState(checklistCategories[0]?.id || '');
+  const [formCategoryName, setFormCategoryName] = useState(checklistCategories[0]?.name || '');
+  const [formVisibility, setFormVisibility] = useState<VisibilityLevel>('padrao');
   const [formHasExercises, setFormHasExercises] = useState(false);
 
   // Critérios diretos do checklist
@@ -102,8 +96,12 @@ export const ChecklistsManagementView: React.FC = () => {
       setFormTitle(chk.title);
       setFormCell(chk.cell || 'OPERADORA');
       setFormDescription(chk.description || '');
-      setFormCategoryId(chk.categoryId || '');
-      setFormCategoryName(chk.categoryName || checklistCategories[0]?.name || 'Atendimento SAC');
+      const matchedCat =
+        checklistCategories.find((c) => c.id === chk.categoryId || c.name === chk.categoryName) ||
+        checklistCategories[0];
+      setFormCategoryId(chk.categoryId || matchedCat?.id || '');
+      setFormCategoryName(chk.categoryName || matchedCat?.name || '');
+      setFormVisibility(chk.visibility || 'padrao');
       setFormHasExercises(chk.hasExercises);
       setActiveCriteriaItems(
         chk.criteria.map((c) => ({
@@ -119,7 +117,8 @@ export const ChecklistsManagementView: React.FC = () => {
       setFormCell('OPERADORA');
       setFormDescription('');
       setFormCategoryId(checklistCategories[0]?.id || '');
-      setFormCategoryName(checklistCategories[0]?.name || 'Atendimento SAC');
+      setFormCategoryName(checklistCategories[0]?.name || '');
+      setFormVisibility('padrao');
       setFormHasExercises(false);
       setActiveCriteriaItems([
         { id: `crit-${Date.now()}-1`, name: 'Abertura profissional com saudação cordial e identificação', weight: 2 },
@@ -163,34 +162,14 @@ export const ChecklistsManagementView: React.FC = () => {
     );
   };
 
-  const handleCreateCategorySubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newCategoryName.trim()) return;
-
-    const res = await createCategory({
-      name: newCategoryName.trim(),
-      type: 'checklist',
-    });
-
-    if (res.success && res.category) {
-      setFormCategoryId(res.category.id);
-      setFormCategoryName(res.category.name);
-      setFeedback({ type: 'success', text: `Categoria "${res.category.name}" criada com sucesso!` });
-      setShowNewCategoryModal(false);
-      setNewCategoryName('');
-    } else {
-      setFeedback({ type: 'error', text: res.message });
-    }
-  };
-
   const handleSaveChecklist = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formTitle.trim()) {
-      setFeedback({ type: 'error', text: 'Informe o título do checklist.' });
+      showToast('Informe o título do checklist.', 'error');
       return;
     }
     if (activeCriteriaItems.length === 0) {
-      setFeedback({ type: 'error', text: 'Adicione ao menos um critério de avaliação.' });
+      showToast('Adicione ao menos um critério de avaliação.', 'error');
       return;
     }
 
@@ -202,6 +181,7 @@ export const ChecklistsManagementView: React.FC = () => {
       description: formDescription.trim(),
       categoryId: formCategoryId || undefined,
       categoryName: formCategoryName,
+      visibility: formVisibility,
       hasExercises: formHasExercises && selectedExerciseIds.length > 0,
       exerciseIds: formHasExercises ? selectedExerciseIds : [],
       criteria: activeCriteriaItems,
@@ -209,15 +189,38 @@ export const ChecklistsManagementView: React.FC = () => {
     setIsSubmitting(false);
 
     if (res.success) {
-      setFeedback({
-        type: 'success',
-        text: modalState.checklist
+      showToast(
+        modalState.checklist
           ? 'Checklist atualizado com sucesso!'
           : 'Checklist completo salvo e disponível para colaboradores!',
-      });
+        'success'
+      );
       setModalState({ open: false });
     } else {
-      setFeedback({ type: 'error', text: res.message });
+      showToast(res.message, 'error');
+    }
+  };
+
+  const handleDuplicateChecklist = async (chk: Checklist) => {
+    const res = await saveChecklist({
+      title: `${chk.title} (Cópia)`,
+      cell: chk.cell || 'OPERADORA',
+      description: chk.description || '',
+      categoryId: chk.categoryId,
+      categoryName: chk.categoryName,
+      visibility: chk.visibility || 'padrao',
+      hasExercises: chk.hasExercises,
+      exerciseIds: [...(chk.exerciseIds || [])],
+      criteria: chk.criteria.map((c) => ({
+        name: c.name,
+        weight: c.weight,
+      })),
+    });
+
+    if (res.success) {
+      showToast(`Checklist "${chk.title} (Cópia)" criado com sucesso!`, 'success');
+    } else {
+      showToast(res.message, 'error');
     }
   };
 
@@ -229,41 +232,11 @@ export const ChecklistsManagementView: React.FC = () => {
     if (!deleteConfirmChecklist) return;
     const res = await deleteChecklist(deleteConfirmChecklist.id);
     setDeleteConfirmChecklist(null);
-    setFeedback({
-      type: res.success ? 'success' : 'error',
-      text: res.message,
-    });
+    showToast(res.message, res.success ? 'success' : 'error');
   };
 
   return (
     <div className="space-y-6">
-      {/* Toast Feedback */}
-      {feedback && (
-        <div
-          className={`p-4 rounded-xl border flex items-center justify-between gap-4 text-sm shadow-sm transition-all ${
-            feedback.type === 'success'
-              ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
-              : 'bg-red-50 border-red-200 text-red-900'
-          }`}
-        >
-          <div className="flex items-center gap-2.5 font-medium">
-            {feedback.type === 'success' ? (
-              <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
-            ) : (
-              <AlertCircle className="w-5 h-5 text-red-600 shrink-0" />
-            )}
-            <span>{feedback.text}</span>
-          </div>
-          <button
-            type="button"
-            onClick={() => setFeedback(null)}
-            className="text-slate-400 hover:text-slate-700 cursor-pointer"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-      )}
-
       {/* Header Corporativo do Módulo */}
       <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
@@ -413,6 +386,15 @@ export const ChecklistsManagementView: React.FC = () => {
                         <span className="text-[10px] font-bold text-emerald-800 bg-emerald-50 border border-emerald-200/60 px-2 py-0.5 rounded-full uppercase tracking-wider">
                           {chk.categoryName || 'Geral'}
                         </span>
+                        {chk.visibility === 'restrito' && (
+                          <span
+                            title="Acesso restrito ao Guardião Anfitrião / Admin"
+                            className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-900 bg-amber-50 border border-amber-300 px-2 py-0.5 rounded-full"
+                          >
+                            <Lock className="w-2.5 h-2.5 text-amber-700" />
+                            <span>Restrito</span>
+                          </span>
+                        )}
                       </div>
                       <h3 className="text-base font-bold text-slate-900 group-hover:text-emerald-900 transition-colors">
                         {chk.title}
@@ -449,39 +431,37 @@ export const ChecklistsManagementView: React.FC = () => {
               </div>
 
               {/* Ações */}
-              <div className="mt-5 pt-4 border-t border-slate-100 flex items-center justify-between gap-2">
-                <button
-                  type="button"
-                  onClick={() => downloadChecklistPdf(chk, exercises, characters)}
-                  className="py-2 px-3 text-xs font-bold text-white bg-[#064e3b] hover:bg-emerald-900 rounded-lg transition-colors flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs"
-                  title="Baixar checklist oficial em formato PDF"
-                >
-                  <Download className="w-3.5 h-3.5 text-emerald-200" />
-                  <span>Baixar PDF</span>
-                </button>
+              {canManageChecklists && (
+                <div className="mt-5 pt-4 border-t border-slate-100 flex items-center gap-1.5 justify-end">
+                  <button
+                    type="button"
+                    onClick={() => openCreator(chk)}
+                    className="flex-1 py-2 px-3 text-xs font-bold text-[#0f3e2e] bg-emerald-50 hover:bg-emerald-100 rounded-lg transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+                  >
+                    <Edit3 className="w-3.5 h-3.5" />
+                    <span>Editar</span>
+                  </button>
 
-                {canManageChecklists && (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => openCreator(chk)}
-                      className="flex-1 py-2 px-3 text-xs font-bold text-[#0f3e2e] bg-emerald-50 hover:bg-emerald-100 rounded-lg transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
-                    >
-                      <Edit3 className="w-3.5 h-3.5" />
-                      <span>Editar</span>
-                    </button>
+                  <button
+                    type="button"
+                    onClick={() => handleDuplicateChecklist(chk)}
+                    className="py-2 px-2.5 text-xs font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors flex items-center justify-center gap-1 cursor-pointer"
+                    title="Duplicar checklist"
+                  >
+                    <Copy className="w-3.5 h-3.5" />
+                    <span>Duplicar</span>
+                  </button>
 
-                    <button
-                      type="button"
-                      onClick={() => handleDeleteClick(chk)}
-                      className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
-                      title="Excluir checklist"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </>
-                )}
-              </div>
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteClick(chk)}
+                    className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
+                    title="Excluir checklist"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+              )}
             </div>
           );
         })}
@@ -562,34 +542,59 @@ export const ChecklistsManagementView: React.FC = () => {
                   </div>
 
                   <div className="space-y-1">
-                    <div className="flex items-center justify-between">
-                      <label className="block text-xs font-bold text-slate-800">
-                        Categoria Padronizada *
-                      </label>
-                      <button
-                        type="button"
-                        onClick={() => setShowNewCategoryModal(true)}
-                        className="text-[11px] font-bold text-emerald-700 hover:text-emerald-800 underline cursor-pointer"
-                      >
-                        + Nova Categoria
-                      </button>
-                    </div>
+                    <label className="block text-xs font-bold text-slate-800">
+                      Categoria Padronizada
+                    </label>
                     <select
                       value={formCategoryName}
+                      disabled={checklistCategories.length === 0}
                       onChange={(e) => {
                         const val = e.target.value;
                         setFormCategoryName(val);
                         const matched = checklistCategories.find((c) => c.name === val);
-                        if (matched) setFormCategoryId(matched.id);
+                        setFormCategoryId(matched?.id || '');
                       }}
-                      className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 font-medium text-slate-900"
+                      className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 font-medium text-slate-900 disabled:bg-slate-100 disabled:text-slate-500"
                     >
-                      {checklistCategories.map((c) => (
-                        <option key={c.id} value={c.name}>
-                          {c.name}
-                        </option>
-                      ))}
+                      {checklistCategories.length === 0 ? (
+                        <option value="">Nenhuma categoria disponível</option>
+                      ) : (
+                        <>
+                          {formCategoryName &&
+                            !checklistCategories.some((c) => c.name === formCategoryName) && (
+                              <option value={formCategoryName}>{formCategoryName}</option>
+                            )}
+                          {checklistCategories.map((c) => (
+                            <option key={c.id} value={c.name}>
+                              {c.name}
+                            </option>
+                          ))}
+                        </>
+                      )}
                     </select>
+                    {checklistCategories.length === 0 && (
+                      <p className="text-[11px] text-amber-700 mt-1">
+                        Nenhuma categoria disponível. O cadastro de categorias é realizado em{' '}
+                        <strong>Administração &gt; Categorias</strong>.
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="block text-xs font-bold text-slate-800">
+                      Nível de Visibilidade
+                    </label>
+                    <select
+                      value={formVisibility}
+                      onChange={(e) => setFormVisibility(e.target.value as VisibilityLevel)}
+                      className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 font-semibold text-slate-900"
+                    >
+                      <option value="padrao">Padrão (Todos os gestores)</option>
+                      <option value="restrito">Restrito (Guardião Anfitrião / Admin)</option>
+                    </select>
+                    <p className="text-[11px] text-slate-500">
+                      Itens restritos ocultam notas e detalhes para usuários sem a tag Guardião Anfitrião.
+                    </p>
                   </div>
 
                   <div className="space-y-1">
@@ -824,52 +829,6 @@ export const ChecklistsManagementView: React.FC = () => {
                 >
                   <CheckSquare className="w-4 h-4" />
                   <span>{isSubmitting ? 'Salvando...' : 'Salvar Checklist'}</span>
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* MODAL 2: + NOVA CATEGORIA RÁPIDA */}
-      {showNewCategoryModal && (
-        <div className="fixed inset-0 z-60 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm border border-slate-200 overflow-hidden animate-in fade-in zoom-in-95 duration-150">
-            <div className="px-5 py-4 bg-[#0f3e2e] text-white flex items-center justify-between">
-              <h4 className="font-bold text-sm">Nova Categoria de Checklist</h4>
-              <button
-                type="button"
-                onClick={() => setShowNewCategoryModal(false)}
-                className="text-emerald-200 hover:text-white cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-            <form onSubmit={handleCreateCategorySubmit} className="p-5 space-y-4 text-xs">
-              <div className="space-y-1">
-                <label className="block font-bold text-slate-800">Nome da Categoria *</label>
-                <input
-                  type="text"
-                  required
-                  value={newCategoryName}
-                  onChange={(e) => setNewCategoryName(e.target.value)}
-                  placeholder="Ex: Cobrança e Negociação"
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 font-medium text-slate-900"
-                />
-              </div>
-              <div className="flex justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setShowNewCategoryModal(false)}
-                  className="px-3 py-1.5 text-slate-600 hover:bg-slate-100 rounded-lg font-medium cursor-pointer"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  className="px-4 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white font-bold rounded-lg cursor-pointer"
-                >
-                  Criar e Selecionar
                 </button>
               </div>
             </form>

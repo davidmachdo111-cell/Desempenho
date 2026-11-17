@@ -1,43 +1,30 @@
 import React, { useState, useMemo } from 'react';
 import {
   GraduationCap,
-  Award,
   CheckCircle2,
   Clock,
-  AlertCircle,
-  FileText,
   ClipboardCheck,
-  Printer,
-  Download,
   BookOpen,
   User,
-  Building2,
-  Sparkles,
-  ChevronRight,
-  Eye,
-  MessageSquare,
   Send,
-  HelpCircle,
   X,
   Lock,
   UserCheck,
-  Play,
+  CheckSquare,
+  Square,
 } from 'lucide-react';
 import { usePortalStore } from '../../../context/PortalStoreContext';
+import { useToast } from '../../../context/ToastContext';
 import {
-  Collaborator,
-  CollaboratorChecklist,
+  canSeeFinalVerdict,
   Checklist,
-  LearningTrack,
+  CollaboratorChecklist,
+  CollaboratorTrackStep,
+  CriteriaAnswerSnapshot,
   Survey,
-  SurveyResponse,
   SurveyAnswerItem,
   getCellName,
-  Exercise,
-  Character,
 } from '../../../types/portal';
-import { GuideMirrorModal } from '../../../components/GuideMirrorModal';
-import { downloadGuidePdf, downloadReportPdf } from '../../../lib/downloadHelpers';
 
 interface CollaboratorPortalViewProps {
   onOpenReportModal?: (assignment: CollaboratorChecklist) => void;
@@ -50,22 +37,27 @@ export const CollaboratorPortalView: React.FC<CollaboratorPortalViewProps> = () 
     collaboratorChecklists,
     learningTracks,
     checklists,
-    exercises,
-    characters,
     surveys,
-    surveyResponses,
     submitSurveyResponse,
     completeCollaboratorTrackStep,
+    submitCollaboratorChecklistSelfAssessment,
   } = usePortalStore();
-
+  const { showToast } = useToast();
+  const canSeeVerdict = canSeeFinalVerdict(currentUser);
 
   // Modal para Responder Pesquisa
   const [activeSurveyToAnswer, setActiveSurveyToAnswer] = useState<Survey | null>(null);
   const [surveyAnswers, setSurveyAnswers] = useState<Record<string, SurveyAnswerItem>>({});
   const [isSubmittingSurvey, setIsSubmittingSurvey] = useState(false);
-  const [surveyFeedback, setSurveyFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(
-    null
-  );
+
+  // Modal para Preencher Checklist (etapas com filledBy === 'collaborator')
+  const [activeChecklistModal, setActiveChecklistModal] = useState<{
+    step: CollaboratorTrackStep;
+    checklist: Checklist;
+  } | null>(null);
+  const [checklistCriteriaAnswers, setChecklistCriteriaAnswers] = useState<CriteriaAnswerSnapshot[]>([]);
+  const [checklistObservations, setChecklistObservations] = useState('');
+  const [isSubmittingChecklist, setIsSubmittingChecklist] = useState(false);
 
   // Localiza o colaborador correspondente ao usuário logado
   const currentCollaborator = useMemo(() => {
@@ -84,9 +76,7 @@ export const CollaboratorPortalView: React.FC<CollaboratorPortalViewProps> = () 
     const byName = collaborators.find(
       (c) => c.fullName.toLowerCase() === currentUser.fullName.toLowerCase()
     );
-    if (byName) return byName;
-    // Fallback: se não achar, utiliza o primeiro colaborador cadastrado para testes
-    return collaborators[0] || null;
+    return byName || null;
   }, [currentUser, collaborators]);
 
   // Checklists atribuídos ao colaborador
@@ -121,23 +111,6 @@ export const CollaboratorPortalView: React.FC<CollaboratorPortalViewProps> = () 
       : myAssignments.filter((a) => a.status === 'concluido').length;
   const progressPct = totalStages > 0 ? Math.round((completedStages / totalStages) * 100) : 0;
 
-  const averageScore = useMemo(() => {
-    if (collaboratorTrack.length > 0) {
-      const scores = collaboratorTrack
-        .filter((s) => s.status === 'concluido' && typeof s.finalScore === 'number')
-        .map((s) => s.finalScore as number);
-      if (scores.length === 0) return null;
-      const avg = scores.reduce((sum, s) => sum + s, 0) / scores.length;
-      return Number(avg.toFixed(1));
-    }
-    const scores = myAssignments
-      .filter((a) => a.status === 'concluido' && typeof a.finalScore === 'number')
-      .map((a) => a.finalScore as number);
-    if (scores.length === 0) return null;
-    const avg = scores.reduce((sum, s) => sum + s, 0) / scores.length;
-    return Number(avg.toFixed(1));
-  }, [collaboratorTrack, myAssignments]);
-
   // Iniciar Resposta de Pesquisa
   const handleStartSurvey = (survey: Survey) => {
     setActiveSurveyToAnswer(survey);
@@ -146,7 +119,6 @@ export const CollaboratorPortalView: React.FC<CollaboratorPortalViewProps> = () 
       initial[q.id] = { selectedOption: '', observation: '' };
     });
     setSurveyAnswers(initial);
-    setSurveyFeedback(null);
   };
 
   const handleAnswerOptionChange = (questionId: string, option: string) => {
@@ -179,18 +151,15 @@ export const CollaboratorPortalView: React.FC<CollaboratorPortalViewProps> = () 
         const ans = surveyAnswers[q.id];
         if (q.type === 'apenas_observacao') {
           if (!ans?.observation || !ans.observation.trim()) {
-            setSurveyFeedback({
-              type: 'error',
-              text: `Por favor, responda a pergunta obrigatória: "${q.text}".`,
-            });
+            showToast(`Por favor, responda a pergunta obrigatória: "${q.text}".`, 'error');
             return;
           }
         } else {
           if (!ans?.selectedOption) {
-            setSurveyFeedback({
-              type: 'error',
-              text: `Por favor, selecione uma opção para a pergunta obrigatória: "${q.text}".`,
-            });
+            showToast(
+              `Por favor, selecione uma opção para a pergunta obrigatória: "${q.text}".`,
+              'error'
+            );
             return;
           }
         }
@@ -206,7 +175,7 @@ export const CollaboratorPortalView: React.FC<CollaboratorPortalViewProps> = () 
     setIsSubmittingSurvey(false);
 
     if (res.success) {
-      setSurveyFeedback({ type: 'success', text: res.message });
+      showToast(res.message, 'success');
       // Se houver etapa correspondente na trilha, conclui
       if (currentCollaborator) {
         const step = (currentCollaborator.track || []).find(
@@ -216,15 +185,95 @@ export const CollaboratorPortalView: React.FC<CollaboratorPortalViewProps> = () 
           await completeCollaboratorTrackStep(currentCollaborator.id, step.id);
         }
       }
-      setTimeout(() => {
-        setActiveSurveyToAnswer(null);
-      }, 1000);
+      setActiveSurveyToAnswer(null);
     } else {
-      setSurveyFeedback({ type: 'error', text: res.message });
+      showToast(res.message, 'error');
+    }
+  };
+
+  // Iniciar Preenchimento de Checklist pelo Colaborador
+  const handleStartChecklist = (step: CollaboratorTrackStep, checklist: Checklist) => {
+    setActiveChecklistModal({ step, checklist });
+    setChecklistCriteriaAnswers(
+      checklist.criteria.map((c) => ({
+        criterionId: c.id,
+        name: c.name,
+        weight: c.weight,
+        checked: false,
+        notes: '',
+      }))
+    );
+    setChecklistObservations('');
+  };
+
+  const handleToggleChecklistCriterion = (criterionId: string) => {
+    setChecklistCriteriaAnswers((prev) =>
+      prev.map((item) =>
+        item.criterionId === criterionId ? { ...item, checked: !item.checked } : item
+      )
+    );
+  };
+
+  const handleChecklistCriterionNoteChange = (criterionId: string, notes: string) => {
+    setChecklistCriteriaAnswers((prev) =>
+      prev.map((item) =>
+        item.criterionId === criterionId ? { ...item, notes } : item
+      )
+    );
+  };
+
+  const handleSubmitChecklistForm = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!activeChecklistModal || !currentCollaborator) return;
+
+    setIsSubmittingChecklist(true);
+    const res = await submitCollaboratorChecklistSelfAssessment({
+      collaboratorId: currentCollaborator.id,
+      stepId: activeChecklistModal.step.id,
+      checklistId: activeChecklistModal.checklist.id,
+      criteriaAnswers: checklistCriteriaAnswers,
+      generalObservations: checklistObservations,
+    });
+    setIsSubmittingChecklist(false);
+
+    if (res.success) {
+      showToast(res.message, 'success');
+      setActiveChecklistModal(null);
+    } else {
+      showToast(res.message, 'error');
     }
   };
 
 
+
+  if (!currentCollaborator || collaboratorTrack.length === 0) {
+    return (
+      <div className="min-h-[65vh] flex items-center justify-center p-4">
+        <div className="bg-white border border-slate-200 rounded-2xl shadow-xs max-w-lg w-full p-8 sm:p-10 text-center space-y-4">
+          <div className="w-14 h-14 rounded-2xl bg-emerald-50 border border-emerald-200 text-[#0f3e2e] flex items-center justify-center mx-auto">
+            <GraduationCap className="w-7 h-7 text-emerald-700" />
+          </div>
+
+          <div className="space-y-1.5">
+            <h1 className="text-lg font-black text-slate-900">
+              Nenhum vínculo registrado para o colaborador.
+            </h1>
+            <p className="text-xs text-slate-600 leading-relaxed max-w-md mx-auto">
+              Seu perfil corporativo está ativo, mas ainda aguarda a configuração e vinculação da trilha de desenvolvimento pela liderança ou equipe de treinamento.
+            </p>
+          </div>
+
+          {currentUser && (
+            <div className="pt-3 border-t border-slate-100 flex items-center justify-center gap-2 text-[11px] text-slate-500">
+              <span className="font-semibold text-slate-700">{currentUser.fullName}</span>
+              <span>·</span>
+              <span className="font-mono text-emerald-800 font-bold">@{currentUser.username}</span>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -273,7 +322,27 @@ export const CollaboratorPortalView: React.FC<CollaboratorPortalViewProps> = () 
                 Status da Trilha
               </div>
               <div className="text-sm font-bold text-white mt-1 flex items-center gap-1.5">
-                {progressPct === 100 ? (
+                {currentCollaborator?.isTrackFinalized ? (
+                  canSeeVerdict ? (
+                    currentCollaborator.guardianVerdict === 'necessita_reforco' ? (
+                      <span
+                        title="Verificar a continuidade com a liderança do colaborador"
+                        className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-100 text-amber-900 border border-amber-300"
+                      >
+                        <span>Validação da liderança</span>
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-900 border border-emerald-300">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-700" />
+                        <span>Aprovado</span>
+                      </span>
+                    )
+                  ) : (
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-slate-100 text-slate-700 border border-slate-300">
+                      <span>Finalizado</span>
+                    </span>
+                  )
+                ) : totalStages > 0 && completedStages === totalStages ? (
                   <>
                     <CheckCircle2 className="w-4 h-4 text-emerald-300" />
                     <span>Concluído</span>
@@ -365,14 +434,8 @@ export const CollaboratorPortalView: React.FC<CollaboratorPortalViewProps> = () 
                 const targetSurvey = isSurvey
                   ? surveys.find((s) => s.id === step.refId)
                   : null;
-                const assignment = isChecklist
-                  ? myAssignments.find(
-                      (a) => a.id === step.collaboratorChecklistId || a.checklistId === step.refId
-                    )
-                  : null;
 
                 const isFilledByCollaborator = step.filledBy === 'collaborator';
-                const isFilledByEvaluator = step.filledBy === 'evaluator';
 
                 return (
                   <div
@@ -486,13 +549,26 @@ export const CollaboratorPortalView: React.FC<CollaboratorPortalViewProps> = () 
                         </button>
                       )}
 
-                      {/* Etapa de Checklist Disponível: aguardando condução da simulação pelo instrutor */}
-                      {isAvailable && isChecklist && (
-                        <div className="text-xs text-emerald-800 font-semibold bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-xl flex items-center gap-1.5">
-                          <Clock className="w-3.5 h-3.5 text-emerald-600" />
-                          <span>Liberada para Simulação / Avaliação com Instrutor</span>
-                        </div>
-                      )}
+                      {/* Etapa de Checklist Disponível: preenchimento pelo colaborador OU simulação com instrutor */}
+                      {isAvailable &&
+                        isChecklist &&
+                        (isFilledByCollaborator &&
+                        targetChecklist &&
+                        !currentCollaborator?.isTrackFinalized ? (
+                          <button
+                            type="button"
+                            onClick={() => handleStartChecklist(step, targetChecklist)}
+                            className="px-4 py-2 text-xs font-bold text-white bg-[#0f3e2e] hover:bg-emerald-900 rounded-xl transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
+                          >
+                            <ClipboardCheck className="w-3.5 h-3.5" />
+                            <span>Preencher Checklist</span>
+                          </button>
+                        ) : (
+                          <div className="text-xs text-emerald-800 font-semibold bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-xl flex items-center gap-1.5">
+                            <Clock className="w-3.5 h-3.5 text-emerald-600" />
+                            <span>Liberada para Simulação / Avaliação com Instrutor</span>
+                          </div>
+                        ))}
 
                       {/* Etapa Bloqueada */}
                       {isLocked && (
@@ -608,22 +684,6 @@ export const CollaboratorPortalView: React.FC<CollaboratorPortalViewProps> = () 
 
             {/* Form */}
             <form onSubmit={handleSubmitSurveyForm} className="flex-1 overflow-y-auto p-6 space-y-6 text-xs">
-              {surveyFeedback && (
-                <div
-                  className={`p-3.5 rounded-xl flex items-center gap-2 text-xs font-medium border ${
-                    surveyFeedback.type === 'success'
-                      ? 'bg-emerald-50 text-emerald-900 border-emerald-200'
-                      : 'bg-red-50 text-red-900 border-red-200'
-                  }`}
-                >
-                  {surveyFeedback.type === 'success' ? (
-                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                  ) : (
-                    <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
-                  )}
-                  <span>{surveyFeedback.text}</span>
-                </div>
-              )}
 
               {activeSurveyToAnswer.description && (
                 <div className="p-3 bg-emerald-50/60 border border-emerald-200/80 rounded-xl text-emerald-950 text-xs leading-relaxed">
@@ -731,6 +791,129 @@ export const CollaboratorPortalView: React.FC<CollaboratorPortalViewProps> = () 
                 >
                   <Send className="w-3.5 h-3.5" />
                   <span>{isSubmittingSurvey ? 'Enviando...' : 'Enviar Resposta'}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* MODAL PARA PREENCHIMENTO DE CHECKLIST PELO COLABORADOR */}
+      {/* ========================================================= */}
+      {activeChecklistModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[90vh] animate-in fade-in zoom-in-95 duration-200">
+            <div className="px-6 py-4 bg-[#0f3e2e] text-white flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-emerald-600 flex items-center justify-center font-bold">
+                  <ClipboardCheck className="w-4 h-4 text-white" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-sm">{activeChecklistModal.checklist.title}</h3>
+                  <p className="text-[11px] text-emerald-200">
+                    Marque os critérios realizados e registre observações opcionais
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setActiveChecklistModal(null)}
+                className="text-emerald-200 hover:text-white p-1 rounded-lg hover:bg-white/10 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSubmitChecklistForm} className="flex-1 overflow-y-auto p-6 space-y-5 text-xs">
+              {activeChecklistModal.checklist.description && (
+                <div className="p-3 bg-emerald-50/60 border border-emerald-200/80 rounded-xl text-emerald-950 text-xs leading-relaxed">
+                  {activeChecklistModal.checklist.description}
+                </div>
+              )}
+
+              <div className="space-y-3">
+                <div className="text-[11px] font-bold text-slate-600 uppercase tracking-wider">
+                  Critérios do Checklist ({checklistCriteriaAnswers.length})
+                </div>
+
+                {checklistCriteriaAnswers.length === 0 ? (
+                  <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl text-slate-500 text-center">
+                    Este checklist não possui critérios cadastrados. Adicione observações e conclua a etapa.
+                  </div>
+                ) : (
+                  checklistCriteriaAnswers.map((criterion, idx) => (
+                    <div
+                      key={criterion.criterionId}
+                      className={`p-4 rounded-xl border transition-all space-y-2.5 ${
+                        criterion.checked
+                          ? 'bg-emerald-50/50 border-emerald-300'
+                          : 'bg-slate-50/70 border-slate-200'
+                      }`}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => handleToggleChecklistCriterion(criterion.criterionId)}
+                        className="w-full flex items-start gap-2.5 text-left cursor-pointer"
+                      >
+                        <span className="mt-0.5 shrink-0">
+                          {criterion.checked ? (
+                            <CheckSquare className="w-4 h-4 text-emerald-700" />
+                          ) : (
+                            <Square className="w-4 h-4 text-slate-400" />
+                          )}
+                        </span>
+                        <span
+                          className={`font-semibold text-xs leading-snug ${
+                            criterion.checked ? 'text-emerald-950' : 'text-slate-800'
+                          }`}
+                        >
+                          {idx + 1}. {criterion.name}
+                        </span>
+                      </button>
+
+                      <input
+                        type="text"
+                        value={criterion.notes || ''}
+                        onChange={(e) =>
+                          handleChecklistCriterionNoteChange(criterion.criterionId, e.target.value)
+                        }
+                        placeholder="Observação opcional sobre este critério..."
+                        className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                      />
+                    </div>
+                  ))
+                )}
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="block font-bold text-slate-800 text-xs">
+                  Observações Gerais (Opcional)
+                </label>
+                <textarea
+                  rows={3}
+                  value={checklistObservations}
+                  onChange={(e) => setChecklistObservations(e.target.value)}
+                  placeholder="Descreva percepções, dúvidas ou comentários sobre esta etapa..."
+                  className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 text-slate-900 text-xs resize-none"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => setActiveChecklistModal(null)}
+                  className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-xl font-semibold cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmittingChecklist}
+                  className="px-5 py-2 bg-[#0f3e2e] hover:bg-emerald-900 text-white font-bold rounded-xl shadow-sm transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                >
+                  <Send className="w-3.5 h-3.5" />
+                  <span>{isSubmittingChecklist ? 'Enviando...' : 'Concluir Checklist'}</span>
                 </button>
               </div>
             </form>

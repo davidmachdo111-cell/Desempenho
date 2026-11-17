@@ -11,26 +11,29 @@ import {
   UserCheck,
   GraduationCap,
   ClipboardCheck,
-  Theater,
+  Shield,
+  Lock,
+  RefreshCw,
 } from 'lucide-react';
 import { usePortalStore } from '../../context/PortalStoreContext';
-import { normalizePhrases } from '../../types/portal';
+import { useToast } from '../../context/ToastContext';
+import {
+  canAccessPortalRoute,
+  getFirstAuthorizedRoute,
+  isActorOnlyUser,
+} from '../../lib/permissions';
+import {
+  canSeeFinalVerdict,
+  isGuardianHostUser,
+  normalizePhrases,
+  PortalRoute,
+} from '../../types/portal';
 
-export type PortalRoute =
-  | 'collaborators'
-  | 'tracks'
-  | 'surveys'
-  | 'checklists'
-  | 'exercises'
-  | 'characters'
-  | 'admin'
-  | 'my-development'
-  | 'evaluation-run'
-  | 'actor-scenarios';
+export type { PortalRoute };
 
 interface PlatformShellProps {
   activeRoute: PortalRoute;
-  onNavigate: (route: PortalRoute) => void;
+  onNavigate: (route: PortalRoute, collaboratorId?: string) => void;
   children: React.ReactNode;
 }
 
@@ -44,53 +47,77 @@ export const PlatformShell: React.FC<PlatformShellProps> = ({
     users,
     switchDemoUser,
     logout,
-    hasPermission,
     collaborators,
     checklists,
     exercises,
     characters,
-    learningTracks,
     surveys,
+    isSupabaseSynced,
+    isSyncing,
+    lastSyncedAt,
+    syncNow,
   } = usePortalStore();
+  const { showToast } = useToast();
 
   const [globalSearchQuery, setGlobalSearchQuery] = useState('');
-  const [switchError, setSwitchError] = useState<string | null>(null);
+
+  const isCollaborator = currentUser?.role === 'colaborador';
+  const isActorOnly = isActorOnlyUser(currentUser);
+  const isGuardianHost = isGuardianHostUser(currentUser);
+  const canOpenFinalizedFicha = canSeeFinalVerdict(currentUser);
+  const canSeeCollaborators = canAccessPortalRoute(currentUser, 'collaborators');
+  const canSeeChecklists = canAccessPortalRoute(currentUser, 'checklists');
+  const canSeeExercises = canAccessPortalRoute(currentUser, 'exercises');
+  const canSeeCharacters = canAccessPortalRoute(currentUser, 'characters');
+  const canSeeSurveys = canAccessPortalRoute(currentUser, 'surveys');
+  const canSeeAdmin = canAccessPortalRoute(currentUser, 'admin');
+  const firstAuthorizedRoute = getFirstAuthorizedRoute(currentUser);
 
   const searchResults = useMemo(() => {
+    if (!currentUser || isCollaborator) return null;
     const q = globalSearchQuery.trim().toLowerCase();
     if (!q) return null;
 
-    const matchedCollaborators = collaborators.filter(
-      (col) =>
-        (col.registrationCode && col.registrationCode.toLowerCase().includes(q)) ||
-        col.fullName.toLowerCase().includes(q) ||
-        col.roleTitle.toLowerCase().includes(q)
-    );
+    const matchedCollaborators = canSeeCollaborators
+      ? collaborators.filter(
+          (col) =>
+            (col.registrationCode && col.registrationCode.toLowerCase().includes(q)) ||
+            col.fullName.toLowerCase().includes(q) ||
+            col.roleTitle.toLowerCase().includes(q) ||
+            (col.username && col.username.toLowerCase().includes(q))
+        )
+      : [];
 
-    const matchedChecklists = checklists.filter(
-      (chk) =>
-        chk.title.toLowerCase().includes(q) ||
-        (chk.categoryName && chk.categoryName.toLowerCase().includes(q)) ||
-        (chk.description && chk.description.toLowerCase().includes(q))
-    );
+    const matchedChecklists = canSeeChecklists
+      ? checklists.filter(
+          (chk) =>
+            chk.title.toLowerCase().includes(q) ||
+            (chk.categoryName && chk.categoryName.toLowerCase().includes(q)) ||
+            (chk.description && chk.description.toLowerCase().includes(q))
+        )
+      : [];
 
-    const matchedExercises = exercises.filter(
-      (ex) =>
-        ex.title.toLowerCase().includes(q) ||
-        (ex.categoryName && ex.categoryName.toLowerCase().includes(q)) ||
-        ex.scenarioInstructions.toLowerCase().includes(q)
-    );
+    const matchedExercises = canSeeExercises
+      ? exercises.filter(
+          (ex) =>
+            ex.title.toLowerCase().includes(q) ||
+            (ex.categoryName && ex.categoryName.toLowerCase().includes(q)) ||
+            ex.scenarioInstructions.toLowerCase().includes(q)
+        )
+      : [];
 
-    const matchedCharacters = characters.filter((c) => {
-      const phrases = normalizePhrases(c.typicalPhrases);
-      const cell = c.cell || 'OPERADORA';
-      return (
-        c.name.toLowerCase().includes(q) ||
-        c.temperament.toLowerCase().includes(q) ||
-        cell.toLowerCase().includes(q) ||
-        phrases.some((p) => p.toLowerCase().includes(q))
-      );
-    });
+    const matchedCharacters = canSeeCharacters
+      ? characters.filter((c) => {
+          const phrases = normalizePhrases(c.typicalPhrases);
+          const cell = c.cell || 'OPERADORA';
+          return (
+            c.name.toLowerCase().includes(q) ||
+            c.temperament.toLowerCase().includes(q) ||
+            cell.toLowerCase().includes(q) ||
+            phrases.some((p) => p.toLowerCase().includes(q))
+          );
+        })
+      : [];
 
     return {
       collaborators: matchedCollaborators,
@@ -103,19 +130,40 @@ export const PlatformShell: React.FC<PlatformShellProps> = ({
         matchedExercises.length +
         matchedCharacters.length,
     };
-  }, [globalSearchQuery, collaborators, checklists, exercises, characters]);
+  }, [
+    currentUser,
+    isCollaborator,
+    canSeeCollaborators,
+    canSeeChecklists,
+    canSeeExercises,
+    canSeeCharacters,
+    globalSearchQuery,
+    collaborators,
+    checklists,
+    exercises,
+    characters,
+  ]);
+
+  // Ordenação prioritária dos perfis essenciais no seletor do header
+  const selectorUsers = useMemo(() => {
+    const priority = ['david.furtado', 'avaliador.teste', 'ator.teste', 'colaborador.teste'];
+    return [...users].sort((a, b) => {
+      const idxA = priority.indexOf(a.username);
+      const idxB = priority.indexOf(b.username);
+      if (idxA !== -1 && idxB !== -1) return idxA - idxB;
+      if (idxA !== -1) return -1;
+      if (idxB !== -1) return 1;
+      return a.fullName.localeCompare(b.fullName);
+    });
+  }, [users]);
 
   if (!currentUser) return null;
-
-  const isCollaborator = currentUser.role === 'colaborador';
-  const isEvaluator = currentUser.role === 'avaliador';
-  const isAuxiliar = currentUser.role === 'auxiliar';
-  const isAdmin = currentUser.role === 'admin';
 
   // Helper para formatar a badge oficial dos perfis corporativos
   const getRoleBadge = (role: string) => {
     if (role === 'admin') return 'ADMIN';
-    if (role === 'avaliador' || role === 'auxiliar') return 'AVALIADOR / AUXILIAR';
+    if (role === 'avaliador') return 'AVALIADOR';
+    if (role === 'auxiliar') return 'AUXILIAR / ATOR';
     if (role === 'colaborador') return 'COLABORADOR';
     return role.toUpperCase();
   };
@@ -135,20 +183,8 @@ export const PlatformShell: React.FC<PlatformShellProps> = ({
     return 'bg-slate-600 text-white';
   };
 
-  // Itens do Menu Lateral (Diferenciados por Perfil: Administrador vs Avaliador vs Auxiliar/Ator vs Colaborador)
-  // 1. Administrador (ADMIN): 6 abas oficiais completas
-  // 2. Avaliador (Instrutor/Supervisor): Colaboradores, Exercícios e Checklists (modo consulta/avaliação)
-  // 3. Auxiliar/Ator (Simulador): Apenas "Cenários de Simulação / Casos Atrelados"
-  // 4. Colaborador (Aluno): Estritamente "Minha Trilha / Avaliações"
   // ORDENAÇÃO DE BAIXO PRA CIMA CONFORME SOLICITADO:
   // Base (fundo): Administração -> Banco de Clientes -> Exercícios -> Checklists -> Pesquisas de Satisfação -> Colaboradores (topo)
-  // Ordem visual (do topo para o fundo):
-  // 1. Colaboradores
-  // 2. Pesquisas de Satisfação
-  // 3. Checklists
-  // 4. Exercícios
-  // 5. Banco de Clientes
-  // 6. Administração
   const MASTER_NAV_ORDER: PortalRoute[] = [
     'collaborators',
     'surveys',
@@ -174,122 +210,68 @@ export const PlatformShell: React.FC<PlatformShellProps> = ({
           visible: true,
         },
       ]
-    : isAuxiliar
-    ? [
-        {
-          id: 'collaborators',
-          label: 'Colaboradores',
-          icon: <Users className="w-4 h-4" />,
-          visible: true,
-          badgeCount: collaborators.length,
-        },
-      ]
-    : isEvaluator
-    ? [
-        {
-          id: 'collaborators',
-          label: 'Colaboradores',
-          icon: <Users className="w-4 h-4" />,
-          visible: true,
-          badgeCount: collaborators.length,
-        },
-        {
-          id: 'checklists',
-          label: 'Checklists',
-          icon: <BookOpen className="w-4 h-4" />,
-          visible: true,
-          badgeCount: checklists.length,
-        },
-        {
-          id: 'exercises',
-          label: 'Exercícios',
-          icon: <FileText className="w-4 h-4" />,
-          visible: true,
-          badgeCount: exercises.length,
-        },
-      ]
     : [
         {
           id: 'collaborators',
           label: 'Colaboradores',
           icon: <Users className="w-4 h-4" />,
-          visible: true,
+          visible: canSeeCollaborators,
           badgeCount: collaborators.length,
         },
         {
           id: 'surveys',
           label: 'Pesquisas de Satisfação',
           icon: <ClipboardCheck className="w-4 h-4" />,
-          visible: true,
+          visible: canSeeSurveys,
           badgeCount: surveys.length,
         },
         {
           id: 'checklists',
           label: 'Checklists',
           icon: <BookOpen className="w-4 h-4" />,
-          visible: true,
+          visible: canSeeChecklists,
           badgeCount: checklists.length,
         },
         {
           id: 'exercises',
           label: 'Exercícios',
           icon: <FileText className="w-4 h-4" />,
-          visible: true,
+          visible: canSeeExercises,
           badgeCount: exercises.length,
         },
         {
           id: 'characters',
           label: 'Banco de Clientes',
           icon: <UserCheck className="w-4 h-4" />,
-          visible: true,
+          visible: canSeeCharacters,
           badgeCount: characters.length,
         },
         {
           id: 'admin',
           label: 'Administração',
           icon: <ShieldCheck className="w-4 h-4" />,
-          visible: true,
+          visible: canSeeAdmin,
         },
       ];
 
-  // Ordenação uniforme garantida com base no MASTER_NAV_ORDER para qualquer perfil
   const navItems = [...rawNavItems].sort((a, b) => {
     const idxA = MASTER_NAV_ORDER.indexOf(a.id);
     const idxB = MASTER_NAV_ORDER.indexOf(b.id);
     return (idxA !== -1 ? idxA : 99) - (idxB !== -1 ? idxB : 99);
   });
 
-  // Ordenação prioritária dos perfis essenciais no seletor do header
-  const selectorUsers = useMemo(() => {
-    const priority = ['david.furtado', 'avaliador.teste', 'ator.teste', 'colaborador.teste'];
-    return [...users].sort((a, b) => {
-      const idxA = priority.indexOf(a.username);
-      const idxB = priority.indexOf(b.username);
-      if (idxA !== -1 && idxB !== -1) return idxA - idxB;
-      if (idxA !== -1) return -1;
-      if (idxB !== -1) return 1;
-      return a.fullName.localeCompare(b.fullName);
-    });
-  }, [users]);
-
   const handleProfileSwitch = (targetUserId: string) => {
-    setSwitchError(null);
     const targetUser = users.find((u) => u.id === targetUserId);
     const res = switchDemoUser(targetUserId);
     if (!res.success) {
-      setSwitchError(res.message);
+      showToast(res.message, 'error');
     } else {
+      showToast(`Sessão alternada para ${targetUser?.fullName || 'novo usuário'}.`, 'info');
       if (targetUser?.role === 'colaborador') {
         onNavigate('my-development');
-      } else if (targetUser?.role === 'auxiliar') {
-        onNavigate('collaborators');
-      } else if (targetUser?.role === 'avaliador') {
-        onNavigate('collaborators');
-      } else {
-        // Admin: se estava em rotas restritas de colaborador, vai para a gestão
-        if (activeRoute === 'my-development') {
-          onNavigate('collaborators');
-        }
+      } else if (!canAccessPortalRoute(targetUser, activeRoute)) {
+        const nextRoute = getFirstAuthorizedRoute(targetUser) || 'collaborators';
+        onNavigate(nextRoute);
       }
     }
   };
@@ -301,7 +283,9 @@ export const PlatformShell: React.FC<PlatformShellProps> = ({
         {/* Marca P e Título */}
         <button
           type="button"
-          onClick={() => onNavigate(isCollaborator ? 'my-development' : 'collaborators')}
+          onClick={() =>
+            onNavigate(isCollaborator ? 'my-development' : firstAuthorizedRoute || 'collaborators')
+          }
           className="flex items-center gap-3 text-left whitespace-nowrap shrink-0 focus:outline-none group cursor-pointer"
         >
           <span className="w-9 h-9 rounded-lg bg-emerald-600 group-hover:bg-emerald-500 transition-colors flex items-center justify-center font-display font-bold text-lg text-white shadow-sm">
@@ -317,156 +301,185 @@ export const PlatformShell: React.FC<PlatformShellProps> = ({
           </div>
         </button>
 
-        {/* Busca Global Inteligente */}
-        <div className="flex-1 max-w-lg relative hidden md:block">
-          <Search className="w-4 h-4 text-emerald-200/70 absolute left-3.5 top-2.5" />
-          <input
-            type="search"
-            value={globalSearchQuery}
-            onChange={(e) => setGlobalSearchQuery(e.target.value)}
-            placeholder="Buscar colaboradores, checklists ou clientes..."
-            className="w-full bg-white/10 text-white placeholder-emerald-200/70 text-xs rounded-lg pl-9 pr-8 py-2 border border-white/15 focus:bg-white focus:text-slate-900 focus:placeholder-slate-400 focus:outline-none transition-all shadow-inner"
-          />
-          {globalSearchQuery && (
-            <button
-              type="button"
-              onClick={() => setGlobalSearchQuery('')}
-              className="absolute right-2.5 top-2.5 text-emerald-200/70 hover:text-white"
-            >
-              <X className="w-3.5 h-3.5" />
-            </button>
-          )}
+        {/* Busca Global Inteligente (oculta para colaborador ou perfis sem módulos) */}
+        {!isCollaborator && firstAuthorizedRoute ? (
+          <div className="flex-1 max-w-lg relative hidden md:block">
+            <Search className="w-4 h-4 text-emerald-200/70 absolute left-3.5 top-2.5" />
+            <input
+              type="search"
+              value={globalSearchQuery}
+              onChange={(e) => setGlobalSearchQuery(e.target.value)}
+              placeholder={
+                isActorOnly
+                  ? 'Buscar colaborador por nome, cargo ou matrícula...'
+                  : 'Buscar colaboradores, checklists, exercícios ou clientes...'
+              }
+              className="w-full bg-white/10 text-white placeholder-emerald-200/70 text-xs rounded-lg pl-9 pr-8 py-2 border border-white/15 focus:bg-white focus:text-slate-900 focus:placeholder-slate-400 focus:outline-none transition-all shadow-inner"
+            />
+            {globalSearchQuery && (
+              <button
+                type="button"
+                onClick={() => setGlobalSearchQuery('')}
+                className="absolute right-2.5 top-2.5 text-emerald-200/70 hover:text-white cursor-pointer"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
 
-          {/* Resultados da Busca Global Dropdown */}
-          {searchResults && (
-            <div className="absolute top-full left-0 right-0 mt-2 bg-white rounded-xl shadow-xl border border-slate-200 p-3 z-50 text-slate-900 max-h-96 overflow-y-auto space-y-3 animate-in fade-in zoom-in-95 duration-150">
-              <div className="flex items-center justify-between text-xs text-slate-500 border-b border-slate-100 pb-2">
-                <span className="font-semibold text-slate-700">
-                  {searchResults.total} resultado(s) para "{globalSearchQuery}"
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setGlobalSearchQuery('')}
-                  className="text-slate-400 hover:text-slate-600 text-[11px]"
-                >
-                  Fechar
-                </button>
-              </div>
-
-              {searchResults.total === 0 ? (
-                <div className="text-center py-4 text-xs text-slate-500">
-                  Nenhum registro encontrado.
+            {/* Resultados da Busca Global Dropdown */}
+            {searchResults && (
+              <div className="absolute top-full left-0 right-0 mt-2 bg-white rounded-xl shadow-xl border border-slate-200 p-3 z-50 text-slate-900 max-h-96 overflow-y-auto space-y-3 animate-in fade-in zoom-in-95 duration-150">
+                <div className="flex items-center justify-between text-xs text-slate-500 border-b border-slate-100 pb-2">
+                  <span className="font-semibold text-slate-700">
+                    {searchResults.total} resultado(s) para "{globalSearchQuery}"
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setGlobalSearchQuery('')}
+                    className="text-slate-400 hover:text-slate-600 text-[11px] cursor-pointer"
+                  >
+                    Fechar
+                  </button>
                 </div>
-              ) : (
-                <>
-                  {searchResults.collaborators.length > 0 && (
-                    <div className="space-y-1">
-                      <div className="text-[11px] font-bold text-emerald-800 uppercase tracking-wider">
-                        Colaboradores ({searchResults.collaborators.length})
-                      </div>
-                      {searchResults.collaborators.map((col) => (
-                        <button
-                          key={col.id}
-                          type="button"
-                          onClick={() => {
-                            onNavigate('collaborators');
-                            setGlobalSearchQuery('');
-                          }}
-                          className="w-full text-left px-2.5 py-1.5 rounded hover:bg-slate-100 text-xs flex items-center justify-between transition-colors cursor-pointer"
-                        >
-                          <span className="truncate font-medium text-slate-800">
-                            {col.fullName} · {col.roleTitle}
-                          </span>
-                          <span className="text-emerald-700 font-semibold text-[11px] ml-2">
-                            Ver Ficha →
-                          </span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
 
-                  {searchResults.checklists.length > 0 && (
-                    <div className="space-y-1 pt-1 border-t border-slate-100">
-                      <div className="text-[11px] font-bold text-emerald-800 uppercase tracking-wider">
-                        Checklists ({searchResults.checklists.length})
+                {searchResults.total === 0 ? (
+                  <div className="text-center py-4 text-xs text-slate-500">
+                    Nenhum registro encontrado.
+                  </div>
+                ) : (
+                  <>
+                    {searchResults.collaborators.length > 0 && (
+                      <div className="space-y-1">
+                        <div className="text-[11px] font-bold text-emerald-800 uppercase tracking-wider">
+                          Colaboradores ({searchResults.collaborators.length})
+                        </div>
+                        {searchResults.collaborators.map((col) => {
+                          const isLockedForRole = Boolean(col.isTrackFinalized) && !canOpenFinalizedFicha;
+                          return (
+                            <button
+                              key={col.id}
+                              type="button"
+                              disabled={isLockedForRole}
+                              title={
+                                isLockedForRole
+                                  ? 'Trilha finalizada: acesso à ficha e ao roteiro bloqueado para este perfil'
+                                  : undefined
+                              }
+                              onClick={() => {
+                                if (isLockedForRole) return;
+                                onNavigate('collaborators', col.id);
+                                setGlobalSearchQuery('');
+                              }}
+                              className={`w-full text-left px-2.5 py-1.5 rounded text-xs flex items-center justify-between transition-colors ${
+                                isLockedForRole
+                                  ? 'opacity-70 cursor-not-allowed bg-slate-50'
+                                  : 'hover:bg-slate-100 cursor-pointer'
+                              }`}
+                            >
+                              <span className="truncate font-medium text-slate-800">
+                                {col.fullName} · {col.roleTitle}
+                              </span>
+                              {isLockedForRole ? (
+                                <span className="text-slate-400 font-semibold text-[11px] ml-2 shrink-0 inline-flex items-center gap-1">
+                                  <Lock className="w-3 h-3" />
+                                  <span>Finalizado</span>
+                                </span>
+                              ) : (
+                                <span className="text-emerald-700 font-semibold text-[11px] ml-2 shrink-0">
+                                  {isActorOnly ? 'Ver Roteiro →' : 'Ver Ficha →'}
+                                </span>
+                              )}
+                            </button>
+                          );
+                        })}
                       </div>
-                      {searchResults.checklists.map((chk) => (
-                        <button
-                          key={chk.id}
-                          type="button"
-                          onClick={() => {
-                            onNavigate('checklists');
-                            setGlobalSearchQuery('');
-                          }}
-                          className="w-full text-left px-2.5 py-1.5 rounded hover:bg-slate-100 text-xs flex items-center justify-between transition-colors cursor-pointer"
-                        >
-                          <span className="truncate font-medium text-slate-800">
-                            {chk.title} ({chk.categoryName || 'Geral'})
-                          </span>
-                          <span className="text-emerald-700 font-semibold text-[11px] ml-2">
-                            Abrir →
-                          </span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
+                    )}
 
-                  {searchResults.exercises.length > 0 && (
-                    <div className="space-y-1 pt-1 border-t border-slate-100">
-                      <div className="text-[11px] font-bold text-emerald-800 uppercase tracking-wider">
-                        Exercícios ({searchResults.exercises.length})
+                    {searchResults.checklists.length > 0 && (
+                      <div className="space-y-1 pt-1 border-t border-slate-100">
+                        <div className="text-[11px] font-bold text-emerald-800 uppercase tracking-wider">
+                          Checklists ({searchResults.checklists.length})
+                        </div>
+                        {searchResults.checklists.map((chk) => (
+                          <button
+                            key={chk.id}
+                            type="button"
+                            onClick={() => {
+                              onNavigate('checklists');
+                              setGlobalSearchQuery('');
+                            }}
+                            className="w-full text-left px-2.5 py-1.5 rounded hover:bg-slate-100 text-xs flex items-center justify-between transition-colors cursor-pointer"
+                          >
+                            <span className="truncate font-medium text-slate-800">
+                              {chk.title} ({chk.categoryName || 'Geral'})
+                            </span>
+                            <span className="text-emerald-700 font-semibold text-[11px] ml-2 shrink-0">
+                              Abrir →
+                            </span>
+                          </button>
+                        ))}
                       </div>
-                      {searchResults.exercises.map((ex) => (
-                        <button
-                          key={ex.id}
-                          type="button"
-                          onClick={() => {
-                            onNavigate('exercises');
-                            setGlobalSearchQuery('');
-                          }}
-                          className="w-full text-left px-2.5 py-1.5 rounded hover:bg-slate-100 text-xs flex items-center justify-between transition-colors cursor-pointer"
-                        >
-                          <span className="truncate font-medium text-slate-800">
-                            {ex.title}
-                          </span>
-                          <span className="text-emerald-700 font-semibold text-[11px] ml-2">
-                            Roteiro →
-                          </span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
+                    )}
 
-                  {searchResults.characters.length > 0 && (
-                    <div className="space-y-1 pt-1 border-t border-slate-100">
-                      <div className="text-[11px] font-bold text-emerald-800 uppercase tracking-wider">
-                        Clientes / Personagens ({searchResults.characters.length})
+                    {searchResults.exercises.length > 0 && (
+                      <div className="space-y-1 pt-1 border-t border-slate-100">
+                        <div className="text-[11px] font-bold text-emerald-800 uppercase tracking-wider">
+                          Exercícios ({searchResults.exercises.length})
+                        </div>
+                        {searchResults.exercises.map((ex) => (
+                          <button
+                            key={ex.id}
+                            type="button"
+                            onClick={() => {
+                              onNavigate('exercises');
+                              setGlobalSearchQuery('');
+                            }}
+                            className="w-full text-left px-2.5 py-1.5 rounded hover:bg-slate-100 text-xs flex items-center justify-between transition-colors cursor-pointer"
+                          >
+                            <span className="truncate font-medium text-slate-800">
+                              {ex.title}
+                            </span>
+                            <span className="text-emerald-700 font-semibold text-[11px] ml-2 shrink-0">
+                              Roteiro →
+                            </span>
+                          </button>
+                        ))}
                       </div>
-                      {searchResults.characters.map((c) => (
-                        <button
-                          key={c.id}
-                          type="button"
-                          onClick={() => {
-                            onNavigate('characters');
-                            setGlobalSearchQuery('');
-                          }}
-                          className="w-full text-left px-2.5 py-1.5 rounded hover:bg-slate-100 text-xs flex items-center justify-between transition-colors cursor-pointer"
-                        >
-                          <span className="truncate font-medium text-slate-800">
-                            {c.name} ({c.temperament})
-                          </span>
-                          <span className="text-emerald-700 font-semibold text-[11px] ml-2">
-                            Ver Perfil →
-                          </span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
-          )}
-        </div>
+                    )}
+
+                    {searchResults.characters.length > 0 && (
+                      <div className="space-y-1 pt-1 border-t border-slate-100">
+                        <div className="text-[11px] font-bold text-emerald-800 uppercase tracking-wider">
+                          Clientes / Personagens ({searchResults.characters.length})
+                        </div>
+                        {searchResults.characters.map((c) => (
+                          <button
+                            key={c.id}
+                            type="button"
+                            onClick={() => {
+                              onNavigate('characters');
+                              setGlobalSearchQuery('');
+                            }}
+                            className="w-full text-left px-2.5 py-1.5 rounded hover:bg-slate-100 text-xs flex items-center justify-between transition-colors cursor-pointer"
+                          >
+                            <span className="truncate font-medium text-slate-800">
+                              {c.name} ({c.temperament})
+                            </span>
+                            <span className="text-emerald-700 font-semibold text-[11px] ml-2 shrink-0">
+                              Ver Perfil →
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="flex-1" />
+        )}
 
         {/* Alternador de Perfil/Sessão e Logout */}
         <div className="flex items-center gap-3 shrink-0">
@@ -496,20 +509,6 @@ export const PlatformShell: React.FC<PlatformShellProps> = ({
           </button>
         </div>
       </header>
-
-      {/* Alerta de erro ao alternar sessão se houver */}
-      {switchError && (
-        <div className="bg-red-500 text-white text-xs px-6 py-2 flex items-center justify-between">
-          <span>{switchError}</span>
-          <button
-            type="button"
-            onClick={() => setSwitchError(null)}
-            className="text-white font-bold"
-          >
-            ✕
-          </button>
-        </div>
-      )}
 
       {/* Layout Principal com Sidebar de Acesso Rápido */}
       <div className="flex-1 flex min-h-[calc(100vh-4rem)]">
@@ -577,8 +576,19 @@ export const PlatformShell: React.FC<PlatformShellProps> = ({
               </div>
 
               <div className="min-w-0 flex-1">
-                <div className="font-bold text-slate-900 truncate leading-tight">
-                  {currentUser.fullName}
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="font-bold text-slate-900 truncate leading-tight">
+                    {currentUser.fullName}
+                  </span>
+                  {isGuardianHost && (
+                    <span
+                      title="Guardião Anfitrião"
+                      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-gradient-to-r from-amber-100 to-emerald-100 border border-amber-300 text-amber-900 text-[9px] font-black uppercase tracking-wider shrink-0"
+                    >
+                      <Shield className="w-2.5 h-2.5 text-amber-700" />
+                      Guardião Anfitrião
+                    </span>
+                  )}
                 </div>
                 <div className="text-emerald-800 font-mono text-[11px] truncate font-semibold">
                   @{currentUser.username}
@@ -646,9 +656,44 @@ export const PlatformShell: React.FC<PlatformShellProps> = ({
         </div>
       </div>
 
-      <footer className="bg-white border-t border-slate-200 px-6 py-3 flex items-center justify-between text-xs text-slate-500 no-print print:hidden">
+      <footer className="bg-white border-t border-slate-200 px-6 py-3 flex flex-col sm:flex-row items-center justify-between gap-2 text-xs text-slate-500 no-print print:hidden">
         <span>Portal de Desempenho · Simulação de Atendimento & Gestão de Treinamento</span>
-        <span>Versão 2.0 · Ambiente Corporativo</span>
+        <div className="flex items-center gap-3 flex-wrap justify-end">
+          {isSupabaseSynced ? (
+            <div className="flex items-center gap-2">
+              <span
+                className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-emerald-800 bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded-full"
+                title={
+                  lastSyncedAt
+                    ? `Última sincronização: ${new Date(lastSyncedAt).toLocaleTimeString('pt-BR')}`
+                    : 'Conexão ativa com Supabase Realtime'
+                }
+              >
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                <span>Sincronizado com Supabase</span>
+              </span>
+              <button
+                type="button"
+                onClick={async () => {
+                  await syncNow();
+                  showToast('Dados sincronizados com a nuvem!', 'success');
+                }}
+                disabled={isSyncing}
+                className="inline-flex items-center gap-1 px-2.5 py-0.5 text-[11px] font-semibold text-[#0f3e2e] bg-slate-100 hover:bg-emerald-50 border border-slate-200 hover:border-emerald-300 rounded-lg transition-colors cursor-pointer disabled:opacity-60"
+                title="Forçar atualização imediata dos dados na nuvem"
+              >
+                <RefreshCw className={`w-3 h-3 ${isSyncing ? 'animate-spin' : ''}`} />
+                <span>{isSyncing ? 'Sincronizando...' : 'Sincronizar Agora'}</span>
+              </button>
+            </div>
+          ) : (
+            <span className="text-[11px] text-slate-400">
+              Modo Local · Persistência no Navegador
+            </span>
+          )}
+          <span className="hidden md:inline text-slate-300">|</span>
+          <span>Versão 2.0 · Ambiente Corporativo</span>
+        </div>
       </footer>
     </div>
   );

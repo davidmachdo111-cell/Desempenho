@@ -1,6 +1,7 @@
 import React from 'react';
 import { Character, getCellName } from '../types/portal';
 import { downloadGuidePdf } from '../lib/downloadHelpers';
+import { usePortalStore } from '../context/PortalStoreContext';
 import {
   FileText,
   Download,
@@ -22,6 +23,7 @@ export const GuideMirrorModal: React.FC<GuideMirrorModalProps> = ({
   exerciseTitle,
   onClose,
 }) => {
+  const { currentUser } = usePortalStore();
   if (!character) return null;
 
   const cellName = getCellName(character.cell);
@@ -33,7 +35,13 @@ export const GuideMirrorModal: React.FC<GuideMirrorModalProps> = ({
     : [];
 
   const handleDownloadPdf = () => {
-    downloadGuidePdf(character, exerciseTitle);
+    downloadGuidePdf(
+      character,
+      exerciseTitle,
+      currentUser
+        ? { fullName: currentUser.fullName, username: currentUser.username }
+        : undefined
+    );
   };
 
   const handlePrint = () => {

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Lock, KeyRound, AlertCircle, CheckCircle2, ArrowLeft, ShieldCheck } from 'lucide-react';
+import { KeyRound, AlertCircle, CheckCircle2, ArrowLeft, ShieldCheck } from 'lucide-react';
 import { usePortalStore } from '../context/PortalStoreContext';
 
 interface SetPasswordViewProps {

@@ -1,14 +1,18 @@
 import { calculateWeightedScore } from '../context/PortalStoreContext';
 import {
   INITIAL_CELLS,
-  INITIAL_CHECKLISTS,
   INITIAL_COLLABORATORS,
-  INITIAL_CRITERIA,
-  INITIAL_EXERCISES,
   INITIAL_USERS,
   INITIAL_CHARACTERS,
 } from '../data/initialPortalData';
-import { checkUserPermission } from '../lib/permissions';
+import {
+  canAccessPortalRoute,
+  checkUserPermission,
+  getEffectivePermissions,
+  getFirstAuthorizedRoute,
+  isActorOnlyUser,
+  normalizeRoleDefaultPermissions,
+} from '../lib/permissions';
 import {
   CriteriaAnswerSnapshot,
   UserProfile,
@@ -16,7 +20,14 @@ import {
   Exercise,
   Checklist,
   normalizePhrases,
+  isGuardianHostUser,
+  canViewRestrictedItem,
+  canSeeFinalVerdict,
 } from '../types/portal';
+import {
+  BATCH_CHARACTER_TEMPLATE,
+  parseBatchCharactersInput,
+} from '../lib/batchCharacterParser';
 
 export function runPortalRuleTests(): {
   totalPassed: number;
@@ -237,7 +248,7 @@ export function runPortalRuleTests(): {
   );
 
   // 13. Status corporativos de usuários válidos
-  const validUserStatuses = ['pendente_aprovacao', 'aprovado_sem_senha', 'ativo', 'bloqueado'];
+  const validUserStatuses = ['pendente_aprovacao', 'aprovado_sem_senha', 'ativo', 'arquivado', 'bloqueado'];
   const allUserStatusesValid = INITIAL_USERS.every((u) =>
     validUserStatuses.includes(u.status)
   );
@@ -349,6 +360,237 @@ export function runPortalRuleTests(): {
     20,
     'Na visão de Colaborador, perfil e trilha focados em status concluído sem visualização de laudo técnico',
     Boolean(colabUser && colabUser.role === 'colaborador' && testCollab && testCollab.username === 'colaborador.teste')
+  );
+
+  // 21. Tag Guardião Anfitrião sincroniza com permissão can_act_as_guardian_host
+  const guardianEvaluator: UserProfile = {
+    ...evaluatorUser,
+    isGuardianHost: true,
+    individualPermissions: ['can_apply_evaluations', 'can_act_as_guardian_host'],
+  };
+  assertScenario(
+    21,
+    'Guardião Anfitrião concede acesso à permissão can_act_as_guardian_host',
+    isGuardianHostUser(guardianEvaluator) === true &&
+      checkUserPermission(guardianEvaluator, 'can_act_as_guardian_host') === true &&
+      isGuardianHostUser(evaluatorUser) === false
+  );
+
+  // 22. Controle de visibilidade restrita permite apenas Admin e Guardião Anfitrião
+  assertScenario(
+    22,
+    'Itens restritos são visíveis apenas para Admin e Guardião Anfitrião ativo',
+    canViewRestrictedItem(adminUser, 'restrito') === true &&
+      canViewRestrictedItem(guardianEvaluator, 'restrito') === true &&
+      canViewRestrictedItem(evaluatorUser, 'restrito') === false &&
+      canViewRestrictedItem(evaluatorUser, 'padrao') === true
+  );
+
+  // 23. Sigilo do veredito final permite visualização apenas para Admin e Guardião Anfitrião ativo
+  assertScenario(
+    23,
+    'Veredito final e parecer são restritos a Admin e Guardião Anfitrião ativo',
+    canSeeFinalVerdict({ ...adminUser, isActive: true }) === true &&
+      canSeeFinalVerdict(guardianEvaluator) === true &&
+      canSeeFinalVerdict(evaluatorUser) === false &&
+      canSeeFinalVerdict(auxUser) === false &&
+      canSeeFinalVerdict(colabUser) === false
+  );
+
+  // 24. Parser determinístico de importação em lote lê modelo padrão com --- sem alterar dados
+  const templateParsed = parseBatchCharactersInput(BATCH_CHARACTER_TEMPLATE);
+  assertScenario(
+    24,
+    'Parser determinístico converte blocos separados por --- mantendo valores exatos',
+    templateParsed.format === 'text' &&
+      templateParsed.validItems.length === 2 &&
+      templateParsed.invalidItems.length === 0 &&
+      templateParsed.validItems[0].name === 'Maria Helena Souza' &&
+      templateParsed.validItems[0].cell === 'LAB' &&
+      templateParsed.validItems[0].typicalPhrases.length === 2 &&
+      templateParsed.validItems[1].cell === 'OPERADORA' &&
+      templateParsed.validItems[1].customerTier === 'Crítico'
+  );
+
+  // 25. Parser determinístico suporta array JSON preservando campos exatos
+  const jsonParsed = parseBatchCharactersInput(
+    JSON.stringify([
+      {
+        NOME: 'João Silva',
+        CELULA: 'IMG',
+        IDADE: '32 anos',
+        SEXO: 'Masculino',
+        CIDADE: 'Itajaí - SC',
+        CARTEIRINHA: '0000.0000.00000-09',
+        CLASSIFICACAO: 'Intermediário',
+        CONTEXTO: 'Solicita agendamento de ressonância.',
+        TEMPERAMENTO: 'Calmo',
+        OBJETIVO: 'Confirmar horário de exame',
+        FALAS: ['Qual o preparo necessário?'],
+      },
+    ])
+  );
+  assertScenario(
+    25,
+    'Parser determinístico aceita array JSON preservando os valores exatos',
+    jsonParsed.format === 'json' &&
+      jsonParsed.validItems.length === 1 &&
+      jsonParsed.validItems[0].name === 'João Silva' &&
+      jsonParsed.validItems[0].cell === 'IMG' &&
+      jsonParsed.validItems[0].customerTier === 'Intermediário' &&
+      jsonParsed.validItems[0].typicalPhrases[0] === 'Qual o preparo necessário?'
+  );
+
+  // 26. Parser determinístico aponta erros sem inventar ou completar campos inválidos
+  const invalidParsed = parseBatchCharactersInput(
+    'NOME: \nCELULA: INVALIDA\nSEXO: Outro\nCLASSIFICACAO: Simples\nCONTEXTO: '
+  );
+  assertScenario(
+    26,
+    'Parser determinístico rejeita bloco com campos obrigatórios vazios ou célula inválida',
+    invalidParsed.validItems.length === 0 &&
+      invalidParsed.invalidItems.length === 1 &&
+      invalidParsed.invalidItems[0].errors.length >= 3
+  );
+
+  // 27. Permissão Zero: usuário não-admin salvo com individualPermissions=[] não recebe permissões forçadas
+  const zeroPermEvaluator: UserProfile = {
+    ...evaluatorUser,
+    isGuardianHost: false,
+    individualPermissions: [],
+  };
+  assertScenario(
+    27,
+    'Permissão Zero respeita individualPermissions=[] sem forçar permissões padrão da role',
+    checkUserPermission(zeroPermEvaluator, 'can_apply_evaluations') === false &&
+      getEffectivePermissions(zeroPermEvaluator).length === 0
+  );
+
+  // 28. Usuário com role colaborador nunca recebe permissões administrativas ou Guardião Anfitrião
+  const colabWithAttemptedPerms: UserProfile = {
+    ...(colabUser || evaluatorUser),
+    role: 'colaborador',
+    isGuardianHost: true,
+    individualPermissions: ['can_manage_collaborators', 'can_act_as_guardian_host'],
+  };
+  assertScenario(
+    28,
+    'Perfil colaborador mantém zero permissões operacionais e não atua como Guardião Anfitrião',
+    checkUserPermission(colabWithAttemptedPerms, 'can_manage_collaborators') === false &&
+      isGuardianHostUser(colabWithAttemptedPerms) === false &&
+      getEffectivePermissions(colabWithAttemptedPerms).length === 0
+  );
+
+  // 29. Usuário arquivado tem todas as permissões e selos bloqueados
+  const archivedUser: UserProfile = {
+    ...evaluatorUser,
+    status: 'arquivado',
+    isActive: false,
+    isGuardianHost: true,
+    individualPermissions: ['can_apply_evaluations', 'can_act_as_guardian_host'],
+  };
+  assertScenario(
+    29,
+    'Usuário arquivado perde acesso efetivo a permissões e Guardião Anfitrião',
+    checkUserPermission(archivedUser, 'can_apply_evaluations') === false &&
+      isGuardianHostUser(archivedUser) === false &&
+      getEffectivePermissions(archivedUser).length === 0
+  );
+
+  // 30. Auxiliar com permissões expandidas desbloqueia rotas e deixa o modo exclusivo de ator
+  const promotedAux: UserProfile = {
+    ...auxUser,
+    isActive: true,
+    status: 'ativo',
+    individualPermissions: ['can_view_scenarios', 'can_manage_collaborators', 'users:manage', 'can_manage_checklists'],
+  };
+  assertScenario(
+    30,
+    'Auxiliar com permissões atribuídas acessa Administração/Checklists e sai do modo restrito de ator',
+    canAccessPortalRoute(promotedAux, 'admin') === true &&
+      canAccessPortalRoute(promotedAux, 'checklists') === true &&
+      canAccessPortalRoute(promotedAux, 'collaborators') === true &&
+      isActorOnlyUser(promotedAux) === false
+  );
+
+  // 31. Auxiliar padrão (somente can_view_scenarios) permanece no modo ator e bloqueado para outros módulos
+  const standardActor: UserProfile = {
+    ...auxUser,
+    isActive: true,
+    status: 'ativo',
+    isGuardianHost: false,
+    individualPermissions: ['can_view_scenarios'],
+  };
+  assertScenario(
+    31,
+    'Auxiliar somente com can_view_scenarios opera no modo ator restrito',
+    isActorOnlyUser(standardActor) === true &&
+      canAccessPortalRoute(standardActor, 'collaborators') === true &&
+      canAccessPortalRoute(standardActor, 'checklists') === false &&
+      canAccessPortalRoute(standardActor, 'admin') === false
+  );
+
+  // 32. individualPermissions é estritamente soberana mesmo quando indefinida (sem fallback legado)
+  const missingArrayEvaluator = {
+    ...evaluatorUser,
+    isActive: true,
+    status: 'ativo',
+    individualPermissions: undefined,
+  } as unknown as UserProfile;
+  assertScenario(
+    32,
+    'Soberania de individualPermissions não reativa permissões padrão por fallback',
+    checkUserPermission(missingArrayEvaluator, 'can_apply_evaluations') === false &&
+      canAccessPortalRoute(missingArrayEvaluator, 'evaluation-run') === false &&
+      getFirstAuthorizedRoute(missingArrayEvaluator) === null
+  );
+
+  // 33. Avaliador sem can_apply_evaluations perde rota de execução mas mantém módulos atribuídos
+  const customEvaluator: UserProfile = {
+    ...evaluatorUser,
+    isActive: true,
+    status: 'ativo',
+    isGuardianHost: false,
+    individualPermissions: ['cells:manage', 'can_manage_exercises'],
+  };
+  assertScenario(
+    33,
+    'Avaliador com permissões customizadas acessa apenas rotas compatíveis',
+    canAccessPortalRoute(customEvaluator, 'characters') === true &&
+      canAccessPortalRoute(customEvaluator, 'exercises') === true &&
+      canAccessPortalRoute(customEvaluator, 'evaluation-run') === false &&
+      canAccessPortalRoute(customEvaluator, 'collaborators') === false &&
+      getFirstAuthorizedRoute(customEvaluator) === 'exercises'
+  );
+
+  // 34. Normalização de padrões por função preserva colaborador vazio e sanitiza chaves inválidas
+  const normalizedDefaults = normalizeRoleDefaultPermissions({
+    avaliador: ['can_apply_evaluations', 'can_manage_checklists', 'chave_invalida'],
+    auxiliar: [],
+    colaborador: ['users:manage'],
+  });
+  assertScenario(
+    34,
+    'Normalização de padrões por função aceita auxiliar=[] e força colaborador=[]',
+    normalizedDefaults.avaliador.length === 2 &&
+      normalizedDefaults.auxiliar.length === 0 &&
+      normalizedDefaults.colaborador.length === 0
+  );
+
+  // 35. Colaborador acessa exclusivamente /minha-trilha
+  const activeColab: UserProfile = {
+    ...(colabUser || evaluatorUser),
+    role: 'colaborador',
+    status: 'ativo',
+    isActive: true,
+    individualPermissions: [],
+  };
+  assertScenario(
+    35,
+    'Colaborador ativo acessa exclusivamente my-development',
+    canAccessPortalRoute(activeColab, 'my-development') === true &&
+      canAccessPortalRoute(activeColab, 'collaborators') === false &&
+      getFirstAuthorizedRoute(activeColab) === 'my-development'
   );
 
   const totalPassed = results.filter((r) => r.passed).length;

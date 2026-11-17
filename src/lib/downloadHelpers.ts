@@ -1,6 +1,55 @@
 import { jsPDF } from 'jspdf';
 import { Character, Checklist, Exercise, getCellName } from '../types/portal';
 
+export interface PdfGeneratedBy {
+  fullName: string;
+  username: string;
+}
+
+/**
+ * Aplica o rodapé institucional de rastreabilidade e paginação em TODAS as páginas do PDF
+ */
+export function applyPdfTraceabilityFooter(
+  doc: jsPDF,
+  generatedBy?: PdfGeneratedBy
+): void {
+  const totalPages = doc.getNumberOfPages();
+  const fullName = generatedBy?.fullName?.trim() || 'Sistema';
+  const username = generatedBy?.username?.trim() || 'portal';
+  const issuedAt = new Date().toLocaleString('pt-BR', {
+    dateStyle: 'short',
+    timeStyle: 'short',
+  });
+
+  const leftMargin = 14;
+  const contentWidth = 182;
+  const footerY = 283;
+
+  for (let i = 1; i <= totalPages; i++) {
+    doc.setPage(i);
+    doc.setDrawColor(203, 213, 225);
+    doc.setLineWidth(0.3);
+    doc.line(leftMargin, footerY, leftMargin + contentWidth, footerY);
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(6.5);
+    doc.setTextColor(100, 116, 139);
+    doc.text(
+      `Emitido por: ${fullName} (@${username}) • ${issuedAt}`,
+      leftMargin,
+      footerY + 4.5
+    );
+
+    doc.setFont('helvetica', 'bold');
+    doc.text(
+      `Página ${i} de ${totalPages}`,
+      leftMargin + contentWidth,
+      footerY + 4.5,
+      { align: 'right' }
+    );
+  }
+}
+
 /**
  * Interface para exames extraídos da guia
  */
@@ -75,8 +124,8 @@ export function renderCharacterSheetOnDoc(
   doc: jsPDF,
   char: Character,
   exerciseTitle?: string,
-  pageNumber: number = 1,
-  totalPages: number = 1
+  _pageNumber: number = 1,
+  _totalPages: number = 1
 ): void {
   const cellName = getCellName(char.cell);
 
@@ -287,30 +336,19 @@ export function renderCharacterSheetOnDoc(
     currentY += phraseBoxHeight + 6;
   }
 
-  // ============================================================================
-  // E) RODAPÉ LIMPO E INSTITUCIONAL
-  // ============================================================================
-  const footerY = 282;
-  doc.setDrawColor(...slateBorder);
-  doc.setLineWidth(0.3);
-  doc.line(leftMargin, footerY, leftMargin + contentWidth, footerY);
-
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(7);
-  doc.setTextColor(...slateMuted);
-  const exRef = exerciseTitle ? `Exercício: ${exerciseTitle.slice(0, 45)}` : 'Perfil Cadastral do Cliente';
-  doc.text(`Portal de Desempenho Operacional   ·   ${exRef}`, leftMargin, footerY + 5);
-
-  doc.setFont('helvetica', 'bold');
-  doc.text(`Página ${pageNumber} de ${totalPages}`, leftMargin + contentWidth - 24, footerY + 5);
 }
 
 /**
  * Gera e dispara o download do PDF estilizado da Ficha do Cliente / Roteiro individual
  */
-export function downloadGuidePdf(char: Character, exerciseTitle?: string): void {
+export function downloadGuidePdf(
+  char: Character,
+  exerciseTitle?: string,
+  generatedBy?: PdfGeneratedBy
+): void {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
   renderCharacterSheetOnDoc(doc, char, exerciseTitle, 1, 1);
+  applyPdfTraceabilityFooter(doc, generatedBy);
   const safeName = char.name.replace(/[^a-zA-Z0-9_\u00C0-\u017F]+/g, '_');
   doc.save(`Cliente_${safeName}.pdf`);
 }
@@ -321,7 +359,8 @@ export function downloadGuidePdf(char: Character, exerciseTitle?: string): void 
 export function downloadMultipleGuidesPdf(
   characters: Character[],
   exerciseTitle?: string,
-  batchTitle?: string
+  batchTitle?: string,
+  generatedBy?: PdfGeneratedBy
 ): void {
   if (!characters || characters.length === 0) return;
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
@@ -334,6 +373,7 @@ export function downloadMultipleGuidesPdf(
     renderCharacterSheetOnDoc(doc, char, exerciseTitle, index + 1, total);
   });
 
+  applyPdfTraceabilityFooter(doc, generatedBy);
   const baseTitle = batchTitle || (exerciseTitle ? `Roteiros_${exerciseTitle}` : 'Roteiros_Consolidados');
   const safeTitle = baseTitle.replace(/[^a-zA-Z0-9_\u00C0-\u017F]+/g, '_');
   doc.save(`${safeTitle}.pdf`);
@@ -345,7 +385,8 @@ export function downloadMultipleGuidesPdf(
 export function downloadChecklistPdf(
   checklist: Checklist,
   exercises: Exercise[] = [],
-  characters: Character[] = []
+  characters: Character[] = [],
+  generatedBy?: PdfGeneratedBy
 ): void {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
   const cellName = getCellName(checklist.cell);
@@ -430,6 +471,10 @@ export function downloadChecklistPdf(
   currentY += 6;
 
   checklist.criteria.forEach((crit, idx) => {
+    if (currentY > 268) {
+      doc.addPage();
+      currentY = 14;
+    }
     const isEven = idx % 2 === 0;
     doc.setFillColor(isEven ? 255 : 248, isEven ? 255 : 250, isEven ? 255 : 252);
     doc.rect(leftMargin, currentY, contentWidth, 6.5, 'F');
@@ -487,19 +532,7 @@ export function downloadChecklistPdf(
     });
   }
 
-  // Rodapé
-  const footerY = 282;
-  doc.setDrawColor(...slateBorder);
-  doc.setLineWidth(0.3);
-  doc.line(leftMargin, footerY, leftMargin + contentWidth, footerY);
-
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(6.5);
-  doc.setTextColor(...slateMuted);
-  doc.text('Portal de Desempenho e Capacitação Operacional   ·   Instrumento de Auditoria e Qualidade', leftMargin, footerY + 4);
-  doc.text('Documento oficial para monitoramento e feedback continuado.', leftMargin, footerY + 7.5);
-  doc.setFont('helvetica', 'bold');
-  doc.text('Página 1 de 1', leftMargin + contentWidth - 16, footerY + 4);
+  applyPdfTraceabilityFooter(doc, generatedBy);
 
   const safeTitle = checklist.title.replace(/[^a-zA-Z0-9_\u00C0-\u017F]+/g, '_');
   doc.save(`Checklist_${safeTitle}.pdf`);
@@ -519,6 +552,7 @@ export function downloadReportPdf(reportData: {
   evaluatorName: string;
   notes?: string;
   items: Array<{ name: string; weight: number; checked: boolean }>;
+  generatedBy?: PdfGeneratedBy;
 }): void {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
 
@@ -575,23 +609,55 @@ export function downloadReportPdf(reportData: {
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(7);
   doc.setTextColor(...slateMuted);
-  doc.text(`Categoria: ${reportData.checklistCategory || 'Geral'}`, leftMargin + 4, currentY + 15.5);
+  doc.text(`Categoria: ${reportData.checklistCategory || 'Geral'}`, leftMargin + 4, currentY + 14.5);
 
-  // Box Nota Final
+  const rawScore = typeof reportData.finalScore === 'number' ? reportData.finalScore : 0;
+  const verdict: {
+    label: string;
+    desc: string;
+    fill: [number, number, number];
+    color: [number, number, number];
+  } =
+    rawScore >= 7.0
+      ? {
+          label: 'APROVADO',
+          desc: 'Apto para o fluxo operacional padrão.',
+          fill: [236, 253, 245],
+          color: [4, 120, 87],
+        }
+      : rawScore >= 5.0
+      ? {
+          label: 'VALIDAÇÃO DA LIDERANÇA',
+          desc: 'Verificar a continuidade com a liderança do colaborador.',
+          fill: [255, 251, 235],
+          color: [180, 83, 9],
+        }
+      : {
+          label: 'REPROVADO',
+          desc: 'Abaixo do padrão mínimo exigido; necessária reciclagem e reavaliação.',
+          fill: [254, 242, 242],
+          color: [185, 28, 28],
+        };
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(6.8);
+  doc.setTextColor(...verdict.color);
+  doc.text(verdict.desc, leftMargin + 4, currentY + 19);
+
+  // Box Nota Final (escala 0 a 10)
   const scoreBoxX = leftMargin + 130;
-  const isApproved = reportData.finalScore >= 70;
-  doc.setFillColor(isApproved ? 236 : 254, isApproved ? 253 : 242, isApproved ? 245 : 242);
-  doc.setDrawColor(isApproved ? 4 : 220, isApproved ? 120 : 38, isApproved ? 87 : 38);
+  doc.setFillColor(...verdict.fill);
+  doc.setDrawColor(...verdict.color);
   doc.roundedRect(scoreBoxX, currentY + 3, 48, 16, 1.5, 1.5, 'FD');
 
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(7);
-  doc.setTextColor(isApproved ? 4 : 220, isApproved ? 120 : 38, isApproved ? 87 : 38);
-  doc.text(isApproved ? 'APROVADO / CONFORME' : 'ATENÇÃO / RECICLAGEM', scoreBoxX + 24, currentY + 7.5, { align: 'center' });
+  doc.setFontSize(verdict.label.length > 16 ? 5.6 : 6.5);
+  doc.setTextColor(...verdict.color);
+  doc.text(verdict.label, scoreBoxX + 24, currentY + 7.5, { align: 'center' });
 
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(11);
-  doc.text(`${reportData.finalScore.toFixed(1)}%`, scoreBoxX + 24, currentY + 14, { align: 'center' });
+  doc.text(`${rawScore.toFixed(1)} / 10`, scoreBoxX + 24, currentY + 14, { align: 'center' });
 
   currentY += 26;
 
@@ -636,6 +702,10 @@ export function downloadReportPdf(reportData: {
   currentY += 6;
 
   reportData.items.forEach((item, idx) => {
+    if (currentY > 268) {
+      doc.addPage();
+      currentY = 14;
+    }
     const isEven = idx % 2 === 0;
     doc.setFillColor(isEven ? 255 : 248, isEven ? 255 : 250, isEven ? 255 : 252);
     doc.rect(leftMargin, currentY, contentWidth, 6.5, 'F');
@@ -666,19 +736,7 @@ export function downloadReportPdf(reportData: {
     currentY += 6.5;
   });
 
-  // Rodapé
-  const footerY = 282;
-  doc.setDrawColor(...slateBorder);
-  doc.setLineWidth(0.3);
-  doc.line(leftMargin, footerY, leftMargin + contentWidth, footerY);
-
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(6.5);
-  doc.setTextColor(...slateMuted);
-  doc.text('Portal de Desempenho Operacional   ·   Relatório Formal de Avaliação de Competências', leftMargin, footerY + 4);
-  doc.text('Documento oficial registrado no histórico de capacitação profissional do colaborador.', leftMargin, footerY + 7.5);
-  doc.setFont('helvetica', 'bold');
-  doc.text('Página 1 de 1', leftMargin + contentWidth - 16, footerY + 4);
+  applyPdfTraceabilityFooter(doc, reportData.generatedBy);
 
   const safeName = reportData.collaboratorName.replace(/[^a-zA-Z0-9_\u00C0-\u017F]+/g, '_');
   doc.save(`Relatorio_Avaliacao_${safeName}.pdf`);
@@ -687,16 +745,21 @@ export function downloadReportPdf(reportData: {
 /**
  * Funções de compatibilidade (substituindo .txt por .pdf)
  */
-export function downloadGuideTxt(char: Character, exerciseTitle?: string): void {
-  downloadGuidePdf(char, exerciseTitle);
+export function downloadGuideTxt(
+  char: Character,
+  exerciseTitle?: string,
+  generatedBy?: PdfGeneratedBy
+): void {
+  downloadGuidePdf(char, exerciseTitle, generatedBy);
 }
 
 export function downloadChecklistTxt(
   checklist: Checklist,
   exercises: Exercise[] = [],
-  characters: Character[] = []
+  characters: Character[] = [],
+  generatedBy?: PdfGeneratedBy
 ): void {
-  downloadChecklistPdf(checklist, exercises, characters);
+  downloadChecklistPdf(checklist, exercises, characters, generatedBy);
 }
 
 export function downloadReportTxt(reportData: {
@@ -710,6 +773,7 @@ export function downloadReportTxt(reportData: {
   evaluatorName: string;
   notes?: string;
   items: Array<{ name: string; weight: number; checked: boolean }>;
+  generatedBy?: PdfGeneratedBy;
 }): void {
   downloadReportPdf(reportData);
 }
@@ -723,6 +787,7 @@ export interface DossierEvaluationHistoryItem {
   finalScore: number;
   completedAt: string;
   observations?: string;
+  isRestricted?: boolean;
   criteriaAnswers?: Array<{
     name: string;
     checked: boolean;
@@ -734,6 +799,7 @@ export interface DossierEvaluationHistoryItem {
 export interface DossierSurveySummaryItem {
   surveyTitle: string;
   completedAt: string;
+  isRestricted?: boolean;
   questions: Array<{
     questionText: string;
     answer: string;
@@ -765,6 +831,17 @@ export interface CollaboratorDossierData {
   trackSteps: DossierTrackItem[];
   evaluationHistory: DossierEvaluationHistoryItem[];
   surveyResponsesSummary?: DossierSurveySummaryItem[];
+  guardianFinalization?: {
+    isFinalized: boolean;
+    hideVerdict?: boolean;
+    verdict?: 'aprovado' | 'necessita_reforco';
+    opinion?: string;
+    finalizedBy?: string;
+    finalizedAt?: string;
+  };
+  isTrackFinalized?: boolean;
+  isTrackComplete?: boolean;
+  generatedBy?: PdfGeneratedBy;
   generatedAt: string;
 }
 
@@ -810,6 +887,23 @@ export function downloadCollaboratorDossierPdf(dossier: CollaboratorDossierData)
 
   currentY += 28;
 
+  // Alerta de Integridade / Finalização da Trilha no topo do documento
+  const isFinalizedFlag = Boolean(dossier.isTrackFinalized);
+  const isCompleteFlag = Boolean(dossier.isTrackComplete);
+  if (!isFinalizedFlag || !isCompleteFlag) {
+    const alertText = !isFinalizedFlag
+      ? 'ATENÇÃO: TRILHA NÃO FINALIZADA (DOCUMENTO PARCIAL)'
+      : 'TRILHA FINALIZADA COM ETAPAS PENDENTES';
+    doc.setFillColor(254, 243, 199);
+    doc.setDrawColor(217, 119, 6);
+    doc.roundedRect(leftMargin, currentY, contentWidth, 8, 1.5, 1.5, 'FD');
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8);
+    doc.setTextColor(146, 64, 14);
+    doc.text(alertText, leftMargin + contentWidth / 2, currentY + 5.2, { align: 'center' });
+    currentY += 11;
+  }
+
   // 2. Ficha Cadastral do Colaborador
   doc.setFillColor(...bgLight);
   doc.setDrawColor(...slateBorder);
@@ -829,19 +923,24 @@ export function downloadCollaboratorDossierPdf(dossier: CollaboratorDossierData)
   doc.text(`Cargo: ${dossier.roleTitle}   ·   Matrícula: ${dossier.registrationCode || 'N/A'}   ·   Célula: ${dossier.cellTeam}`, leftMargin + 4, currentY + 12);
   doc.text(`Status Oficial de Desempenho: ${dossier.status}`, leftMargin + 4, currentY + 17);
 
-  // Status Badge com cor semântica (#064E3B / amber / slate)
+  // Status Badge com cor semântica (#064E3B / amber / slate neutro para Finalizado sigiloso)
   const stLower = dossier.status.toLowerCase();
-  const statusColor = stLower.includes('conclu')
-    ? [16, 185, 129]
-    : stLower.includes('treinamento')
-    ? [217, 119, 6]
-    : [100, 116, 139];
+  const statusColor =
+    stLower === 'finalizado'
+      ? [100, 116, 139]
+      : stLower.includes('aprovado') || stLower.includes('conclu')
+      ? [16, 185, 129]
+      : stLower.includes('validação') || stLower.includes('validacao') || stLower.includes('treinamento')
+      ? [217, 119, 6]
+      : [100, 116, 139];
+  const statusBadgeW = dossier.status.length > 16 ? 48 : 38;
+  const statusBadgeX = leftMargin + contentWidth - statusBadgeW - 4;
   doc.setFillColor(statusColor[0], statusColor[1], statusColor[2]);
-  doc.roundedRect(leftMargin + contentWidth - 42, currentY + 4, 38, 6, 1, 1, 'F');
+  doc.roundedRect(statusBadgeX, currentY + 4, statusBadgeW, 6, 1, 1, 'F');
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(6.5);
+  doc.setFontSize(dossier.status.length > 16 ? 5.6 : 6.5);
   doc.setTextColor(...white);
-  doc.text(dossier.status.toUpperCase(), leftMargin + contentWidth - 23, currentY + 8, { align: 'center' });
+  doc.text(dossier.status.toUpperCase(), statusBadgeX + statusBadgeW / 2, currentY + 8, { align: 'center' });
 
   currentY += 26;
 
@@ -961,8 +1060,8 @@ export function downloadCollaboratorDossierPdf(dossier: CollaboratorDossierData)
 
   currentY += 4;
 
-  // 5. Histórico Detalhado de Avaliações
-  if (currentY > 235) {
+  // 5. Histórico Executivo de Avaliações Realizadas (Enxuto, sem listagem de critérios)
+  if (currentY > 240) {
     doc.addPage();
     currentY = 15;
   }
@@ -970,7 +1069,7 @@ export function downloadCollaboratorDossierPdf(dossier: CollaboratorDossierData)
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(8.5);
   doc.setTextColor(...primaryEmerald);
-  doc.text('2. HISTÓRICO DETALHADO DE AVALIAÇÕES REALIZADAS', leftMargin, currentY + 3);
+  doc.text('2. HISTÓRICO EXECUTIVO DE AVALIAÇÕES REALIZADAS', leftMargin, currentY + 3);
 
   currentY += 6;
 
@@ -982,12 +1081,33 @@ export function downloadCollaboratorDossierPdf(dossier: CollaboratorDossierData)
     currentY += 12;
   } else {
     dossier.evaluationHistory.forEach((evalItem, idx) => {
-      const hasCriteria = Boolean(evalItem.criteriaAnswers && evalItem.criteriaAnswers.length > 0);
-      const criteriaList = (evalItem.criteriaAnswers || []).slice(0, 8);
-      const extraHeight = hasCriteria ? criteriaList.length * 4.5 + 5 : 0;
-      const cardHeight = 24 + extraHeight;
+      const cardTextMaxWidth = contentWidth - 42;
+      const titleLabel = `${idx + 1}. ${evalItem.isRestricted ? '[RESTRITO] ' : ''}${evalItem.checklistTitle}`;
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(7.5);
+      const titleLines = doc.splitTextToSize(titleLabel, cardTextMaxWidth);
 
-      if (currentY + cardHeight > 275) {
+      const metaLine = `Data: ${evalItem.completedAt}   ·   Avaliador: ${evalItem.evaluatorName}`;
+      const hasScenario = Boolean(evalItem.exerciseTitle || evalItem.characterName);
+      const scenarioText = `Cenário: ${evalItem.exerciseTitle || 'Padrão'}   ·   Cliente: ${evalItem.characterName || 'N/A'}`;
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(6.5);
+      const scenarioLines = hasScenario ? doc.splitTextToSize(scenarioText, cardTextMaxWidth) : [];
+
+      const obsContent = evalItem.observations?.trim() || 'Sem observações registradas';
+      doc.setFont('helvetica', 'italic');
+      doc.setFontSize(6.5);
+      const obsLines = doc.splitTextToSize(`Observação: ${obsContent}`, cardTextMaxWidth);
+
+      const textHeight =
+        titleLines.length * 3.8 +
+        4.2 +
+        (scenarioLines.length > 0 ? scenarioLines.length * 3.6 + 1 : 0) +
+        obsLines.length * 3.6 +
+        6;
+      const cardHeight = Math.max(24, textHeight);
+
+      if (currentY + cardHeight > 272) {
         doc.addPage();
         currentY = 15;
       }
@@ -996,71 +1116,62 @@ export function downloadCollaboratorDossierPdf(dossier: CollaboratorDossierData)
       doc.setDrawColor(...slateBorder);
       doc.roundedRect(leftMargin, currentY, contentWidth, cardHeight, 1.5, 1.5, 'FD');
 
+      let lineY = currentY + 5.2;
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(7.5);
       doc.setTextColor(...slateDark);
-      doc.text(`${idx + 1}. ${evalItem.checklistTitle}`, leftMargin + 4, currentY + 5.5);
+      doc.text(titleLines, leftMargin + 4, lineY);
+      lineY += titleLines.length * 3.8 + 0.5;
 
       doc.setFont('helvetica', 'normal');
       doc.setFontSize(6.5);
       doc.setTextColor(...slateMuted);
-      doc.text(`Data: ${evalItem.completedAt}   ·   Avaliador: ${evalItem.evaluatorName}`, leftMargin + 4, currentY + 9.5);
+      doc.text(metaLine, leftMargin + 4, lineY);
+      lineY += 4.0;
 
-      if (evalItem.exerciseTitle || evalItem.characterName) {
-        doc.text(`Cenário: ${evalItem.exerciseTitle || 'Padrão'}   ·   Cliente Atendido: ${evalItem.characterName || 'N/A'}`, leftMargin + 4, currentY + 13.5);
+      if (scenarioLines.length > 0) {
+        doc.text(scenarioLines, leftMargin + 4, lineY);
+        lineY += scenarioLines.length * 3.6 + 0.8;
       }
 
-      if (evalItem.observations) {
-        const obsShort = evalItem.observations.length > 115 ? evalItem.observations.slice(0, 112) + '...' : evalItem.observations;
-        doc.setFont('helvetica', 'italic');
-        doc.setTextColor(51, 65, 85);
-        doc.text(`Obs: "${obsShort}"`, leftMargin + 4, currentY + 18);
-      }
+      doc.setFont('helvetica', 'italic');
+      doc.setFontSize(6.5);
+      doc.setTextColor(51, 65, 85);
+      doc.text(obsLines, leftMargin + 4, lineY);
 
-      // Nota Box
-      doc.setFillColor(255, 255, 255);
-      doc.setDrawColor(...slateBorder);
-      doc.roundedRect(leftMargin + contentWidth - 32, currentY + 4, 28, 14, 1, 1, 'FD');
+      // Score Box (Semáforo Institucional)
+      const scoreColors: {
+        fill: [number, number, number];
+        border: [number, number, number];
+        text: [number, number, number];
+      } =
+        evalItem.finalScore >= 7.0
+          ? { fill: [236, 253, 245], border: [4, 120, 87], text: [4, 120, 87] }
+          : evalItem.finalScore >= 5.0
+          ? { fill: [255, 251, 235], border: [180, 83, 9], text: [180, 83, 9] }
+          : { fill: [254, 242, 242], border: [185, 28, 28], text: [185, 28, 28] };
+
+      doc.setFillColor(scoreColors.fill[0], scoreColors.fill[1], scoreColors.fill[2]);
+      doc.setDrawColor(scoreColors.border[0], scoreColors.border[1], scoreColors.border[2]);
+      doc.roundedRect(leftMargin + contentWidth - 33, currentY + 4, 29, 14.5, 1, 1, 'FD');
 
       doc.setFont('helvetica', 'bold');
-      doc.setFontSize(6);
+      doc.setFontSize(5.8);
       doc.setTextColor(...slateMuted);
-      doc.text('NOTA FINAL', leftMargin + contentWidth - 18, currentY + 8, { align: 'center' });
+      doc.text('NOTA FINAL', leftMargin + contentWidth - 18.5, currentY + 8.2, { align: 'center' });
 
       doc.setFont('helvetica', 'bold');
-      doc.setFontSize(9);
-      doc.setTextColor(evalItem.finalScore >= 7 ? 4 : 220, evalItem.finalScore >= 7 ? 120 : 38, evalItem.finalScore >= 7 ? 87 : 38);
-      doc.text(`${evalItem.finalScore.toFixed(1)}/10`, leftMargin + contentWidth - 18, currentY + 14, { align: 'center' });
-
-      // Detalhamento de critérios avaliados
-      if (hasCriteria) {
-        let critY = currentY + (evalItem.observations ? 22 : 18);
-        doc.setFont('helvetica', 'bold');
-        doc.setFontSize(6);
-        doc.setTextColor(...slateDark);
-        doc.text('CRITÉRIOS AVALIADOS:', leftMargin + 4, critY);
-        critY += 3.5;
-
-        criteriaList.forEach((c) => {
-          doc.setFont('helvetica', 'normal');
-          doc.setFontSize(5.8);
-          if (c.checked) {
-            doc.setTextColor(4, 120, 87);
-            doc.text(`[CONFORME] ${c.name}${c.notes ? ` - "${c.notes}"` : ''}`, leftMargin + 6, critY);
-          } else {
-            doc.setTextColor(185, 28, 28);
-            doc.text(`[NÃO CONFORME] ${c.name}${c.notes ? ` - "${c.notes}"` : ''}`, leftMargin + 6, critY);
-          }
-          critY += 4;
-        });
-      }
+      doc.setFontSize(9.5);
+      doc.setTextColor(scoreColors.text[0], scoreColors.text[1], scoreColors.text[2]);
+      doc.text(`${evalItem.finalScore.toFixed(1)}/10`, leftMargin + contentWidth - 18.5, currentY + 14.5, { align: 'center' });
 
       currentY += cardHeight + 3.5;
     });
   }
 
   // 3. Resumo das Pesquisas de Satisfação & Feedback do Aluno
-  if (dossier.surveyResponsesSummary && dossier.surveyResponsesSummary.length > 0) {
+  const hasSurveys = Boolean(dossier.surveyResponsesSummary && dossier.surveyResponsesSummary.length > 0);
+  if (hasSurveys && dossier.surveyResponsesSummary) {
     if (currentY > 235) {
       doc.addPage();
       currentY = 15;
@@ -1076,10 +1187,28 @@ export function downloadCollaboratorDossierPdf(dossier: CollaboratorDossierData)
     currentY += 6;
 
     dossier.surveyResponsesSummary.forEach((surveyItem) => {
-      const qCount = surveyItem.questions.length;
-      const srvCardHeight = 12 + qCount * 8;
+      const surveyHeading = `${surveyItem.isRestricted ? '[RESTRITO] ' : ''}${surveyItem.surveyTitle}`;
+      const innerWidth = contentWidth - 10;
 
-      if (currentY + srvCardHeight > 275) {
+      const preparedQuestions = surveyItem.questions.map((q, qIdx) => {
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(6.2);
+        const qLines = doc.splitTextToSize(`${qIdx + 1}. ${q.questionText}`, innerWidth);
+
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(6);
+        const ansString = `Resposta: ${q.answer}${q.notes ? `   ·   Justificativa: "${q.notes}"` : ''}`;
+        const aLines = doc.splitTextToSize(ansString, innerWidth - 2);
+        return { qLines, aLines };
+      });
+
+      const questionsHeight = preparedQuestions.reduce(
+        (acc, item) => acc + item.qLines.length * 3.3 + item.aLines.length * 3.2 + 2.2,
+        0
+      );
+      const srvCardHeight = 14 + questionsHeight;
+
+      if (currentY + srvCardHeight > 272) {
         doc.addPage();
         currentY = 15;
       }
@@ -1091,7 +1220,7 @@ export function downloadCollaboratorDossierPdf(dossier: CollaboratorDossierData)
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(7.5);
       doc.setTextColor(...slateDark);
-      doc.text(surveyItem.surveyTitle, leftMargin + 4, currentY + 5.5);
+      doc.text(surveyHeading, leftMargin + 4, currentY + 5.5);
 
       doc.setFont('helvetica', 'normal');
       doc.setFontSize(6.5);
@@ -1099,40 +1228,99 @@ export function downloadCollaboratorDossierPdf(dossier: CollaboratorDossierData)
       doc.text(`Data de Resposta: ${surveyItem.completedAt}`, leftMargin + 4, currentY + 9.5);
 
       let qY = currentY + 14;
-      surveyItem.questions.forEach((q, qIdx) => {
+      preparedQuestions.forEach((pq) => {
         doc.setFont('helvetica', 'bold');
         doc.setFontSize(6.2);
         doc.setTextColor(51, 65, 85);
-        doc.text(`${qIdx + 1}. ${q.questionText}`, leftMargin + 4, qY);
+        doc.text(pq.qLines, leftMargin + 4, qY);
+        qY += pq.qLines.length * 3.3;
 
         doc.setFont('helvetica', 'normal');
         doc.setFontSize(6);
         doc.setTextColor(4, 120, 87);
-        doc.text(`Resposta: ${q.answer}${q.notes ? `   ·   Justificativa: "${q.notes}"` : ''}`, leftMargin + 6, qY + 3.5);
-
-        qY += 8;
+        doc.text(pq.aLines, leftMargin + 6, qY);
+        qY += pq.aLines.length * 3.2 + 2.2;
       });
 
       currentY += srvCardHeight + 4;
     });
   }
 
-  // Rodapé institucional
-  const pageCount = (doc as any).internal.getNumberOfPages();
-  for (let i = 1; i <= pageCount; i++) {
-    doc.setPage(i);
-    const footerY = 284;
-    doc.setDrawColor(...slateBorder);
-    doc.setLineWidth(0.3);
-    doc.line(leftMargin, footerY, leftMargin + contentWidth, footerY);
+  // 4. Parecer Oficial do Guardião Anfitrião (exibido apenas para Admin e Guardião Anfitrião)
+  if (dossier.guardianFinalization?.isFinalized && !dossier.guardianFinalization.hideVerdict) {
+    const opinionSectionNum = hasSurveys ? 4 : 3;
+    const isApproved = dossier.guardianFinalization.verdict === 'aprovado';
+    const opinionText = dossier.guardianFinalization.opinion?.trim() || 'Sem parecer descritivo registrado.';
 
     doc.setFont('helvetica', 'normal');
-    doc.setFontSize(6);
-    doc.setTextColor(...slateMuted);
-    doc.text('Portal de Desempenho Operacional   ·   Dossiê Confidencial de Capacitação Profissional', leftMargin, footerY + 4);
+    doc.setFontSize(7.2);
+    const opinionLines = doc.splitTextToSize(opinionText, contentWidth - 10);
+    const subtitleHeight = isApproved ? 0 : 5;
+    const opinionCardHeight = Math.max(28, 22 + subtitleHeight + opinionLines.length * 3.8);
+
+    if (currentY + opinionCardHeight + 10 > 272) {
+      doc.addPage();
+      currentY = 15;
+    } else {
+      currentY += 4;
+    }
+
     doc.setFont('helvetica', 'bold');
-    doc.text(`Página ${i} de ${pageCount}`, leftMargin + contentWidth - 18, footerY + 4);
+    doc.setFontSize(8.5);
+    doc.setTextColor(...primaryEmerald);
+    doc.text(`${opinionSectionNum}. PARECER OFICIAL DO GUARDIÃO ANFITRIÃO`, leftMargin, currentY + 3);
+    currentY += 6;
+
+    doc.setFillColor(isApproved ? 236 : 255, isApproved ? 253 : 251, isApproved ? 245 : 235);
+    doc.setDrawColor(isApproved ? 4 : 180, isApproved ? 120 : 83, isApproved ? 87 : 9);
+    doc.setLineWidth(0.4);
+    doc.roundedRect(leftMargin, currentY, contentWidth, opinionCardHeight, 2, 2, 'FD');
+
+    // Badge da Decisão
+    const verdictBadgeW = isApproved ? 34 : 52;
+    doc.setFillColor(isApproved ? 4 : 180, isApproved ? 120 : 83, isApproved ? 87 : 9);
+    doc.roundedRect(leftMargin + 4, currentY + 4, verdictBadgeW, 5.5, 1, 1, 'F');
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(6.3);
+    doc.setTextColor(...white);
+    doc.text(
+      isApproved ? 'APROVADO' : 'VALIDAÇÃO DA LIDERANÇA',
+      leftMargin + 4 + verdictBadgeW / 2,
+      currentY + 7.8,
+      { align: 'center' }
+    );
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(6.5);
+    doc.setTextColor(...slateMuted);
+    doc.text(
+      `Finalizado por: ${dossier.guardianFinalization.finalizedBy || 'Guardião Anfitrião'}   ·   Em: ${dossier.guardianFinalization.finalizedAt || ''}`,
+      leftMargin + 8 + verdictBadgeW,
+      currentY + 7.8
+    );
+
+    let textStartY = currentY + 14.5;
+    if (!isApproved) {
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(6.8);
+      doc.setTextColor(180, 83, 9);
+      doc.text(
+        'Verificar a continuidade com a liderança do colaborador.',
+        leftMargin + 4,
+        currentY + 13.5
+      );
+      textStartY = currentY + 18.5;
+    }
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7.2);
+    doc.setTextColor(...slateDark);
+    doc.text(opinionLines, leftMargin + 4, textStartY);
+
+    currentY += opinionCardHeight + 4;
   }
+
+  applyPdfTraceabilityFooter(doc, dossier.generatedBy);
 
   const safeCollabName = dossier.collaboratorName.replace(/[^a-zA-Z0-9_\u00C0-\u017F]+/g, '_');
   doc.save(`Dossie_${safeCollabName}.pdf`);

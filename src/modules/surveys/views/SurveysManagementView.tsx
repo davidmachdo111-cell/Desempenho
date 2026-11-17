@@ -4,38 +4,35 @@ import {
   Plus,
   Trash2,
   Edit3,
-  BarChart3,
-  CheckCircle2,
-  AlertCircle,
   HelpCircle,
   X,
-  MessageSquare,
-  Users,
-  Calendar,
   Layers,
-  ArrowRight,
   ListPlus,
-  Building2,
-  FileText,
+  Lock,
 } from 'lucide-react';
 import { usePortalStore } from '../../../context/PortalStoreContext';
+import { useToast } from '../../../context/ToastContext';
 import {
   Survey,
   SurveyQuestion,
   SurveyQuestionType,
-  SurveyResponse,
   CLEAN_CELL_NAMES,
+  VisibilityLevel,
 } from '../../../types/portal';
 
 export const SurveysManagementView: React.FC = () => {
-  const { surveys, surveyResponses, createSurvey, updateSurvey, deleteSurvey, currentUser } =
-    usePortalStore();
+  const {
+    currentUser,
+    hasPermission,
+    surveys,
+    createSurvey,
+    updateSurvey,
+    deleteSurvey,
+  } = usePortalStore();
+  const { showToast } = useToast();
 
-  const [activeTab, setActiveTab] = useState<'surveys' | 'responses'>('surveys');
-  const [selectedSurveyForResults, setSelectedSurveyForResults] = useState<Survey | null>(null);
-  const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(
-    null
-  );
+  const canManageSurveys =
+    currentUser?.role === 'admin' || hasPermission('can_manage_checklists');
 
   // Estados do Modal Construtor de Pesquisa
   const [showBuilderModal, setShowBuilderModal] = useState(false);
@@ -43,6 +40,7 @@ export const SurveysManagementView: React.FC = () => {
   const [builderTitle, setBuilderTitle] = useState('');
   const [builderDescription, setBuilderDescription] = useState('');
   const [builderTargetCell, setBuilderTargetCell] = useState('Todas');
+  const [builderVisibility, setBuilderVisibility] = useState<VisibilityLevel>('padrao');
   const [builderQuestions, setBuilderQuestions] = useState<SurveyQuestion[]>([
     {
       id: `q-${Date.now()}-1`,
@@ -62,13 +60,13 @@ export const SurveysManagementView: React.FC = () => {
     () => surveys.reduce((acc, s) => acc + s.questions.length, 0),
     [surveys]
   );
-  const totalResponses = surveyResponses.length;
 
   const handleOpenCreate = () => {
     setEditingSurveyId(null);
     setBuilderTitle('');
     setBuilderDescription('');
     setBuilderTargetCell('Todas');
+    setBuilderVisibility('padrao');
     setBuilderQuestions([
       {
         id: `q-${Date.now()}-1`,
@@ -105,6 +103,7 @@ export const SurveysManagementView: React.FC = () => {
     setBuilderTitle(survey.title);
     setBuilderDescription(survey.description);
     setBuilderTargetCell(survey.targetCell || 'Todas');
+    setBuilderVisibility(survey.visibility || 'padrao');
     setBuilderQuestions(
       survey.questions.map((q) => ({
         ...q,
@@ -127,7 +126,7 @@ export const SurveysManagementView: React.FC = () => {
 
   const handleRemoveQuestion = (index: number) => {
     if (builderQuestions.length <= 1) {
-      setFeedback({ type: 'error', text: 'A pesquisa deve conter pelo menos 1 pergunta.' });
+      showToast('A pesquisa deve conter pelo menos 1 pergunta.', 'error');
       return;
     }
     setBuilderQuestions((prev) => prev.filter((_, idx) => idx !== index));
@@ -153,13 +152,15 @@ export const SurveysManagementView: React.FC = () => {
   };
 
   const handleRemoveOption = (questionIndex: number, optionIndex: number) => {
+    const targetQuestion = builderQuestions[questionIndex];
+    if (!targetQuestion) return;
+    if (targetQuestion.options.length <= 2) {
+      showToast('Perguntas de múltipla escolha necessitam de pelo menos 2 alternativas.', 'error');
+      return;
+    }
     setBuilderQuestions((prev) =>
       prev.map((q, idx) => {
         if (idx !== questionIndex) return q;
-        if (q.options.length <= 2) {
-          alert('Perguntas de múltipla escolha necessitam de pelo menos 2 alternativas.');
-          return q;
-        }
         return {
           ...q,
           options: q.options.filter((_, oIdx) => oIdx !== optionIndex),
@@ -181,32 +182,28 @@ export const SurveysManagementView: React.FC = () => {
 
   const handleSaveSurvey = async (e: React.FormEvent) => {
     e.preventDefault();
-    setFeedback(null);
 
     if (!builderTitle.trim()) {
-      setFeedback({ type: 'error', text: 'Informe o título da pesquisa.' });
+      showToast('Informe o título da pesquisa.', 'error');
       return;
     }
 
     if (builderQuestions.length === 0) {
-      setFeedback({ type: 'error', text: 'Adicione pelo menos 1 pergunta à pesquisa.' });
+      showToast('Adicione pelo menos 1 pergunta à pesquisa.', 'error');
       return;
     }
 
     for (let i = 0; i < builderQuestions.length; i++) {
       const q = builderQuestions[i];
       if (!q.text.trim()) {
-        setFeedback({
-          type: 'error',
-          text: `Preencha o enunciado da pergunta ${i + 1}.`,
-        });
+        showToast(`Preencha o enunciado da pergunta ${i + 1}.`, 'error');
         return;
       }
       if (q.type !== 'apenas_observacao' && q.options.length < 2) {
-        setFeedback({
-          type: 'error',
-          text: `A pergunta ${i + 1} necessita de pelo menos 2 alternativas de múltipla escolha.`,
-        });
+        showToast(
+          `A pergunta ${i + 1} necessita de pelo menos 2 alternativas de múltipla escolha.`,
+          'error'
+        );
         return;
       }
     }
@@ -218,6 +215,7 @@ export const SurveysManagementView: React.FC = () => {
         title: builderTitle.trim(),
         description: builderDescription.trim(),
         targetCell: builderTargetCell,
+        visibility: builderVisibility,
         questions: builderQuestions,
       });
     } else {
@@ -225,19 +223,20 @@ export const SurveysManagementView: React.FC = () => {
         title: builderTitle.trim(),
         description: builderDescription.trim(),
         targetCell: builderTargetCell,
+        visibility: builderVisibility,
         questions: builderQuestions,
       });
     }
     setIsSubmitting(false);
 
     if (res.success) {
-      setFeedback({
-        type: 'success',
-        text: editingSurveyId ? 'Pesquisa atualizada com sucesso!' : 'Pesquisa criada com sucesso!',
-      });
+      showToast(
+        editingSurveyId ? 'Pesquisa atualizada com sucesso!' : 'Pesquisa criada com sucesso!',
+        'success'
+      );
       setShowBuilderModal(false);
     } else {
-      setFeedback({ type: 'error', text: res.message });
+      showToast(res.message, 'error');
     }
   };
 
@@ -246,43 +245,14 @@ export const SurveysManagementView: React.FC = () => {
     const res = await deleteSurvey(deleteConfirmSurvey.id);
     setDeleteConfirmSurvey(null);
     if (res.success) {
-      setFeedback({ type: 'success', text: 'Pesquisa excluída com sucesso.' });
-      if (selectedSurveyForResults?.id === deleteConfirmSurvey.id) {
-        setSelectedSurveyForResults(null);
-      }
+      showToast('Pesquisa excluída com sucesso.', 'success');
     } else {
-      setFeedback({ type: 'error', text: res.message });
+      showToast(res.message, 'error');
     }
   };
 
   return (
     <div className="space-y-6">
-      {/* Feedback Toast */}
-      {feedback && (
-        <div
-          className={`p-4 rounded-xl flex items-center justify-between shadow-sm animate-in fade-in duration-200 text-xs font-medium border ${
-            feedback.type === 'success'
-              ? 'bg-emerald-50 text-emerald-900 border-emerald-200'
-              : 'bg-red-50 text-red-900 border-red-200'
-          }`}
-        >
-          <div className="flex items-center gap-2">
-            {feedback.type === 'success' ? (
-              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-            ) : (
-              <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
-            )}
-            <span>{feedback.text}</span>
-          </div>
-          <button
-            type="button"
-            onClick={() => setFeedback(null)}
-            className="text-slate-400 hover:text-slate-600 font-bold ml-4"
-          >
-            ✕
-          </button>
-        </div>
-      )}
 
       {/* Header Corporativo */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200 pb-5">
@@ -300,18 +270,20 @@ export const SurveysManagementView: React.FC = () => {
           </p>
         </div>
 
-        <button
-          type="button"
-          onClick={handleOpenCreate}
-          className="px-4 py-2.5 bg-[#0f3e2e] hover:bg-emerald-900 text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center gap-2 cursor-pointer shrink-0"
-        >
-          <Plus className="w-4 h-4" />
-          <span>+ Nova Pesquisa</span>
-        </button>
+        {canManageSurveys && (
+          <button
+            type="button"
+            onClick={handleOpenCreate}
+            className="px-4 py-2.5 bg-[#0f3e2e] hover:bg-emerald-900 text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center gap-2 cursor-pointer shrink-0"
+          >
+            <Plus className="w-4 h-4" />
+            <span>+ Nova Pesquisa</span>
+          </button>
+        )}
       </div>
 
       {/* Cards de Métricas */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs flex items-center justify-between">
           <div>
             <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
@@ -339,20 +311,6 @@ export const SurveysManagementView: React.FC = () => {
             <HelpCircle className="w-5 h-5 text-emerald-700" />
           </div>
         </div>
-
-        <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs flex items-center justify-between">
-          <div>
-            <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
-              Respostas Recebidas
-            </div>
-            <div className="text-2xl font-bold font-mono text-emerald-800 mt-1">
-              {totalResponses}
-            </div>
-          </div>
-          <div className="w-10 h-10 rounded-xl bg-emerald-50 border border-emerald-200 flex items-center justify-center text-emerald-800">
-            <MessageSquare className="w-5 h-5 text-emerald-700" />
-          </div>
-        </div>
       </div>
 
       {/* Lista de Pesquisas Cadastradas */}
@@ -361,7 +319,7 @@ export const SurveysManagementView: React.FC = () => {
           <div>
             <h2 className="font-bold text-sm text-slate-900">Pesquisas Disponíveis</h2>
             <p className="text-[11px] text-slate-500">
-              Gerencie perguntas, alternativas e visualize as respostas consolidadas
+              Gerencie os questionários, perguntas e alternativas disponíveis para as trilhas
             </p>
           </div>
           <span className="text-xs font-semibold text-slate-500 bg-white px-2.5 py-1 rounded-lg border border-slate-200">
@@ -390,8 +348,6 @@ export const SurveysManagementView: React.FC = () => {
         ) : (
           <div className="divide-y divide-slate-100">
             {surveys.map((survey) => {
-              const responses = surveyResponses.filter((r) => r.surveyId === survey.id);
-
               return (
                 <div
                   key={survey.id}
@@ -403,6 +359,15 @@ export const SurveysManagementView: React.FC = () => {
                       <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-800 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
                         {survey.targetCell || 'Todas as Células'}
                       </span>
+                      {survey.visibility === 'restrito' && (
+                        <span
+                          title="Acesso restrito ao Guardião Anfitrião / Admin"
+                          className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-900 bg-amber-50 border border-amber-300 px-2 py-0.5 rounded-full"
+                        >
+                          <Lock className="w-2.5 h-2.5 text-amber-700" />
+                          <span>Restrito</span>
+                        </span>
+                      )}
                     </div>
 
                     <p className="text-xs text-slate-500 line-clamp-2 max-w-2xl leading-relaxed">
@@ -414,45 +379,31 @@ export const SurveysManagementView: React.FC = () => {
                         <HelpCircle className="w-3.5 h-3.5 text-slate-400" />
                         <span>{survey.questions.length} pergunta(s)</span>
                       </span>
-                      <span className="flex items-center gap-1">
-                        <Users className="w-3.5 h-3.5 text-emerald-600" />
-                        <span className="font-semibold text-emerald-800">
-                          {responses.length} resposta(s) recebida(s)
-                        </span>
-                      </span>
                     </div>
                   </div>
 
                   {/* Ações */}
-                  <div className="flex items-center gap-2 shrink-0">
-                    <button
-                      type="button"
-                      onClick={() => setSelectedSurveyForResults(survey)}
-                      className="px-3 py-1.5 text-xs font-bold text-emerald-900 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer"
-                      title="Ver gráficos e justificativas consolidadas"
-                    >
-                      <BarChart3 className="w-3.5 h-3.5 text-emerald-700" />
-                      <span>Visualizar Respostas ({responses.length})</span>
-                    </button>
+                  {canManageSurveys && (
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => handleOpenEdit(survey)}
+                        className="p-1.5 text-slate-600 hover:text-emerald-900 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
+                        title="Editar Pesquisa"
+                      >
+                        <Edit3 className="w-4 h-4" />
+                      </button>
 
-                    <button
-                      type="button"
-                      onClick={() => handleOpenEdit(survey)}
-                      className="p-1.5 text-slate-600 hover:text-emerald-900 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
-                      title="Editar Pesquisa"
-                    >
-                      <Edit3 className="w-4 h-4" />
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => setDeleteConfirmSurvey(survey)}
-                      className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
-                      title="Excluir Pesquisa"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
+                      <button
+                        type="button"
+                        onClick={() => setDeleteConfirmSurvey(survey)}
+                        className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
+                        title="Excluir Pesquisa"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -524,17 +475,34 @@ export const SurveysManagementView: React.FC = () => {
                   </div>
                 </div>
 
-                <div className="space-y-1">
-                  <label className="block font-bold text-slate-800">
-                    Descrição & Instruções aos Respondentes
-                  </label>
-                  <textarea
-                    rows={2}
-                    value={builderDescription}
-                    onChange={(e) => setBuilderDescription(e.target.value)}
-                    placeholder="Instruções claras para o colaborador preencher a pesquisa com sinceridade..."
-                    className="w-full px-3.5 py-2 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 font-normal text-slate-900 text-xs resize-none"
-                  />
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-start">
+                  <div className="md:col-span-2 space-y-1">
+                    <label className="block font-bold text-slate-800">
+                      Descrição & Instruções aos Respondentes
+                    </label>
+                    <textarea
+                      rows={2}
+                      value={builderDescription}
+                      onChange={(e) => setBuilderDescription(e.target.value)}
+                      placeholder="Instruções claras para o colaborador preencher a pesquisa com sinceridade..."
+                      className="w-full px-3.5 py-2 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 font-normal text-slate-900 text-xs resize-none"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="block font-bold text-slate-800">Nível de Visibilidade</label>
+                    <select
+                      value={builderVisibility}
+                      onChange={(e) => setBuilderVisibility(e.target.value as VisibilityLevel)}
+                      className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 font-semibold text-slate-900 text-xs"
+                    >
+                      <option value="padrao">Padrão (Todos os gestores)</option>
+                      <option value="restrito">Restrito (Guardião Anfitrião / Admin)</option>
+                    </select>
+                    <p className="text-[11px] text-slate-500">
+                      Respostas restritas ficam visíveis apenas ao Guardião Anfitrião e Admin.
+                    </p>
+                  </div>
                 </div>
               </div>
 
@@ -728,245 +696,7 @@ export const SurveysManagementView: React.FC = () => {
       )}
 
       {/* ========================================================= */}
-      {/* MODAL 2: VISUALIZAÇÃO CONSOLIDADA DE RESPOSTAS */}
-      {/* ========================================================= */}
-      {selectedSurveyForResults && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl border border-slate-200 overflow-hidden flex flex-col max-h-[90vh] animate-in fade-in zoom-in-95 duration-200">
-            {/* Header */}
-            <div className="px-6 py-4 bg-[#0f3e2e] text-white flex items-center justify-between shrink-0">
-              <div className="flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-lg bg-emerald-600 flex items-center justify-center font-bold">
-                  <BarChart3 className="w-4 h-4 text-white" />
-                </div>
-                <div>
-                  <h3 className="font-bold text-sm">Respostas Consolidadas da Pesquisa</h3>
-                  <p className="text-[11px] text-emerald-200">
-                    {selectedSurveyForResults.title}
-                  </p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setSelectedSurveyForResults(null)}
-                className="text-emerald-200 hover:text-white p-1 rounded-lg hover:bg-white/10 cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            {/* Conteúdo do Relatório */}
-            <div className="flex-1 overflow-y-auto p-6 space-y-6 text-xs">
-              {(() => {
-                const responses = surveyResponses.filter(
-                  (r) => r.surveyId === selectedSurveyForResults.id
-                );
-
-                if (responses.length === 0) {
-                  return (
-                    <div className="text-center py-16 space-y-3">
-                      <div className="w-12 h-12 rounded-full bg-slate-100 text-slate-400 flex items-center justify-center mx-auto">
-                        <MessageSquare className="w-6 h-6" />
-                      </div>
-                      <h4 className="font-bold text-sm text-slate-700">
-                        Nenhuma resposta registrada ainda
-                      </h4>
-                      <p className="text-xs text-slate-500 max-w-sm mx-auto">
-                        Quando os colaboradores responderem a esta pesquisa através do perfil deles, as estatísticas e observações serão consolidadas aqui em tempo real.
-                      </p>
-                    </div>
-                  );
-                }
-
-                return (
-                  <div className="space-y-6">
-                    {/* Barra de Resumo */}
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-emerald-50/60 p-4 rounded-xl border border-emerald-200/80">
-                      <div>
-                        <div className="text-[11px] font-bold text-emerald-800 uppercase tracking-wider">
-                          Total de Respondentes
-                        </div>
-                        <div className="text-xl font-bold font-mono text-emerald-950 mt-0.5">
-                          {responses.length} colaborador(es)
-                        </div>
-                      </div>
-                      <div>
-                        <div className="text-[11px] font-bold text-emerald-800 uppercase tracking-wider">
-                          Célula Alvo
-                        </div>
-                        <div className="text-xs font-semibold text-emerald-950 mt-1">
-                          {selectedSurveyForResults.targetCell || 'Todas'}
-                        </div>
-                      </div>
-                      <div>
-                        <div className="text-[11px] font-bold text-emerald-800 uppercase tracking-wider">
-                          Última Resposta
-                        </div>
-                        <div className="text-xs font-medium text-emerald-950 mt-1">
-                          {responses[0]?.completedAt
-                            ? new Date(responses[0].completedAt).toLocaleString('pt-BR')
-                            : '---'}
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Consolidação por Pergunta */}
-                    <div className="space-y-6">
-                      {selectedSurveyForResults.questions.map((q, qIndex) => {
-                        // Calcula contagem das alternativas
-                        const optionCounts: Record<string, number> = {};
-                        q.options.forEach((opt) => {
-                          optionCounts[opt] = 0;
-                        });
-
-                        const observationsList: Array<{
-                          author: string;
-                          username?: string;
-                          cell: string;
-                          date: string;
-                          text: string;
-                          option?: string;
-                        }> = [];
-
-                        responses.forEach((resp) => {
-                          const ans = resp.answers[q.id];
-                          if (ans) {
-                            if (ans.selectedOption) {
-                              optionCounts[ans.selectedOption] =
-                                (optionCounts[ans.selectedOption] || 0) + 1;
-                            }
-                            if (ans.observation && ans.observation.trim().length > 0) {
-                              observationsList.push({
-                                author: resp.collaboratorName,
-                                username: resp.collaboratorUsername,
-                                cell: resp.cellTeam,
-                                date: resp.completedAt,
-                                text: ans.observation.trim(),
-                                option: ans.selectedOption,
-                              });
-                            }
-                          }
-                        });
-
-                        return (
-                          <div
-                            key={q.id}
-                            className="bg-white border border-slate-200 rounded-xl p-5 space-y-4 shadow-xs"
-                          >
-                            <div className="flex items-start gap-2.5">
-                              <span className="w-6 h-6 rounded-full bg-[#0f3e2e] text-white font-bold text-xs flex items-center justify-center shrink-0">
-                                {qIndex + 1}
-                              </span>
-                              <div className="space-y-0.5">
-                                <h4 className="font-bold text-sm text-slate-900">{q.text}</h4>
-                                <span className="text-[10px] font-medium text-slate-400 uppercase">
-                                  {q.type === 'multipla_simples'
-                                    ? 'Múltipla Escolha'
-                                    : q.type === 'multipla_com_observacao'
-                                    ? 'Múltipla Escolha com Observação'
-                                    : 'Apenas Observação / Dissertativo'}
-                                </span>
-                              </div>
-                            </div>
-
-                            {/* Gráficos de Barra Percentual para Alternativas */}
-                            {q.type !== 'apenas_observacao' && (
-                              <div className="space-y-2 pt-2 border-t border-slate-100">
-                                {q.options.map((opt) => {
-                                  const count = optionCounts[opt] || 0;
-                                  const pct =
-                                    responses.length > 0
-                                      ? Math.round((count / responses.length) * 100)
-                                      : 0;
-
-                                  return (
-                                    <div key={opt} className="space-y-1">
-                                      <div className="flex items-center justify-between text-xs font-medium text-slate-700">
-                                        <span>{opt}</span>
-                                        <span className="font-mono font-bold text-emerald-800">
-                                          {count} ({pct}%)
-                                        </span>
-                                      </div>
-                                      <div className="w-full bg-slate-100 h-2.5 rounded-full overflow-hidden">
-                                        <div
-                                          className="bg-emerald-700 h-full rounded-full transition-all duration-500"
-                                          style={{ width: `${pct}%` }}
-                                        />
-                                      </div>
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            )}
-
-                            {/* Listagem de Observações / Justificativas Qualitativas */}
-                            {observationsList.length > 0 && (
-                              <div className="space-y-2 pt-3 border-t border-slate-100">
-                                <div className="text-[11px] font-bold text-slate-600 uppercase tracking-wider flex items-center gap-1.5">
-                                  <MessageSquare className="w-3.5 h-3.5 text-emerald-700" />
-                                  <span>
-                                    Observações & Justificativas Registradas ({observationsList.length}):
-                                  </span>
-                                </div>
-
-                                <div className="space-y-2">
-                                  {observationsList.map((obs, idx) => (
-                                    <div
-                                      key={idx}
-                                      className="p-3 bg-slate-50 rounded-lg border border-slate-200 text-xs space-y-1.5"
-                                    >
-                                      <div className="flex items-center justify-between text-[11px] text-slate-500">
-                                        <span className="font-bold text-slate-800">
-                                          {obs.author}{' '}
-                                          {obs.username && (
-                                            <span className="font-mono text-emerald-800 font-normal">
-                                              (@{obs.username})
-                                            </span>
-                                          )}{' '}
-                                          · <span className="text-slate-600 font-medium">{obs.cell}</span>
-                                        </span>
-                                        <span>{new Date(obs.date).toLocaleDateString('pt-BR')}</span>
-                                      </div>
-
-                                      {obs.option && (
-                                        <div className="text-[11px] text-emerald-900 font-medium bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200/60 inline-block">
-                                          Opção escolhida: <strong>{obs.option}</strong>
-                                        </div>
-                                      )}
-
-                                      <p className="text-slate-700 leading-relaxed italic">
-                                        &ldquo;{obs.text}&rdquo;
-                                      </p>
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                );
-              })()}
-            </div>
-
-            {/* Rodapé */}
-            <div className="px-6 py-4 bg-slate-50 border-t border-slate-200 flex justify-end shrink-0">
-              <button
-                type="button"
-                onClick={() => setSelectedSurveyForResults(null)}
-                className="px-5 py-2 bg-slate-800 hover:bg-slate-900 text-white rounded-xl text-xs font-bold transition-all cursor-pointer"
-              >
-                Fechar
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ========================================================= */}
-      {/* MODAL 3: CONFIRMAÇÃO DE EXCLUSÃO */}
+      {/* MODAL 2: CONFIRMAÇÃO DE EXCLUSÃO */}
       {/* ========================================================= */}
       {deleteConfirmSurvey && (
         <div className="fixed inset-0 z-60 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">

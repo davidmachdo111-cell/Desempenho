@@ -1,41 +1,60 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Play,
   CheckCircle2,
   AlertTriangle,
-  User,
-  BookOpen,
   ArrowLeft,
-  Award,
   Eye,
   FileText,
   Download,
   CheckSquare,
-  Square,
-  Paperclip,
+  CheckCheck,
   Check,
-  CreditCard,
-  ExternalLink,
-  Printer,
   Building2,
+  Lock,
 } from 'lucide-react';
 import { usePortalStore } from '../../../context/PortalStoreContext';
+import { useToast } from '../../../context/ToastContext';
 import {
+  canSeeFinalVerdict,
+  canViewRestrictedItem,
   CollaboratorStatus,
   CriteriaAnswerSnapshot,
-  Exercise,
   Character,
+  Exercise,
   OfficialCell,
   OFFICIAL_CELLS,
+  getCharacterGuides,
+  getExerciseAttachments,
   normalizePhrases,
 } from '../../../types/portal';
 import { CUSTOMER_TIER_BADGES } from '../../characters/views/CharactersManagementView';
 import { GuideMirrorModal } from '../../../components/GuideMirrorModal';
+import {
+  AttachedGuideViewerModal,
+  AttachedGuideViewerData,
+} from '../../../components/AttachedGuideViewerModal';
 import { downloadGuidePdf, downloadMultipleGuidesPdf } from '../../../lib/downloadHelpers';
 
 interface EvaluationExecutionViewProps {
   assignmentId: string;
   onBack: (collaboratorId?: string) => void;
+}
+
+function calculateWeightedScore(criteria: CriteriaAnswerSnapshot[]): number {
+  if (criteria.length === 0) return 10;
+  let totalPossibleWeight = 0;
+  let earnedWeight = 0;
+
+  criteria.forEach((item) => {
+    const w = item.weight || 1;
+    totalPossibleWeight += w;
+    if (item.checked) {
+      earnedWeight += w;
+    }
+  });
+
+  if (totalPossibleWeight === 0) return 10;
+  return Math.round((earnedWeight / totalPossibleWeight) * 100) / 10;
 }
 
 export const EvaluationExecutionView: React.FC<EvaluationExecutionViewProps> = ({
@@ -50,12 +69,19 @@ export const EvaluationExecutionView: React.FC<EvaluationExecutionViewProps> = (
     characters,
     currentUser,
     hasPermission,
+    saveEvaluationProgress,
     completeEvaluation,
   } = usePortalStore();
+  const { showToast } = useToast();
 
-  const isAuxiliar = currentUser?.role === 'auxiliar';
-  const canApplyEvaluations = hasPermission('can_apply_evaluations') && !isAuxiliar;
+  const canApplyEvaluations = hasPermission('can_apply_evaluations');
+  const pdfGeneratedBy = currentUser
+    ? { fullName: currentUser.fullName, username: currentUser.username }
+    : undefined;
   const [guideModalChar, setGuideModalChar] = useState<Character | null>(null);
+  const [guideModalExerciseTitle, setGuideModalExerciseTitle] = useState<string | undefined>(undefined);
+  const [attachedGuideModal, setAttachedGuideModal] = useState<AttachedGuideViewerData | null>(null);
+  const [selectedExerciseTab, setSelectedExerciseTab] = useState<string>('0');
 
   // Localiza a atribuição ativa
   const assignment = useMemo(
@@ -73,22 +99,42 @@ export const EvaluationExecutionView: React.FC<EvaluationExecutionViewProps> = (
     [assignment, checklists]
   );
 
-  // Cenário de exercício vinculado (se houver)
-  const currentExercise = useMemo(() => {
-    if (!checklist || !checklist.exerciseIds || checklist.exerciseIds.length === 0) return null;
-    return exercises.find((e) => e.id === checklist.exerciseIds[0]) || null;
+  // Todos os cenários de exercícios vinculados ao checklist (na ordem configurada)
+  const linkedExercises = useMemo(() => {
+    if (!checklist || !checklist.exerciseIds || checklist.exerciseIds.length === 0) return [];
+    return checklist.exerciseIds
+      .map((id) => exercises.find((e) => e.id === id))
+      .filter(Boolean) as Exercise[];
   }, [checklist, exercises]);
 
-  // Clientes vinculados ao exercício
-  const exerciseCharacters = useMemo(() => {
-    if (!currentExercise) return [];
-    return currentExercise.characterIds
-      .map((id) => characters.find((c) => c.id === id))
-      .filter(Boolean) as Character[];
-  }, [currentExercise, characters]);
+  const displayedExercises = useMemo(() => {
+    if (linkedExercises.length === 0) return [];
+    if (linkedExercises.length === 1 || selectedExerciseTab === 'all') {
+      return linkedExercises;
+    }
+    const idx = Number(selectedExerciseTab);
+    const chosen = Number.isInteger(idx) && linkedExercises[idx] ? linkedExercises[idx] : linkedExercises[0];
+    return chosen ? [chosen] : [];
+  }, [linkedExercises, selectedExerciseTab]);
 
-  // Critérios diretos do checklist
-  const [criteriaState, setCriteriaState] = useState<CriteriaAnswerSnapshot[]>(() => {
+  const allLinkedCharacters = useMemo(() => {
+    const seen = new Set<string>();
+    const list: Character[] = [];
+    linkedExercises.forEach((ex) => {
+      ex.characterIds.forEach((id) => {
+        if (!seen.has(id)) {
+          const found = characters.find((c) => c.id === id);
+          if (found) {
+            seen.add(id);
+            list.push(found);
+          }
+        }
+      });
+    });
+    return list;
+  }, [linkedExercises, characters]);
+
+  const buildInitialCriteria = (): CriteriaAnswerSnapshot[] => {
     if (assignment && assignment.criteriaAnswers && assignment.criteriaAnswers.length > 0) {
       return assignment.criteriaAnswers;
     }
@@ -102,34 +148,68 @@ export const EvaluationExecutionView: React.FC<EvaluationExecutionViewProps> = (
       }));
     }
     return [];
-  });
+  };
 
-  // Cálculo da nota ponderada em tempo real (0 a 10)
-  const currentScore = useMemo(() => {
-    if (criteriaState.length === 0) return 10;
-    let totalPossibleWeight = 0;
-    let earnedWeight = 0;
-
-    criteriaState.forEach((item) => {
-      const w = item.weight || 1;
-      totalPossibleWeight += w;
-      if (item.checked) {
-        earnedWeight += w;
-      }
-    });
-
-    if (totalPossibleWeight === 0) return 10;
-    return Math.round((earnedWeight / totalPossibleWeight) * 100) / 10;
-  }, [criteriaState]);
-
-  const [selectedResultStatus, setSelectedResultStatus] = useState<CollaboratorStatus>('aprovado');
+  // Critérios diretos do checklist
+  const [criteriaState, setCriteriaState] = useState<CriteriaAnswerSnapshot[]>(buildInitialCriteria);
   const [generalObservations, setGeneralObservations] = useState<string>(
     assignment?.generalObservations || ''
   );
+  const [selectedResultStatus, setSelectedResultStatus] = useState<CollaboratorStatus>('aprovado');
   const [isFinishing, setIsFinishing] = useState(false);
-  const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [lastAutoSavedAt, setLastAutoSavedAt] = useState<string | null>(null);
 
-  // Ciclo de vida dinâmico: sugere automaticamente status baseado na pontuação (>= 7.0: Aprovado, < 7.0: Necessita Reforço)
+  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const latestCriteriaRef = useRef<CriteriaAnswerSnapshot[]>(criteriaState);
+  const latestObservationsRef = useRef<string>(generalObservations);
+
+  latestCriteriaRef.current = criteriaState;
+  latestObservationsRef.current = generalObservations;
+
+  // Ressincroniza estados locais apenas quando mudar de avaliação (assignmentId)
+  useEffect(() => {
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current);
+      autoSaveTimerRef.current = null;
+    }
+
+    const initialCriteria =
+      assignment && assignment.criteriaAnswers && assignment.criteriaAnswers.length > 0
+        ? assignment.criteriaAnswers
+        : checklist
+        ? checklist.criteria.map((c) => ({
+            criterionId: c.id,
+            name: c.name,
+            weight: c.weight,
+            checked: false,
+            notes: '',
+          }))
+        : [];
+
+    setCriteriaState(initialCriteria);
+    setGeneralObservations(assignment?.generalObservations || '');
+    setLastAutoSavedAt(null);
+    setSelectedExerciseTab('0');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [assignmentId]);
+
+  useEffect(() => {
+    return () => {
+      if (autoSaveTimerRef.current) {
+        clearTimeout(autoSaveTimerRef.current);
+      }
+    };
+  }, []);
+
+  // Cálculo da nota ponderada em tempo real (0 a 10)
+  const currentScore = useMemo(() => calculateWeightedScore(criteriaState), [criteriaState]);
+
+  const allCriteriaChecked = useMemo(
+    () => criteriaState.length > 0 && criteriaState.every((c) => c.checked),
+    [criteriaState]
+  );
+
+  // Ciclo de vida dinâmico: sugere automaticamente status baseado na pontuação (>= 7.0: Aprovado, < 7.0: Validação da liderança)
   useEffect(() => {
     setSelectedResultStatus(currentScore >= 7.0 ? 'aprovado' : 'necessita_reforco');
   }, [currentScore]);
@@ -153,26 +233,142 @@ export const EvaluationExecutionView: React.FC<EvaluationExecutionViewProps> = (
     );
   }
 
-  const handleToggleCheck = (criterionId: string) => {
-    if (!canApplyEvaluations) return;
-    setCriteriaState((prev) =>
-      prev.map((item) =>
-        item.criterionId === criterionId ? { ...item, checked: !item.checked } : item
-      )
+  if (!canViewRestrictedItem(currentUser, checklist.visibility)) {
+    return (
+      <div className="bg-white border border-amber-200 rounded-2xl p-12 text-center max-w-lg mx-auto shadow-xs space-y-4">
+        <Lock className="w-12 h-12 text-amber-600 mx-auto" />
+        <h2 className="text-lg font-bold text-slate-900">Conteúdo Restrito</h2>
+        <p className="text-xs text-slate-600 leading-relaxed">
+          Este checklist está classificado como <strong>Restrito</strong>. Apenas Administradores ou usuários com a tag <strong>Guardião Anfitrião</strong> podem visualizar ou aplicar esta avaliação.
+        </p>
+        <button
+          type="button"
+          onClick={() => onBack(collaborator.id)}
+          className="px-4 py-2 text-xs font-bold text-white bg-[#0f3e2e] hover:bg-emerald-900 rounded-xl transition-colors cursor-pointer"
+        >
+          Voltar para a Ficha
+        </button>
+      </div>
     );
+  }
+
+  if (collaborator.isTrackFinalized && !canSeeFinalVerdict(currentUser)) {
+    return (
+      <div className="bg-white border border-slate-200 rounded-2xl p-12 text-center max-w-lg mx-auto shadow-xs space-y-4">
+        <Lock className="w-12 h-12 text-slate-500 mx-auto" />
+        <h2 className="text-lg font-bold text-slate-900">Trilha Finalizada</h2>
+        <p className="text-xs text-slate-600 leading-relaxed">
+          Esta trilha já foi finalizada. O acesso à ficha, ao roteiro e aos detalhes da avaliação está bloqueado para este perfil.
+        </p>
+        <button
+          type="button"
+          onClick={() => onBack()}
+          className="px-4 py-2 text-xs font-bold text-white bg-[#0f3e2e] hover:bg-emerald-900 rounded-xl transition-colors cursor-pointer"
+        >
+          Voltar para Colaboradores
+        </button>
+      </div>
+    );
+  }
+
+  const isTrackLocked = Boolean(collaborator.isTrackFinalized);
+  const canEditEvaluation = canApplyEvaluations && !isTrackLocked;
+
+  const persistProgressNow = (
+    nextCriteria: CriteriaAnswerSnapshot[],
+    nextObservations: string
+  ) => {
+    if (!canEditEvaluation || isFinishing) return;
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current);
+      autoSaveTimerRef.current = null;
+    }
+
+    const nextScore = calculateWeightedScore(nextCriteria);
+    void saveEvaluationProgress({
+      collaboratorChecklistId: assignment.id,
+      instructorAuxiliarId: currentUser?.id,
+      criteriaAnswers: nextCriteria,
+      finalScore: nextScore,
+      generalObservations: nextObservations.trim() || undefined,
+    }).then(() => {
+      setLastAutoSavedAt(
+        new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+      );
+    });
+  };
+
+  const scheduleDebouncedAutoSave = (
+    nextCriteria: CriteriaAnswerSnapshot[],
+    nextObservations: string
+  ) => {
+    if (!canEditEvaluation || isFinishing) return;
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current);
+    }
+    autoSaveTimerRef.current = setTimeout(() => {
+      autoSaveTimerRef.current = null;
+      const nextScore = calculateWeightedScore(nextCriteria);
+      void saveEvaluationProgress({
+        collaboratorChecklistId: assignment.id,
+        instructorAuxiliarId: currentUser?.id,
+        criteriaAnswers: nextCriteria,
+        finalScore: nextScore,
+        generalObservations: nextObservations.trim() || undefined,
+      }).then(() => {
+        setLastAutoSavedAt(
+          new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+        );
+      });
+    }, 450);
+  };
+
+  const handleToggleCheck = (criterionId: string) => {
+    if (!canEditEvaluation) return;
+    const nextCriteria = criteriaState.map((item) =>
+      item.criterionId === criterionId ? { ...item, checked: !item.checked } : item
+    );
+    setCriteriaState(nextCriteria);
+    persistProgressNow(nextCriteria, latestObservationsRef.current);
+  };
+
+  const handleToggleAllCriteria = () => {
+    if (!canEditEvaluation || criteriaState.length === 0) return;
+    const targetChecked = !allCriteriaChecked;
+    const nextCriteria = criteriaState.map((item) => ({ ...item, checked: targetChecked }));
+    setCriteriaState(nextCriteria);
+    persistProgressNow(nextCriteria, latestObservationsRef.current);
   };
 
   const handleUpdateNotes = (criterionId: string, notes: string) => {
-    if (!canApplyEvaluations) return;
-    setCriteriaState((prev) =>
-      prev.map((item) => (item.criterionId === criterionId ? { ...item, notes } : item))
+    if (!canEditEvaluation) return;
+    const nextCriteria = criteriaState.map((item) =>
+      item.criterionId === criterionId ? { ...item, notes } : item
     );
+    setCriteriaState(nextCriteria);
+    scheduleDebouncedAutoSave(nextCriteria, latestObservationsRef.current);
+  };
+
+  const handleUpdateGeneralObservations = (value: string) => {
+    setGeneralObservations(value);
+    if (!canEditEvaluation) return;
+    scheduleDebouncedAutoSave(latestCriteriaRef.current, value);
   };
 
   const handleFinishEvaluation = async () => {
-    if (!canApplyEvaluations) {
-      setFeedback({ type: 'error', text: 'Você não possui permissão para finalizar avaliações.' });
+    if (!canEditEvaluation) {
+      showToast(
+        isTrackLocked
+          ? 'Esta trilha já foi finalizada e não permite alterações.'
+          : 'Você não possui permissão para finalizar avaliações.',
+        'error'
+      );
       return;
+    }
+
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current);
+      autoSaveTimerRef.current = null;
     }
 
     setIsFinishing(true);
@@ -187,35 +383,17 @@ export const EvaluationExecutionView: React.FC<EvaluationExecutionViewProps> = (
     setIsFinishing(false);
 
     if (res.success) {
-      setFeedback({ type: 'success', text: 'Avaliação concluída e registrada com sucesso!' });
-      setTimeout(() => {
-        onBack(collaborator?.id);
-      }, 1200);
+      showToast('Avaliação concluída e registrada com sucesso!', 'success');
+      onBack(collaborator?.id);
     } else {
-      setFeedback({ type: 'error', text: res.message });
+      showToast(res.message, 'error');
     }
   };
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto">
-      {/* Toast Feedback */}
-      {feedback && (
-        <div
-          className={`p-4 rounded-xl border flex items-center justify-between gap-4 text-sm shadow-sm transition-all ${
-            feedback.type === 'success'
-              ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
-              : 'bg-red-50 border-red-200 text-red-900'
-          }`}
-        >
-          <div className="flex items-center gap-2.5 font-medium">
-            <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
-            <span>{feedback.text}</span>
-          </div>
-        </div>
-      )}
-
       {/* Header com Botão de Voltar e Identificação */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <button
           type="button"
           onClick={() => onBack(collaborator?.id)}
@@ -225,15 +403,23 @@ export const EvaluationExecutionView: React.FC<EvaluationExecutionViewProps> = (
           <span>Voltar para a Ficha do Colaborador</span>
         </button>
 
-        <span className="text-xs text-slate-500 font-medium">
-          Avaliador Atual: <strong>{currentUser?.fullName}</strong>
-        </span>
+        <div className="flex items-center gap-3 text-xs text-slate-500 font-medium">
+          {lastAutoSavedAt && (
+            <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-emerald-800 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-full">
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+              <span>Rascunho salvo às {lastAutoSavedAt}</span>
+            </span>
+          )}
+          <span>
+            Avaliador Atual: <strong>{currentUser?.fullName}</strong>
+          </span>
+        </div>
       </div>
 
       {/* Banner Principal com Placar de Nota em Tempo Real */}
       <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-6">
         <div className="space-y-2">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <span className="text-[10px] font-bold text-emerald-800 bg-emerald-50 px-2.5 py-0.5 rounded-full uppercase tracking-wider">
               {checklist.categoryName || 'Avaliação Operacional'}
             </span>
@@ -249,7 +435,7 @@ export const EvaluationExecutionView: React.FC<EvaluationExecutionViewProps> = (
 
           <p className="text-xs text-slate-600 max-w-2xl leading-relaxed">
             {checklist.description ||
-              'Marque os critérios atendidos durante o atendimento simulado. A nota ponderada é calculada automaticamente em tempo real.'}
+              'Marque os critérios atendidos durante o atendimento simulado. O progresso parcial é salvo automaticamente em andamento.'}
           </p>
         </div>
 
@@ -280,23 +466,375 @@ export const EvaluationExecutionView: React.FC<EvaluationExecutionViewProps> = (
         </div>
       </div>
 
-      {/* Grid Principal: Coluna Esquerda (Critérios Interativos) e Coluna Direita (Briefing do Caso) */}
+      {/* Split View: Coluna Esquerda Fixa/Sticky (Briefing do Caso e Guia) & Coluna Direita (Critérios e Conclusão) */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        {/* COLUNA ESQUERDA: LISTA DE CRITÉRIOS DE AVALIAÇÃO */}
+        {/* COLUNA ESQUERDA (FIXA/STICKY NO DESKTOP): CENÁRIO, DADOS DO CLIENTE, FALAS E GUIA MÉDICA */}
+        <div
+          id="printable-roteiro"
+          className="lg:col-span-5 lg:sticky lg:top-20 lg:max-h-[calc(100vh-6rem)] lg:overflow-y-auto bg-white border border-slate-200 rounded-2xl p-6 shadow-xs space-y-5 print:static print:max-h-none print:overflow-visible print:p-8 print:border-none"
+        >
+          <div className="flex items-center justify-between gap-2 border-b border-slate-100 pb-3 flex-wrap">
+            <div className="flex items-center gap-2 text-slate-900 font-bold text-sm">
+              <FileText className="w-4 h-4 text-emerald-700" />
+              <span>Cenário & Dados do Cliente</span>
+              {linkedExercises.length > 0 && (
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-900">
+                  {linkedExercises.length} {linkedExercises.length === 1 ? 'caso' : 'casos'}
+                </span>
+              )}
+            </div>
+            {allLinkedCharacters.length > 1 && (
+              <button
+                type="button"
+                onClick={() => {
+                  downloadMultipleGuidesPdf(
+                    allLinkedCharacters,
+                    checklist?.title || 'Checklist de Simulação',
+                    undefined,
+                    pdfGeneratedBy
+                  );
+                }}
+                className="px-2.5 py-1 text-[11px] font-bold text-white bg-[#064e3b] hover:bg-emerald-900 rounded-lg flex items-center gap-1 cursor-pointer transition-colors shadow-2xs no-print"
+                title="Baixar todos os roteiros dos casos vinculados em um único arquivo PDF"
+              >
+                <Download className="w-3 h-3 text-emerald-200" />
+                <span>Imprimir Todos ({allLinkedCharacters.length})</span>
+              </button>
+            )}
+          </div>
+
+          {/* Barra de seleção quando houver 2 ou mais casos vinculados */}
+          {linkedExercises.length >= 2 && (
+            <div className="flex items-center gap-1.5 flex-wrap bg-slate-50 p-1.5 rounded-xl border border-slate-200">
+              {linkedExercises.map((ex, idx) => {
+                const tabVal = String(idx);
+                const isActive = selectedExerciseTab === tabVal;
+                return (
+                  <button
+                    key={ex.id}
+                    type="button"
+                    onClick={() => setSelectedExerciseTab(tabVal)}
+                    className={`px-2.5 py-1.5 rounded-lg text-[11px] font-bold transition-all cursor-pointer max-w-full truncate ${
+                      isActive
+                        ? 'bg-[#0f3e2e] text-white shadow-xs'
+                        : 'bg-white text-slate-700 border border-slate-200 hover:border-emerald-400'
+                    }`}
+                    title={`Caso ${idx + 1}: ${ex.title}`}
+                  >
+                    Caso {idx + 1}: {ex.title}
+                  </button>
+                );
+              })}
+              <button
+                type="button"
+                onClick={() => setSelectedExerciseTab('all')}
+                className={`px-2.5 py-1.5 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
+                  selectedExerciseTab === 'all'
+                    ? 'bg-[#0f3e2e] text-white shadow-xs'
+                    : 'bg-white text-slate-700 border border-slate-200 hover:border-emerald-400'
+                }`}
+              >
+                Ver Todos ({linkedExercises.length})
+              </button>
+            </div>
+          )}
+
+          {displayedExercises.length > 0 ? (
+            <div className="space-y-6 text-xs">
+              {displayedExercises.map((ex) => {
+                const exIndex = linkedExercises.findIndex((item) => item.id === ex.id);
+                const exCharacters = ex.characterIds
+                  .map((id) => characters.find((c) => c.id === id))
+                  .filter(Boolean) as Character[];
+
+                return (
+                  <div
+                    key={ex.id}
+                    className={`space-y-4 ${
+                      displayedExercises.length > 1 ? 'pb-6 border-b-2 border-slate-100 last:pb-0 last:border-b-0' : ''
+                    }`}
+                  >
+                    <div>
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          {linkedExercises.length >= 2 && (
+                            <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-md bg-[#0f3e2e] text-white uppercase">
+                              Caso {exIndex + 1} de {linkedExercises.length}
+                            </span>
+                          )}
+                          {ex.cell && OFFICIAL_CELLS[ex.cell] && (
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-md border border-slate-200 bg-slate-50 text-slate-700 inline-flex items-center gap-1">
+                              <Building2 className="w-3 h-3 text-slate-500" />
+                              <span>{OFFICIAL_CELLS[ex.cell].name}</span>
+                            </span>
+                          )}
+                          <span className="text-[10px] font-bold text-emerald-800 bg-emerald-50 px-2.5 py-0.5 rounded-full uppercase">
+                            {ex.categoryName || 'Exercício'}
+                          </span>
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-slate-100 text-slate-700">
+                            Dificuldade: {ex.difficulty || 'Mediano'}
+                          </span>
+                        </div>
+
+                        {exCharacters.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              downloadMultipleGuidesPdf(
+                                exCharacters,
+                                ex.title,
+                                undefined,
+                                pdfGeneratedBy
+                              )
+                            }
+                            className="px-2 py-1 text-[10px] font-bold text-emerald-900 bg-emerald-100 hover:bg-emerald-200 rounded-lg flex items-center gap-1 cursor-pointer transition-colors no-print"
+                            title="Baixar roteiros deste caso em PDF único"
+                          >
+                            <Download className="w-3 h-3" />
+                            <span>PDF do Caso</span>
+                          </button>
+                        )}
+                      </div>
+
+                      <h3 className="text-base font-bold text-slate-900 leading-snug mt-1.5">
+                        {ex.title}
+                      </h3>
+                    </div>
+
+                    {/* Anexo(s) do Próprio Exercício (se existir) */}
+                    {(() => {
+                      const exAttachments = getExerciseAttachments(ex);
+                      if (exAttachments.length === 0) return null;
+                      return (
+                        <div className="flex items-center justify-between gap-2 bg-emerald-50/70 border border-emerald-200 rounded-xl px-3 py-2">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <FileText className="w-4 h-4 text-emerald-700 shrink-0" />
+                            <span className="text-[11px] font-semibold text-emerald-950 truncate">
+                              {exAttachments.length === 1
+                                ? exAttachments[0].name
+                                : `${exAttachments.length} Documentos de Apoio do Cenário`}
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setAttachedGuideModal({
+                                title: `Documento do Caso · ${ex.title}`,
+                                guides: exAttachments,
+                              })
+                            }
+                            className="px-2.5 py-1 text-[11px] font-bold text-white bg-[#0f3e2e] hover:bg-emerald-900 rounded-lg transition-colors cursor-pointer shrink-0"
+                          >
+                            {exAttachments.length > 1
+                              ? `Visualizar Guias (${exAttachments.length})`
+                              : 'Visualizar Guia Médica'}
+                          </button>
+                        </div>
+                      );
+                    })()}
+
+                    {/* Roteiro e Orientações do Caso */}
+                    <div className="space-y-1.5">
+                      <div className="font-bold text-slate-800 uppercase text-[11px] tracking-wide">
+                        Orientações do Caso:
+                      </div>
+                      <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-700 leading-relaxed font-medium whitespace-pre-line">
+                        {ex.scenarioInstructions}
+                      </div>
+                    </div>
+
+                    {/* Clientes a Serem Interpretados */}
+                    {exCharacters.length > 0 && (
+                      <div className="space-y-2.5 pt-2 border-t border-slate-100">
+                        <div className="font-bold text-slate-800 uppercase text-[11px] tracking-wide">
+                          Cliente / Paciente ({exCharacters.length}):
+                        </div>
+                        <div className="space-y-3">
+                          {exCharacters.map((char) => {
+                            const tierBadge =
+                              CUSTOMER_TIER_BADGES[char.customerTier || 'Mediano'] ||
+                              CUSTOMER_TIER_BADGES['Mediano'];
+                            const cellKey = (char.cell || 'OPERADORA') as OfficialCell;
+                            const cellMeta = OFFICIAL_CELLS[cellKey] || OFFICIAL_CELLS['OPERADORA'];
+
+                            return (
+                              <div
+                                key={char.id}
+                                className="bg-emerald-50/70 border border-emerald-200 rounded-xl p-4 space-y-2.5"
+                              >
+                                <div className="flex items-center justify-between gap-2">
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    <span className="text-[9px] font-bold px-2 py-0.5 rounded-md border border-slate-200 bg-slate-50 text-slate-700 inline-flex items-center gap-1">
+                                      <Building2 className="w-2.5 h-2.5 text-slate-500" />
+                                      <span>{cellMeta.name}</span>
+                                    </span>
+                                    <span className="font-bold text-emerald-950 text-xs">
+                                      {char.name} ({char.age})
+                                    </span>
+                                  </div>
+                                  <span
+                                    className={`text-[9px] font-bold px-2 py-0.5 rounded-full border ${tierBadge.bg} ${tierBadge.text} ${tierBadge.border}`}
+                                  >
+                                    {tierBadge.label}
+                                  </span>
+                                </div>
+
+                                <div className="text-[11px] text-slate-700 bg-white/80 border border-emerald-200/70 rounded-lg px-2.5 py-1.5">
+                                  <strong>Carteirinha:</strong>{' '}
+                                  <span className="font-mono font-bold text-emerald-950">
+                                    {char.cardNumber}
+                                  </span>{' '}
+                                  · <strong>Cidade:</strong> {char.city}
+                                </div>
+
+                                <p className="text-slate-700 text-[11px] leading-relaxed">
+                                  <strong>Contexto:</strong> {char.serviceContext || char.history}
+                                </p>
+
+                                <p className="text-slate-700 text-[11px] leading-relaxed">
+                                  <strong>Humor:</strong> {char.temperament}
+                                </p>
+
+                                <p className="text-slate-700 text-[11px] leading-relaxed">
+                                  <strong>Objetivo:</strong> {char.objectives}
+                                </p>
+
+                                {(() => {
+                                  const phrases = normalizePhrases(char.typicalPhrases);
+                                  if (phrases.length === 0) return null;
+                                  return (
+                                    <div className="bg-emerald-100/60 p-3 rounded-xl border border-emerald-200/80 space-y-1.5">
+                                      <div className="text-[10px] font-bold uppercase tracking-wider text-emerald-900">
+                                        Falas Típicas do Cliente ({phrases.length}):
+                                      </div>
+                                      <ul className="space-y-1 pl-1">
+                                        {phrases.map((phrase, pIdx) => (
+                                          <li
+                                            key={pIdx}
+                                            className="text-slate-800 text-[11px] leading-relaxed flex items-start gap-1.5"
+                                          >
+                                            <span className="text-emerald-700 font-bold shrink-0">•</span>
+                                            <span className="italic">&ldquo;{phrase}&rdquo;</span>
+                                          </li>
+                                        ))}
+                                      </ul>
+                                    </div>
+                                  );
+                                })()}
+
+                                {(() => {
+                                  const charGuides = getCharacterGuides(char);
+                                  return (
+                                    <div className="pt-1 flex items-center gap-2 flex-wrap">
+                                      {charGuides.length > 0 && (
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            setAttachedGuideModal({
+                                              title: `${
+                                                charGuides.length > 1 ? 'Guias Médicas' : 'Guia Médica'
+                                              } · ${char.name}`,
+                                              subtitle: `${ex.title}${
+                                                char.cardNumber ? ` · Carteirinha ${char.cardNumber}` : ''
+                                              }`,
+                                              guides: charGuides,
+                                            })
+                                          }
+                                          className="flex-1 min-w-[155px] py-2 px-3 bg-[#0f3e2e] hover:bg-emerald-900 text-white font-bold rounded-lg transition-colors flex items-center justify-center gap-1.5 cursor-pointer text-xs shadow-2xs"
+                                        >
+                                          <FileText className="w-3.5 h-3.5 text-emerald-200" />
+                                          <span>
+                                            {charGuides.length > 1
+                                              ? `Visualizar Guias (${charGuides.length})`
+                                              : 'Visualizar Guia Médica'}
+                                          </span>
+                                        </button>
+                                      )}
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setGuideModalChar(char);
+                                          setGuideModalExerciseTitle(ex.title);
+                                        }}
+                                        className={`${
+                                          charGuides.length > 0 ? '' : 'flex-1 '
+                                        }py-2 px-3 bg-emerald-100 hover:bg-emerald-200 text-emerald-950 font-bold rounded-lg transition-colors flex items-center justify-center gap-1.5 cursor-pointer text-xs`}
+                                      >
+                                        <Eye className="w-3.5 h-3.5 text-emerald-800" />
+                                        <span>Ficha do Cliente</span>
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          downloadGuidePdf(char, ex.title, pdfGeneratedBy)
+                                        }
+                                        className="py-2 px-3 bg-white hover:bg-slate-100 border border-slate-300 text-slate-800 font-bold rounded-lg transition-colors flex items-center justify-center gap-1.5 cursor-pointer text-xs"
+                                        title={`Baixar Cliente_${char.name.replace(/\s+/g, '_')}.pdf`}
+                                      >
+                                        <Download className="w-3.5 h-3.5 text-slate-700" />
+                                        <span>PDF</span>
+                                      </button>
+                                    </div>
+                                  );
+                                })()}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="p-8 text-center text-slate-500 text-xs space-y-2 border border-dashed border-slate-200 rounded-xl">
+              <FileText className="w-8 h-8 text-slate-300 mx-auto" />
+              <p>Este checklist não possui cenários de roleplay ou clientes associados.</p>
+              <p className="text-[11px] text-slate-400">
+                A avaliação é conduzida com base unicamente na observação direta dos critérios.
+              </p>
+            </div>
+          )}
+        </div>
+
+        {/* COLUNA DIREITA: LISTA DE CRITÉRIOS INTERATIVOS E CONCLUSÃO */}
         <div className="lg:col-span-7 bg-white border border-slate-200 rounded-2xl p-6 shadow-xs space-y-5">
-          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3">
             <div>
               <h2 className="font-bold text-slate-900 text-sm flex items-center gap-2">
                 <CheckSquare className="w-4 h-4 text-emerald-700" />
                 <span>Critérios de Avaliação ({criteriaState.length})</span>
               </h2>
               <span className="text-[11px] text-slate-500">
-                Clique nos itens atendidos para pontuar
+                Clique nos itens atendidos para pontuar e salvar automaticamente
               </span>
             </div>
-            <span className="text-xs font-mono font-bold text-emerald-800 bg-emerald-50 px-2.5 py-1 rounded-lg">
-              {criteriaState.filter((c) => c.checked).length} / {criteriaState.length} Concluídos
-            </span>
+
+            <div className="flex items-center gap-2 flex-wrap">
+              {canEditEvaluation && criteriaState.length > 0 && (
+                <button
+                  type="button"
+                  onClick={handleToggleAllCriteria}
+                  className={`px-3 py-1.5 text-xs font-bold rounded-lg border transition-colors flex items-center gap-1.5 cursor-pointer ${
+                    allCriteriaChecked
+                      ? 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-300'
+                      : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border-emerald-300'
+                  }`}
+                >
+                  <CheckCheck className="w-3.5 h-3.5" />
+                  <span>
+                    {allCriteriaChecked
+                      ? 'Desmarcar todos os critérios'
+                      : 'Marcar todos os critérios'}
+                  </span>
+                </button>
+              )}
+
+              <span className="text-xs font-mono font-bold text-emerald-800 bg-emerald-50 px-2.5 py-1.5 rounded-lg border border-emerald-200/70">
+                {criteriaState.filter((c) => c.checked).length} / {criteriaState.length} Concluídos
+              </span>
+            </div>
           </div>
 
           <div className="space-y-3">
@@ -356,12 +894,14 @@ export const EvaluationExecutionView: React.FC<EvaluationExecutionViewProps> = (
             <div className="space-y-1.5">
               <label className="block text-xs font-bold text-slate-900 flex items-center justify-between">
                 <span>Observações Gerais / Feedback do Instrutor</span>
-                <span className="text-[10px] text-slate-400 font-normal">Exibido no Relatório de Avaliação</span>
+                <span className="text-[10px] text-slate-400 font-normal">
+                  Exibido no Relatório de Avaliação
+                </span>
               </label>
               <textarea
                 rows={4}
                 value={generalObservations}
-                onChange={(e) => setGeneralObservations(e.target.value)}
+                onChange={(e) => handleUpdateGeneralObservations(e.target.value)}
                 placeholder="Digite anotações gerais sobre o desempenho, postura, empatia, aderência aos processos e oportunidades de melhoria do colaborador durante o atendimento..."
                 className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500 font-medium text-slate-800 text-xs placeholder-slate-400 leading-relaxed resize-y"
               />
@@ -373,7 +913,8 @@ export const EvaluationExecutionView: React.FC<EvaluationExecutionViewProps> = (
                   Resultado / Próximo Status do Colaborador:
                 </label>
                 <span className="text-[11px] text-slate-500 font-medium">
-                  Pontuação: <strong className="text-slate-800">{currentScore.toFixed(1)}/10</strong> ({Math.round(currentScore * 10)}%)
+                  Pontuação: <strong className="text-slate-800">{currentScore.toFixed(1)}/10</strong> (
+                  {Math.round(currentScore * 10)}%)
                 </span>
               </div>
               <div className="grid grid-cols-2 gap-3 text-xs">
@@ -402,7 +943,7 @@ export const EvaluationExecutionView: React.FC<EvaluationExecutionViewProps> = (
                       : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-100'
                   }`}
                 >
-                  <div>⚠ Necessita Reforço</div>
+                  <div>⚠ Validação da liderança</div>
                   {currentScore < 7.0 && (
                     <div className="text-[10px] font-medium opacity-90 mt-0.5">
                       (Sugerido por pontuação &lt; 70%)
@@ -412,15 +953,19 @@ export const EvaluationExecutionView: React.FC<EvaluationExecutionViewProps> = (
               </div>
             </div>
 
-            {/* Apenas Administradores e Avaliadores podem concluir e registrar; Auxiliar não tem esse botão */}
-            {isAuxiliar ? (
+            {/* Apenas usuários com permissão can_apply_evaluations e trilha aberta podem concluir e registrar */}
+            {!canApplyEvaluations ? (
               <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-800 text-center font-medium">
-                Perfil de Acompanhamento (Auxiliar): Esta visualização é de consulta ao roteiro e critérios. O registro e finalização da avaliação são exclusivos de Avaliadores e Administradores.
+                Visualização Somente Leitura: O registro e a finalização de avaliações exigem a permissão de aplicar avaliações.
+              </div>
+            ) : isTrackLocked ? (
+              <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900 text-center font-semibold">
+                Trilha finalizada pelo Guardião Anfitrião: novas edições ou registros de avaliação estão bloqueados.
               </div>
             ) : (
               <button
                 type="button"
-                disabled={isFinishing || !canApplyEvaluations}
+                disabled={isFinishing || !canEditEvaluation}
                 onClick={handleFinishEvaluation}
                 className="w-full py-3.5 bg-[#0f3e2e] hover:bg-emerald-900 text-white font-bold rounded-xl transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 text-sm"
               >
@@ -430,191 +975,22 @@ export const EvaluationExecutionView: React.FC<EvaluationExecutionViewProps> = (
             )}
           </div>
         </div>
-
-        {/* COLUNA DIREITA: CENÁRIO DE SIMULAÇÃO E CLIENTES (ROLEPLAY) */}
-        <div
-          id="printable-roteiro"
-          className="lg:col-span-5 bg-white border border-slate-200 rounded-2xl p-6 shadow-xs space-y-5 print:p-8 print:border-none"
-        >
-          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-            <div className="flex items-center gap-2 text-slate-900 font-bold text-sm">
-              <FileText className="w-4 h-4 text-emerald-700" />
-              <span>Cenário de Roleplay & Clientes</span>
-            </div>
-            {currentExercise && (
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-50 text-emerald-700">
-                  Dificuldade: {currentExercise.difficulty || 'Mediano'}
-                </span>
-                {currentExercise.characterIds.length > 1 && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const chars = currentExercise.characterIds
-                        .map((id) => characters.find((c) => c.id === id))
-                        .filter(Boolean) as Character[];
-                      downloadMultipleGuidesPdf(chars, currentExercise.title);
-                    }}
-                    className="px-2.5 py-1 text-[11px] font-bold text-white bg-[#064e3b] hover:bg-emerald-900 rounded-lg flex items-center gap-1 cursor-pointer transition-colors shadow-2xs no-print"
-                    title="Baixar todos os roteiros deste exercício em um único arquivo PDF"
-                  >
-                    <Download className="w-3 h-3 text-emerald-200" />
-                    <span>Imprimir Todos (PDF Único)</span>
-                  </button>
-                )}
-              </div>
-            )}
-          </div>
-
-          {currentExercise ? (
-            <div className="space-y-4 text-xs">
-              <div>
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  {currentExercise.cell && OFFICIAL_CELLS[currentExercise.cell] && (
-                    <span
-                      className="text-[10px] font-bold px-2 py-0.5 rounded-md border border-slate-200 bg-slate-50 text-slate-700 inline-flex items-center gap-1"
-                    >
-                      <Building2 className="w-3 h-3 text-slate-500" />
-                      <span>{OFFICIAL_CELLS[currentExercise.cell].name}</span>
-                    </span>
-                  )}
-                  <span className="text-[10px] font-bold text-emerald-800 bg-emerald-50 px-2.5 py-0.5 rounded-full uppercase">
-                    {currentExercise.categoryName || 'Exercício'}
-                  </span>
-                </div>
-                <h3 className="text-base font-bold text-slate-900 leading-snug mt-1.5">
-                  {currentExercise.title}
-                </h3>
-              </div>
-
-              {/* Roteiro e Orientações do Caso */}
-              <div className="space-y-1.5">
-                <div className="font-bold text-slate-800 uppercase text-[11px] tracking-wide">
-                  Orientações do Caso:
-                </div>
-                <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-700 leading-relaxed font-medium whitespace-pre-line">
-                  {currentExercise.scenarioInstructions}
-                </div>
-              </div>
-
-              {/* Clientes a Serem Interpretados */}
-              {exerciseCharacters.length > 0 && (
-                <div className="space-y-2.5 pt-2 border-t border-slate-100">
-                  <div className="font-bold text-slate-800 uppercase text-[11px] tracking-wide">
-                    Personagens do Atendimento ({exerciseCharacters.length}):
-                  </div>
-                  <div className="space-y-3">
-                    {exerciseCharacters.map((char) => {
-                      const tierBadge =
-                        CUSTOMER_TIER_BADGES[char.customerTier || 'Mediano'] ||
-                        CUSTOMER_TIER_BADGES['Mediano'];
-                      const cellKey = (char.cell || 'OPERADORA') as OfficialCell;
-                      const cellMeta = OFFICIAL_CELLS[cellKey] || OFFICIAL_CELLS['OPERADORA'];
-
-                      return (
-                        <div
-                          key={char.id}
-                          className="bg-emerald-50/70 border border-emerald-200 rounded-xl p-4 space-y-2"
-                        >
-                          <div className="flex items-center justify-between gap-2">
-                            <div className="flex items-center gap-1.5 flex-wrap">
-                              <span
-                                className="text-[9px] font-bold px-2 py-0.5 rounded-md border border-slate-200 bg-slate-50 text-slate-700 inline-flex items-center gap-1"
-                              >
-                                <Building2 className="w-2.5 h-2.5 text-slate-500" />
-                                <span>{cellMeta.name}</span>
-                              </span>
-                              <span className="font-bold text-emerald-950 text-xs">
-                                {char.name} ({char.age})
-                              </span>
-                            </div>
-                            <span
-                              className={`text-[9px] font-bold px-2 py-0.5 rounded-full border ${tierBadge.bg} ${tierBadge.text} ${tierBadge.border}`}
-                            >
-                              {tierBadge.label}
-                            </span>
-                          </div>
-
-                          <div className="text-[11px] text-slate-600">
-                            <strong>Carteirinha:</strong> {char.cardNumber} ·{' '}
-                            <strong>Cidade:</strong> {char.city}
-                          </div>
-
-                          <p className="text-slate-700 text-[11px] leading-relaxed">
-                            <strong>Contexto:</strong> {char.serviceContext || char.history}
-                          </p>
-
-                          <p className="text-slate-700 text-[11px] leading-relaxed">
-                            <strong>Humor:</strong> {char.temperament}
-                          </p>
-
-                          <p className="text-slate-700 text-[11px] leading-relaxed">
-                            <strong>Objetivo:</strong> {char.objectives}
-                          </p>
-
-                          {(() => {
-                            const phrases = normalizePhrases(char.typicalPhrases);
-                            if (phrases.length === 0) return null;
-                            return (
-                              <div className="bg-emerald-100/60 p-3 rounded-xl border border-emerald-200/80 space-y-1.5">
-                                <div className="text-[10px] font-bold uppercase tracking-wider text-emerald-900 flex items-center gap-1">
-                                  <span>Falas e Objeções Típicas do Cliente ({phrases.length}):</span>
-                                </div>
-                                <ul className="space-y-1 pl-1">
-                                  {phrases.map((phrase, pIdx) => (
-                                    <li key={pIdx} className="text-slate-800 text-[11px] leading-relaxed flex items-start gap-1.5">
-                                      <span className="text-emerald-700 font-bold shrink-0">•</span>
-                                      <span className="italic">"{phrase}"</span>
-                                    </li>
-                                  ))}
-                                </ul>
-                              </div>
-                            );
-                          })()}
-
-                          <div className="pt-2 flex items-center gap-2">
-                            <button
-                              type="button"
-                              onClick={() => setGuideModalChar(char)}
-                              className="flex-1 py-1.5 px-2 bg-emerald-100 hover:bg-emerald-200 text-emerald-900 font-bold rounded-lg transition-colors flex items-center justify-center gap-1.5 cursor-pointer text-xs"
-                            >
-                              <Eye className="w-3.5 h-3.5 text-emerald-700" />
-                              <span>Visualizar Ficha</span>
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => downloadGuidePdf(char, currentExercise?.title)}
-                              className="py-1.5 px-2.5 bg-[#064e3b] hover:bg-emerald-900 text-white font-bold rounded-lg transition-colors flex items-center justify-center gap-1.5 cursor-pointer text-xs shadow-2xs"
-                              title={`Baixar Cliente_${char.name.replace(/\s+/g, '_')}.pdf`}
-                            >
-                              <Download className="w-3.5 h-3.5 text-emerald-200" />
-                              <span>Baixar PDF</span>
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="p-8 text-center text-slate-500 text-xs space-y-2 border border-dashed border-slate-200 rounded-xl">
-              <FileText className="w-8 h-8 text-slate-300 mx-auto" />
-              <p>Este checklist não possui cenários de roleplay ou clientes associados.</p>
-              <p className="text-[11px] text-slate-400">
-                A avaliação é conduzida com base unicamente na observação direta dos critérios.
-              </p>
-            </div>
-          )}
-        </div>
       </div>
 
       {/* Espelho Oficial da Guia */}
       <GuideMirrorModal
         character={guideModalChar}
-        exerciseTitle={currentExercise?.title}
-        onClose={() => setGuideModalChar(null)}
+        exerciseTitle={guideModalExerciseTitle}
+        onClose={() => {
+          setGuideModalChar(null);
+          setGuideModalExerciseTitle(undefined);
+        }}
+      />
+
+      {/* Visualizador Popup de Guia Médica Anexada */}
+      <AttachedGuideViewerModal
+        attachment={attachedGuideModal}
+        onClose={() => setAttachedGuideModal(null)}
       />
     </div>
   );

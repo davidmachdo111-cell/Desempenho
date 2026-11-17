@@ -4,33 +4,42 @@ import {
   Plus,
   Search,
   Edit3,
+  Copy,
   Trash2,
-  CheckCircle2,
-  AlertCircle,
   X,
-  MessageSquare,
-  Sparkles,
   UserCheck,
   FileText,
   Upload,
-  ExternalLink,
   CreditCard,
   MapPin,
-  ShieldAlert,
   Building2,
   Download,
   Eye,
+  CheckCircle2,
+  AlertTriangle,
+  FileSpreadsheet,
 } from 'lucide-react';
 import { usePortalStore } from '../../../context/PortalStoreContext';
+import { useToast } from '../../../context/ToastContext';
 import { GuideMirrorModal } from '../../../components/GuideMirrorModal';
+import {
+  AttachedGuideViewerModal,
+  AttachedGuideViewerData,
+} from '../../../components/AttachedGuideViewerModal';
 import { downloadGuidePdf, downloadMultipleGuidesPdf } from '../../../lib/downloadHelpers';
 import {
+  BATCH_CHARACTER_TEMPLATE,
+  parseBatchCharactersInput,
+} from '../../../lib/batchCharacterParser';
+import {
+  AttachedGuideItem,
   Character,
   Gender,
   CustomerTier,
   OfficialCell,
   OFFICIAL_CELLS,
   OFFICIAL_CELL_LIST,
+  getCharacterGuides,
   normalizePhrases,
 } from '../../../types/portal';
 
@@ -73,13 +82,22 @@ export const CUSTOMER_TIER_BADGES: Record<
 export const CharactersManagementView: React.FC = () => {
   const {
     characters,
+    currentUser,
     hasPermission,
     saveCharacter,
+    batchImportCharacters,
     deleteCharacter,
     uploadClientGuide,
   } = usePortalStore();
+  const { showToast } = useToast();
 
-  const canManage = hasPermission('can_manage_exercises');
+  const pdfGeneratedBy = currentUser
+    ? { fullName: currentUser.fullName, username: currentUser.username }
+    : undefined;
+
+  const isAdmin = currentUser?.role === 'admin';
+  const canManage =
+    hasPermission('can_manage_exercises') || hasPermission('cells:manage');
 
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedTierFilter, setSelectedTierFilter] = useState<string>('all');
@@ -90,17 +108,10 @@ export const CharactersManagementView: React.FC = () => {
   }>({ open: false });
 
   const [deleteConfirmModal, setDeleteConfirmModal] = useState<Character | null>(null);
-  const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
-  // Modal para visualização e espelho da Guia do Cliente
+  // Modal para visualização e espelho da Guia do Cliente e do anexo real
   const [mirrorCharacter, setMirrorCharacter] = useState<Character | null>(null);
-  const [viewGuideModal, setViewGuideModal] = useState<{
-    open: boolean;
-    clientName: string;
-    guideUrl: string;
-    guideName: string;
-    character?: Character;
-  } | null>(null);
+  const [attachedGuideViewer, setAttachedGuideViewer] = useState<AttachedGuideViewerData | null>(null);
 
   // Formulário com os campos obrigatórios (incluindo Célula e Falas em tópicos dinâmicos)
   const [formData, setFormData] = useState<{
@@ -115,8 +126,7 @@ export const CharactersManagementView: React.FC = () => {
     temperament: string;
     objectives: string;
     typicalPhrases: string[];
-    guideAttachmentUrl: string;
-    guideAttachmentName: string;
+    guideAttachments: AttachedGuideItem[];
   }>({
     name: '',
     cell: 'OPERADORA',
@@ -129,13 +139,19 @@ export const CharactersManagementView: React.FC = () => {
     temperament: '',
     objectives: '',
     typicalPhrases: [],
-    guideAttachmentUrl: '',
-    guideAttachmentName: '',
+    guideAttachments: [],
   });
 
   const [phraseInput, setPhraseInput] = useState('');
   const [isUploadingGuide, setIsUploadingGuide] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Estados exclusivos de Admin: Importação em Lote Determinística (Sem IA)
+  const [isBatchModalOpen, setIsBatchModalOpen] = useState(false);
+  const [batchRawText, setBatchRawText] = useState('');
+  const [isBatchImporting, setIsBatchImporting] = useState(false);
+
+  const parsedBatch = useMemo(() => parseBatchCharactersInput(batchRawText), [batchRawText]);
 
   const filteredCharacters = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -174,8 +190,7 @@ export const CharactersManagementView: React.FC = () => {
         temperament: character.temperament || '',
         objectives: character.objectives || '',
         typicalPhrases: normalizePhrases(character.typicalPhrases),
-        guideAttachmentUrl: character.guideAttachmentUrl || '',
-        guideAttachmentName: character.guideAttachmentName || '',
+        guideAttachments: getCharacterGuides(character),
       });
       setModalState({ open: true, character });
     } else {
@@ -191,8 +206,7 @@ export const CharactersManagementView: React.FC = () => {
         temperament: '',
         objectives: '',
         typicalPhrases: [],
-        guideAttachmentUrl: '',
-        guideAttachmentName: '',
+        guideAttachments: [],
       });
       setModalState({ open: true });
     }
@@ -217,37 +231,71 @@ export const CharactersManagementView: React.FC = () => {
   };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const files = Array.from(e.target.files || []);
+    e.target.value = '';
+    if (files.length === 0) return;
 
     setIsUploadingGuide(true);
-    const res = await uploadClientGuide(file);
+    const uploadedItems: AttachedGuideItem[] = [];
+    let failedCount = 0;
+
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      const res = await uploadClientGuide(file);
+      if (res.success && res.url) {
+        uploadedItems.push({
+          id: `guide-${Date.now()}-${i}-${Math.random().toString(36).slice(2, 6)}`,
+          name: res.fileName || file.name,
+          url: res.url,
+          uploadedAt: new Date().toISOString(),
+        });
+      } else {
+        failedCount++;
+      }
+    }
+
     setIsUploadingGuide(false);
 
-    if (res.success && res.url) {
+    if (uploadedItems.length > 0) {
       setFormData((prev) => ({
         ...prev,
-        guideAttachmentUrl: res.url || '',
-        guideAttachmentName: res.fileName || file.name,
+        guideAttachments: [...prev.guideAttachments, ...uploadedItems],
       }));
-      setFeedback({ type: 'success', text: 'Guia do cliente carregada com sucesso!' });
-    } else {
-      setFeedback({ type: 'error', text: res.message });
+      showToast(
+        uploadedItems.length === 1
+          ? `Guia "${uploadedItems[0].name}" adicionada com sucesso!`
+          : `${uploadedItems.length} guias médicas adicionadas com sucesso!`,
+        'success'
+      );
     }
+
+    if (failedCount > 0) {
+      showToast(
+        `${failedCount} arquivo(s) não puderam ser processados.`,
+        uploadedItems.length > 0 ? 'info' : 'error'
+      );
+    }
+  };
+
+  const handleRemoveGuideAttachment = (guideId: string) => {
+    setFormData((prev) => ({
+      ...prev,
+      guideAttachments: prev.guideAttachments.filter((g) => g.id !== guideId),
+    }));
   };
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.name.trim()) {
-      setFeedback({ type: 'error', text: 'Informe o nome completo do cliente.' });
+      showToast('Informe o nome completo do cliente.', 'error');
       return;
     }
     if (!formData.cardNumber.trim()) {
-      setFeedback({ type: 'error', text: 'Informe o número da carteirinha da operadora.' });
+      showToast('Informe o número da carteirinha da operadora.', 'error');
       return;
     }
     if (!formData.serviceContext.trim()) {
-      setFeedback({ type: 'error', text: 'Informe o contexto do atendimento da simulação.' });
+      showToast('Informe o contexto do atendimento da simulação.', 'error');
       return;
     }
 
@@ -271,21 +319,51 @@ export const CharactersManagementView: React.FC = () => {
       temperament: formData.temperament.trim() || 'Neutro, aguarda orientações',
       objectives: formData.objectives.trim() || 'Obter atendimento resolutivo para sua solicitação',
       typicalPhrases: finalPhrases.length > 0 ? finalPhrases : ['Gostaria de resolver minha guia.'],
-      guideAttachmentUrl: formData.guideAttachmentUrl || null,
-      guideAttachmentName: formData.guideAttachmentName || null,
+      guideAttachments: formData.guideAttachments,
+      guideAttachmentUrl: formData.guideAttachments[0]?.url || null,
+      guideAttachmentName: formData.guideAttachments[0]?.name || null,
     });
     setIsSubmitting(false);
 
     if (res.success) {
-      setFeedback({
-        type: 'success',
-        text: modalState.character
+      showToast(
+        modalState.character
           ? 'Perfil do cliente atualizado com sucesso!'
           : 'Novo cliente cadastrado no Banco de Clientes!',
-      });
+        'success'
+      );
       setModalState({ open: false });
     } else {
-      setFeedback({ type: 'error', text: res.message });
+      showToast(res.message, 'error');
+    }
+  };
+
+  const handleDuplicateCharacter = async (char: Character) => {
+    const copiedGuides = getCharacterGuides(char).map((g, idx) => ({
+      ...g,
+      id: `guide-${Date.now()}-${idx}`,
+    }));
+    const res = await saveCharacter({
+      name: `${char.name} (Cópia)`,
+      cell: (char.cell as OfficialCell) || 'OPERADORA',
+      age: char.age || 'Não informada',
+      gender: char.gender || 'Masculino',
+      city: char.city || 'São Paulo - SP',
+      cardNumber: char.cardNumber,
+      customerTier: char.customerTier || 'Mediano',
+      serviceContext: char.serviceContext || char.history || '',
+      temperament: char.temperament,
+      objectives: char.objectives,
+      typicalPhrases: normalizePhrases(char.typicalPhrases),
+      guideAttachments: copiedGuides,
+      guideAttachmentUrl: copiedGuides[0]?.url ?? null,
+      guideAttachmentName: copiedGuides[0]?.name ?? null,
+    });
+
+    if (res.success) {
+      showToast(`Cliente "${char.name} (Cópia)" criado com sucesso!`, 'success');
+    } else {
+      showToast(res.message, 'error');
     }
   };
 
@@ -295,41 +373,75 @@ export const CharactersManagementView: React.FC = () => {
     setDeleteConfirmModal(null);
 
     if (res.success) {
-      setFeedback({ type: 'success', text: 'Cliente removido com sucesso.' });
+      showToast('Cliente removido com sucesso.', 'success');
     } else {
-      setFeedback({ type: 'error', text: res.message });
+      showToast(res.message, 'error');
+    }
+  };
+
+  const handleCopyBatchTemplate = async () => {
+    try {
+      await navigator.clipboard.writeText(BATCH_CHARACTER_TEMPLATE);
+      showToast('Modelo padrão copiado para a área de transferência!', 'success');
+    } catch {
+      setBatchRawText(BATCH_CHARACTER_TEMPLATE);
+      showToast('Modelo padrão inserido diretamente no campo de texto.', 'info');
+    }
+  };
+
+  const handleDownloadBatchTemplate = () => {
+    const blob = new Blob([BATCH_CHARACTER_TEMPLATE], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'modelo_importacao_clientes.txt';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    showToast('Arquivo modelo_importacao_clientes.txt baixado!', 'success');
+  };
+
+  const handleConfirmBatchImport = async () => {
+    if (!isAdmin) return;
+    if (
+      parsedBatch.validItems.length === 0 ||
+      parsedBatch.invalidItems.length > 0 ||
+      parsedBatch.globalErrors.length > 0
+    ) {
+      showToast('Corrija os blocos com erro antes de confirmar a importação.', 'error');
+      return;
+    }
+
+    setIsBatchImporting(true);
+    const res = await batchImportCharacters(
+      parsedBatch.validItems.map((item) => ({
+        name: item.name,
+        cell: item.cell,
+        age: item.age,
+        gender: item.gender,
+        city: item.city,
+        cardNumber: item.cardNumber,
+        customerTier: item.customerTier,
+        serviceContext: item.serviceContext,
+        temperament: item.temperament,
+        objectives: item.objectives,
+        typicalPhrases: item.typicalPhrases,
+      }))
+    );
+    setIsBatchImporting(false);
+
+    if (res.success) {
+      showToast(res.message, 'success');
+      setBatchRawText('');
+      setIsBatchModalOpen(false);
+    } else {
+      showToast(res.message, 'error');
     }
   };
 
   return (
     <div className="space-y-6">
-      {/* Toast Feedback */}
-      {feedback && (
-        <div
-          className={`p-4 rounded-xl border flex items-center justify-between gap-4 text-sm shadow-sm transition-all ${
-            feedback.type === 'success'
-              ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
-              : 'bg-red-50 border-red-200 text-red-900'
-          }`}
-        >
-          <div className="flex items-center gap-2.5 font-medium">
-            {feedback.type === 'success' ? (
-              <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
-            ) : (
-              <AlertCircle className="w-5 h-5 text-red-600 shrink-0" />
-            )}
-            <span>{feedback.text}</span>
-          </div>
-          <button
-            type="button"
-            onClick={() => setFeedback(null)}
-            className="text-slate-400 hover:text-slate-700 cursor-pointer"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-      )}
-
       {/* Cabeçalho */}
       <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
@@ -345,12 +457,12 @@ export const CharactersManagementView: React.FC = () => {
           </p>
         </div>
 
-        {canManage && (
+        {(canManage || isAdmin) && (
           <div className="flex items-center gap-2 flex-wrap">
-            {filteredCharacters.length > 1 && (
+            {canManage && filteredCharacters.length > 1 && (
               <button
                 type="button"
-                onClick={() => downloadMultipleGuidesPdf(filteredCharacters, undefined, 'Banco_de_Clientes_Roteiros')}
+                onClick={() => downloadMultipleGuidesPdf(filteredCharacters, undefined, 'Banco_de_Clientes_Roteiros', pdfGeneratedBy)}
                 className="px-4 py-2.5 text-xs font-bold text-emerald-900 bg-emerald-100 hover:bg-emerald-200 border border-emerald-300 rounded-xl transition-all shadow-2xs flex items-center gap-2 shrink-0 cursor-pointer"
                 title="Gera um único PDF consolidando todas as fichas de clientes/roteiros da listagem"
               >
@@ -358,14 +470,27 @@ export const CharactersManagementView: React.FC = () => {
                 <span>Baixar Todos os Roteiros (PDF Único)</span>
               </button>
             )}
-            <button
-              type="button"
-              onClick={() => openModal()}
-              className="px-5 py-2.5 text-xs font-bold text-white bg-[#0f3e2e] hover:bg-emerald-900 rounded-xl transition-all shadow-sm flex items-center gap-2 shrink-0 cursor-pointer"
-            >
-              <Plus className="w-4 h-4" />
-              <span>+ Novo Cliente</span>
-            </button>
+            {isAdmin && (
+              <button
+                type="button"
+                onClick={() => setIsBatchModalOpen(true)}
+                className="px-4 py-2.5 text-xs font-bold text-[#0f3e2e] bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 rounded-xl transition-all shadow-2xs flex items-center gap-2 shrink-0 cursor-pointer"
+                title="Importar múltiplos clientes simultaneamente via texto estruturado ou JSON (Exclusivo Admin)"
+              >
+                <FileSpreadsheet className="w-4 h-4 text-[#0f3e2e]" />
+                <span>Importar em Lote</span>
+              </button>
+            )}
+            {canManage && (
+              <button
+                type="button"
+                onClick={() => openModal()}
+                className="px-5 py-2.5 text-xs font-bold text-white bg-[#0f3e2e] hover:bg-emerald-900 rounded-xl transition-all shadow-sm flex items-center gap-2 shrink-0 cursor-pointer"
+              >
+                <Plus className="w-4 h-4" />
+                <span>+ Novo Cliente</span>
+              </button>
+            )}
           </div>
         )}
       </div>
@@ -607,34 +732,80 @@ export const CharactersManagementView: React.FC = () => {
 
                 {/* Rodapé do Card: Roteiro, Guia e Ações de Download */}
                 <div className="space-y-3 pt-3 border-t border-slate-100">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between p-2.5 bg-slate-50 rounded-lg border border-slate-200 text-xs gap-2">
-                    <div className="flex items-center gap-2 truncate pr-1">
-                      <FileText className="w-4 h-4 text-emerald-700 shrink-0" />
-                      <span className="truncate text-slate-700 font-medium text-[11px]" title={char.guideAttachmentName || 'Ficha do Cliente / Roteiro'}>
-                        {char.guideAttachmentName || 'Ficha do Cliente / Roteiro'}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-1.5 shrink-0">
-                      <button
-                        type="button"
-                        onClick={() => setMirrorCharacter(char)}
-                        className="px-2.5 py-1 text-[11px] font-bold text-emerald-800 bg-emerald-100 hover:bg-emerald-200 rounded-lg transition-colors inline-flex items-center gap-1 cursor-pointer"
-                        title="Visualizar ficha e roteiro do cliente"
-                      >
-                        <Eye className="w-3 h-3" />
-                        <span>Visualizar Ficha</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => downloadGuidePdf(char)}
-                        className="px-2.5 py-1 text-[11px] font-bold text-white bg-[#064e3b] hover:bg-emerald-900 rounded-lg transition-colors inline-flex items-center gap-1 cursor-pointer shadow-2xs"
-                        title={`Baixar Cliente_${char.name.replace(/\s+/g, '_')}.pdf`}
-                      >
-                        <Download className="w-3 h-3 text-emerald-200" />
-                        <span>Baixar PDF</span>
-                      </button>
-                    </div>
-                  </div>
+                  {(() => {
+                    const charGuides = getCharacterGuides(char);
+                    return (
+                      <div className="flex flex-col gap-2 p-2.5 bg-slate-50 rounded-lg border border-slate-200 text-xs">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2 truncate pr-1">
+                            <FileText className="w-4 h-4 text-emerald-700 shrink-0" />
+                            <span
+                              className="truncate text-slate-700 font-medium text-[11px]"
+                              title={
+                                charGuides.length > 0
+                                  ? charGuides.map((g) => g.name).join(', ')
+                                  : 'Ficha do Cliente / Roteiro'
+                              }
+                            >
+                              {charGuides.length === 0
+                                ? 'Ficha do Cliente / Roteiro'
+                                : charGuides.length === 1
+                                ? charGuides[0].name
+                                : `${charGuides.length} Guias Médicas Anexadas`}
+                            </span>
+                          </div>
+                          {charGuides.length > 1 && (
+                            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-900 shrink-0">
+                              {charGuides.length} anexos
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          {charGuides.length > 0 && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setAttachedGuideViewer({
+                                  title: `Guias Médicas · ${char.name}`,
+                                  subtitle: `${char.cardNumber ? `Carteirinha ${char.cardNumber}` : ''}${
+                                    char.city ? ` · ${char.city}` : ''
+                                  }`,
+                                  guides: charGuides,
+                                })
+                              }
+                              className="px-2.5 py-1 text-[11px] font-bold text-white bg-[#0f3e2e] hover:bg-emerald-900 rounded-lg transition-colors inline-flex items-center gap-1 cursor-pointer shadow-2xs"
+                              title="Visualizar guia(s) médica(s) anexada(s) em tela"
+                            >
+                              <FileText className="w-3 h-3 text-emerald-200" />
+                              <span>
+                                {charGuides.length > 1
+                                  ? `Visualizar Guias (${charGuides.length})`
+                                  : 'Visualizar Guia Médica'}
+                              </span>
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => setMirrorCharacter(char)}
+                            className="px-2.5 py-1 text-[11px] font-bold text-emerald-800 bg-emerald-100 hover:bg-emerald-200 rounded-lg transition-colors inline-flex items-center gap-1 cursor-pointer"
+                            title="Visualizar ficha e roteiro do cliente"
+                          >
+                            <Eye className="w-3 h-3" />
+                            <span>Visualizar Ficha</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => downloadGuidePdf(char, undefined, pdfGeneratedBy)}
+                            className="px-2.5 py-1 text-[11px] font-bold text-white bg-[#064e3b] hover:bg-emerald-900 rounded-lg transition-colors inline-flex items-center gap-1 cursor-pointer shadow-2xs"
+                            title={`Baixar Cliente_${char.name.replace(/\s+/g, '_')}.pdf`}
+                          >
+                            <Download className="w-3 h-3 text-emerald-200" />
+                            <span>Baixar PDF</span>
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })()}
 
                   {/* Botões de Ação do Card */}
                   {canManage && (
@@ -646,6 +817,16 @@ export const CharactersManagementView: React.FC = () => {
                       >
                         <Edit3 className="w-3.5 h-3.5" />
                         <span>Editar Cliente</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleDuplicateCharacter(char)}
+                        className="py-2 px-2.5 text-xs font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors flex items-center justify-center gap-1 cursor-pointer"
+                        title="Duplicar cliente"
+                      >
+                        <Copy className="w-3.5 h-3.5" />
+                        <span>Duplicar</span>
                       </button>
 
                       <button
@@ -933,24 +1114,27 @@ export const CharactersManagementView: React.FC = () => {
                 )}
               </div>
 
-              {/* Linha 6: Anexo da Guia do Cliente */}
+              {/* Linha 6: Anexo de Múltiplas Guias do Cliente */}
               <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3">
-                <div className="flex items-center justify-between">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                   <div>
                     <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
                       <FileText className="w-4 h-4 text-emerald-700" />
-                      <span>Anexo da Guia de Atendimento do Cliente</span>
+                      <span>
+                        Guias Médicas de Atendimento ({formData.guideAttachments.length})
+                      </span>
                     </span>
                     <p className="text-[11px] text-slate-500 mt-0.5">
-                      Vincule a guia em PDF ou imagem correspondente ao atendimento deste cliente.
+                      Selecione um ou vários arquivos (PDF ou imagem) para anexar ao perfil sem substituir os anteriores.
                     </p>
                   </div>
 
-                  <label className="px-3 py-1.5 text-xs font-bold text-emerald-800 bg-emerald-100 hover:bg-emerald-200 rounded-lg cursor-pointer transition-colors flex items-center gap-1.5">
-                    <Upload className="w-3.5 h-3.5" />
-                    <span>{isUploadingGuide ? 'Enviando...' : 'Fazer Upload'}</span>
+                  <label className="px-3.5 py-2 text-xs font-bold text-white bg-[#0f3e2e] hover:bg-emerald-900 rounded-lg cursor-pointer transition-colors flex items-center gap-1.5 shrink-0 shadow-xs">
+                    <Upload className="w-3.5 h-3.5 text-emerald-200" />
+                    <span>{isUploadingGuide ? 'Processando...' : '+ Adicionar Guias'}</span>
                     <input
                       type="file"
+                      multiple
                       accept=".pdf,image/*"
                       onChange={handleFileUpload}
                       className="hidden"
@@ -959,28 +1143,52 @@ export const CharactersManagementView: React.FC = () => {
                   </label>
                 </div>
 
-                {formData.guideAttachmentUrl && (
-                  <div className="flex items-center justify-between bg-white border border-emerald-200 rounded-lg p-2.5">
-                    <div className="flex items-center gap-2 truncate pr-2">
-                      <FileText className="w-4 h-4 text-emerald-600 shrink-0" />
-                      <span className="font-medium text-slate-800 truncate text-[11px]">
-                        {formData.guideAttachmentName || 'guia_atendimento.pdf'}
-                      </span>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setFormData((prev) => ({
-                          ...prev,
-                          guideAttachmentUrl: '',
-                          guideAttachmentName: '',
-                        }))
-                      }
-                      className="text-slate-400 hover:text-red-600 p-1 rounded cursor-pointer"
-                      title="Remover anexo da guia"
-                    >
-                      <X className="w-4 h-4" />
-                    </button>
+                {formData.guideAttachments.length > 0 ? (
+                  <div className="space-y-2 max-h-48 overflow-y-auto pr-0.5">
+                    {formData.guideAttachments.map((guide, gIdx) => (
+                      <div
+                        key={guide.id}
+                        className="flex items-center justify-between gap-2 bg-white border border-emerald-200 rounded-lg p-2.5"
+                      >
+                        <div className="flex items-center gap-2 min-w-0 pr-2">
+                          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-900 shrink-0">
+                            Guia {gIdx + 1}
+                          </span>
+                          <FileText className="w-4 h-4 text-emerald-600 shrink-0" />
+                          <span className="font-medium text-slate-800 truncate text-[11px]" title={guide.name}>
+                            {guide.name || `guia_${gIdx + 1}.pdf`}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setAttachedGuideViewer({
+                                title: `Guias Médicas · ${formData.name || 'Cliente'}`,
+                                guides: formData.guideAttachments,
+                                initialIndex: gIdx,
+                              })
+                            }
+                            className="px-2.5 py-1 text-[11px] font-bold text-[#0f3e2e] bg-emerald-50 hover:bg-emerald-100 rounded-lg transition-colors cursor-pointer"
+                          >
+                            Visualizar
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveGuideAttachment(guide.id)}
+                            className="px-2 py-1 text-[11px] font-semibold text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer inline-flex items-center gap-1"
+                            title="Remover esta guia"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                            <span>Remover</span>
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-[11px] text-slate-400 italic p-3 bg-white rounded-lg border border-dashed border-slate-200 text-center">
+                    Nenhuma guia médica anexada ainda. Clique em &ldquo;+ Adicionar Guias&rdquo; para vincular PDFs ou imagens.
                   </div>
                 )}
               </div>
@@ -1007,69 +1215,11 @@ export const CharactersManagementView: React.FC = () => {
         </div>
       )}
 
-      {/* MODAL DE VISUALIZAÇÃO DA GUIA DO CLIENTE */}
-      {viewGuideModal && (
-        <div className="fixed inset-0 z-60 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full p-6 space-y-4 animate-in fade-in zoom-in-95 duration-150">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <div className="flex items-center gap-2">
-                <FileText className="w-5 h-5 text-emerald-700" />
-                <div>
-                  <h3 className="text-base font-bold text-slate-900">
-                    Guia de Atendimento · {viewGuideModal.clientName}
-                  </h3>
-                  <span className="text-xs text-slate-500 font-mono">
-                    {viewGuideModal.guideName}
-                  </span>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setViewGuideModal(null)}
-                className="text-slate-400 hover:text-slate-700 p-1 rounded-lg cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="bg-slate-50 rounded-xl p-8 border border-slate-200 text-center space-y-3">
-              <div className="w-16 h-16 bg-emerald-100 text-emerald-800 rounded-2xl flex items-center justify-center mx-auto shadow-xs">
-                <FileText className="w-8 h-8" />
-              </div>
-              <div className="space-y-1">
-                <h4 className="font-bold text-slate-800 text-sm">
-                  Documento Oficial de Simulação
-                </h4>
-                <p className="text-xs text-slate-500 max-w-md mx-auto">
-                  Guia clínica/operacional anexada ao perfil do cliente. Pronta para consulta durante a simulação prática com o atendente.
-                </p>
-              </div>
-
-              <div className="pt-2 flex justify-center gap-3">
-                <a
-                  href={viewGuideModal.guideUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="px-5 py-2 text-xs font-bold text-white bg-[#0f3e2e] hover:bg-emerald-900 rounded-xl transition-all shadow-sm inline-flex items-center gap-2"
-                >
-                  <ExternalLink className="w-4 h-4" />
-                  <span>Visualizar em Nova Guia</span>
-                </a>
-              </div>
-            </div>
-
-            <div className="flex justify-end">
-              <button
-                type="button"
-                onClick={() => setViewGuideModal(null)}
-                className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl cursor-pointer"
-              >
-                Fechar Visualizador
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Visualizador Popup de Guia Médica Anexada */}
+      <AttachedGuideViewerModal
+        attachment={attachedGuideViewer}
+        onClose={() => setAttachedGuideViewer(null)}
+      />
 
       {/* MODAL DE CONFIRMAÇÃO DE EXCLUSÃO */}
       {deleteConfirmModal && (
@@ -1100,6 +1250,218 @@ export const CharactersManagementView: React.FC = () => {
                 className="px-5 py-2 text-xs font-bold text-white bg-red-600 hover:bg-red-700 rounded-xl transition-colors cursor-pointer shadow-xs"
               >
                 Confirmar Exclusão
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ======================================================== */}
+      {/* MODAL EXCLUSIVO DE ADMIN: IMPORTAÇÃO EM LOTE DETERMINÍSTICA */}
+      {/* ======================================================== */}
+      {isAdmin && isBatchModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[92vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+            <div className="px-6 py-4 bg-[#0f3e2e] text-white flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-xl bg-emerald-700/80 flex items-center justify-center shrink-0">
+                  <FileSpreadsheet className="w-5 h-5 text-emerald-100" />
+                </div>
+                <div>
+                  <h2 className="text-base font-bold text-white">
+                    Importar Clientes em Lote (Parser Direto)
+                  </h2>
+                  <p className="text-xs text-emerald-200">
+                    Leitura exata sem IA: cole blocos separados por <code className="bg-white/15 px-1 rounded font-mono">---</code> ou um array JSON.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsBatchModalOpen(false)}
+                className="text-emerald-200 hover:text-white p-1 rounded-lg hover:bg-white/10 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-6 overflow-y-auto space-y-4 text-xs flex-1">
+              {/* Barra de Ferramentas do Modelo */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-emerald-50/70 border border-emerald-200 rounded-xl p-3">
+                <div className="text-emerald-950">
+                  <div className="font-bold">Modelo Padrão Estruturado</div>
+                  <div className="text-[11px] text-emerald-800">
+                    Campos aceitos: NOME, CELULA, IDADE, SEXO, CIDADE, CARTEIRINHA, CLASSIFICACAO, CONTEXTO, TEMPERAMENTO, OBJETIVO e FALAS.
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 flex-wrap shrink-0">
+                  <button
+                    type="button"
+                    onClick={handleCopyBatchTemplate}
+                    className="px-3 py-1.5 text-xs font-bold text-[#0f3e2e] bg-white hover:bg-emerald-100 border border-emerald-300 rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Copy className="w-3.5 h-3.5" />
+                    <span>Copiar Modelo Padrão</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleDownloadBatchTemplate}
+                    className="px-3 py-1.5 text-xs font-bold text-white bg-[#0f3e2e] hover:bg-emerald-900 rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>Baixar (.txt)</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setBatchRawText(BATCH_CHARACTER_TEMPLATE)}
+                    className="px-3 py-1.5 text-xs font-semibold text-emerald-900 hover:bg-emerald-200/60 rounded-lg transition-colors cursor-pointer"
+                  >
+                    Preencher Exemplo
+                  </button>
+                </div>
+              </div>
+
+              {/* Área de Texto para Colagem */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="font-bold text-slate-800">
+                    Conteúdo para Importação (Texto Estruturado ou JSON)
+                  </label>
+                  {batchRawText && (
+                    <button
+                      type="button"
+                      onClick={() => setBatchRawText('')}
+                      className="text-[11px] font-semibold text-slate-500 hover:text-red-600 cursor-pointer"
+                    >
+                      Limpar Campo
+                    </button>
+                  )}
+                </div>
+                <textarea
+                  rows={10}
+                  value={batchRawText}
+                  onChange={(e) => setBatchRawText(e.target.value)}
+                  placeholder={`NOME: Nome Completo do Cliente\nCELULA: LAB | IMG | CONSULTA | TERAPIA | OPERADORA\nIDADE: 45 anos\nSEXO: Masculino | Feminino | Outro\nCIDADE: Itajaí - SC\nCARTEIRINHA: 0000.0000.00000-00\nCLASSIFICACAO: Iniciante | Simples | Mediano | Intermediário | Crítico\nCONTEXTO: Descrição exata do contexto do atendimento\nTEMPERAMENTO: Humor e comportamento\nOBJETIVO: O que o cliente busca no atendimento\nFALAS:\n- Primeira fala ou objeção típica\n- Segunda fala ou objeção típica\n---`}
+                  className="w-full px-3.5 py-3 bg-slate-50 border border-slate-300 rounded-xl font-mono text-[11px] text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white leading-relaxed"
+                />
+              </div>
+
+              {/* Diagnóstico & Pré-visualização Determinística */}
+              {parsedBatch.format !== 'empty' && (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between flex-wrap gap-2 bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5">
+                    <div className="flex items-center gap-3 flex-wrap">
+                      <span className="font-bold text-slate-800">
+                        Formato detectado:{' '}
+                        <span className="text-[#0f3e2e]">
+                          {parsedBatch.format === 'json' ? 'JSON Estruturado' : 'Blocos de Texto (---)'}
+                        </span>
+                      </span>
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-900 font-bold text-[11px]">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-700" />
+                        <span>{parsedBatch.validItems.length} válido(s)</span>
+                      </span>
+                      {parsedBatch.invalidItems.length > 0 && (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-100 text-red-800 font-bold text-[11px]">
+                          <AlertTriangle className="w-3.5 h-3.5 text-red-600" />
+                          <span>{parsedBatch.invalidItems.length} com erro(s)</span>
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Erros Globais ou por Bloco */}
+                  {(parsedBatch.globalErrors.length > 0 || parsedBatch.invalidItems.length > 0) && (
+                    <div className="bg-red-50 border border-red-200 rounded-xl p-3.5 space-y-2 text-red-900">
+                      <div className="font-bold flex items-center gap-1.5">
+                        <AlertTriangle className="w-4 h-4 text-red-600 shrink-0" />
+                        <span>Erros de Validação Encontrados (nenhum dado foi alterado automaticamente):</span>
+                      </div>
+                      <ul className="space-y-1 text-[11px] list-disc pl-5">
+                        {parsedBatch.globalErrors.map((err, i) => (
+                          <li key={`ge-${i}`}>{err}</li>
+                        ))}
+                        {parsedBatch.invalidItems.map((inv) => (
+                          <li key={`inv-${inv.blockIndex}`}>
+                            <strong>
+                              Bloco #{inv.blockIndex}
+                              {inv.name ? ` (${inv.name})` : ''}:
+                            </strong>{' '}
+                            {inv.errors.join(' ')}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {/* Pré-visualização dos Clientes Válidos */}
+                  {parsedBatch.validItems.length > 0 && (
+                    <div className="border border-slate-200 rounded-xl overflow-hidden">
+                      <div className="bg-slate-100 px-3.5 py-2 font-bold text-slate-700 text-[11px] uppercase tracking-wider">
+                        Pré-visualização Exata dos Clientes ({parsedBatch.validItems.length})
+                      </div>
+                      <div className="max-h-56 overflow-y-auto divide-y divide-slate-100">
+                        {parsedBatch.validItems.map((item) => (
+                          <div
+                            key={item.blockIndex}
+                            className="p-3 bg-white hover:bg-slate-50/70 flex flex-col sm:flex-row sm:items-center justify-between gap-2"
+                          >
+                            <div className="space-y-0.5 min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="font-mono text-[10px] text-slate-400">
+                                  #{item.blockIndex}
+                                </span>
+                                <span className="font-bold text-slate-900">{item.name}</span>
+                                <span className="px-1.5 py-0.5 rounded bg-slate-100 border border-slate-200 text-[10px] font-bold text-slate-700">
+                                  {OFFICIAL_CELLS[item.cell]?.name || item.cell}
+                                </span>
+                                <span className="px-1.5 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-[10px] font-bold text-emerald-800">
+                                  {item.customerTier}
+                                </span>
+                              </div>
+                              <div className="text-[11px] text-slate-500 truncate">
+                                {[item.age, item.gender, item.city, item.cardNumber]
+                                  .filter(Boolean)
+                                  .join(' · ') || 'Sem metadados adicionais'}
+                              </div>
+                            </div>
+                            <div className="text-[11px] font-semibold text-emerald-800 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200 shrink-0">
+                              {item.typicalPhrases.length} fala(s)
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className="px-6 py-4 bg-slate-50 border-t border-slate-200 flex items-center justify-end gap-3 shrink-0">
+              <button
+                type="button"
+                onClick={() => setIsBatchModalOpen(false)}
+                className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-200/70 rounded-xl transition-colors cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={
+                  isBatchImporting ||
+                  parsedBatch.validItems.length === 0 ||
+                  parsedBatch.invalidItems.length > 0 ||
+                  parsedBatch.globalErrors.length > 0
+                }
+                onClick={handleConfirmBatchImport}
+                className="px-5 py-2.5 text-xs font-bold text-white bg-[#0f3e2e] hover:bg-emerald-900 rounded-xl transition-all shadow-sm flex items-center gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <Upload className="w-4 h-4" />
+                <span>
+                  {isBatchImporting
+                    ? 'Importando...'
+                    : `Importar ${parsedBatch.validItems.length} Cliente(s)`}
+                </span>
               </button>
             </div>
           </div>

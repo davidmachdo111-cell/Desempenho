@@ -1,3 +1,13 @@
+export type PortalRoute =
+  | 'collaborators'
+  | 'surveys'
+  | 'checklists'
+  | 'exercises'
+  | 'characters'
+  | 'admin'
+  | 'my-development'
+  | 'evaluation-run';
+
 export type UserRole = 'admin' | 'avaliador' | 'auxiliar' | 'colaborador';
 
 // Permissões Granulares
@@ -8,12 +18,14 @@ export type PermissionKey =
   | 'can_apply_evaluations'    // pode conduzir e dar check em avaliações
   | 'can_view_scenarios'       // visualização de cenários de simulação e casos atrelados
   | 'users:manage'             // administração de contas de usuário
-  | 'cells:manage';            // gestão de células e equipes
+  | 'cells:manage'             // gestão de células e equipes
+  | 'can_act_as_guardian_host'; // selo Guardião Anfitrião: visão global, itens restritos e parecer final
 
 export type UserStatus =
   | 'pendente_aprovacao'
   | 'aprovado_sem_senha'
   | 'ativo'
+  | 'arquivado'
   | 'bloqueado';
 
 export interface UserProfile {
@@ -29,6 +41,7 @@ export interface UserProfile {
   department: string;
   collaboratorId?: string; // vínculo direto com colaborador
   individualPermissions: PermissionKey[];
+  isGuardianHost?: boolean; // Tag/selo Guardião Anfitrião
   createdAt: string;
   lastLoginAt: string;
 }
@@ -104,9 +117,9 @@ export function getCellName(cell?: string | null): string {
  */
 export function cleanActivityTitle(title: string): string {
   return title
-    .replace(/^Checklist\s+de\s+Avalia[çc][ãa]o:\s*/i, '')
+    .replace(/^Checklist\s+de\s+Avaliação:\s*/i, '')
     .replace(/^Checklist\s+de\s+/i, '')
-    .replace(/^Pesquisa\s+de\s+Satisfa[çc][ãa]o:\s*/i, '')
+    .replace(/^Pesquisa\s+de\s+Satisfação:\s*/i, '')
     .trim();
 }
 
@@ -265,6 +278,13 @@ export type Gender = 'Masculino' | 'Feminino' | 'Outro';
 export type CustomerTier = 'Iniciante' | 'Simples' | 'Mediano' | 'Intermediário' | 'Crítico';
 export type ExerciseDifficulty = 'Iniciante' | 'Simples' | 'Mediano' | 'Intermediário' | 'Crítico';
 
+export interface AttachedGuideItem {
+  id: string;
+  name: string;
+  url: string;
+  uploadedAt?: string;
+}
+
 // 2. characters: Banco de Clientes / Personagens Independentes
 export interface Character {
   id: string;
@@ -279,7 +299,8 @@ export interface Character {
   temperament: string; // humor/comportamento
   objectives: string; // o que quer no atendimento
   typicalPhrases: string[] | string; // falas e objeções em tópicos dinâmicos
-  guideAttachmentUrl?: string | null; // Guia de Atendimento do Cliente (PDF/imagem)
+  guideAttachments?: AttachedGuideItem[]; // Múltiplas Guias Médicas anexadas (PDF/imagem)
+  guideAttachmentUrl?: string | null; // Guia de Atendimento do Cliente (PDF/imagem) - legado/compatibilidade
   guideAttachmentName?: string | null;
   createdAt: string;
   // Compatibilidade legada opcional
@@ -298,9 +319,46 @@ export interface Exercise {
   characterIds: string[]; // Vínculo N:M - até 4 clientes por exercício
   createdAt: string;
   updatedAt?: string;
+  attachments?: AttachedGuideItem[];
   // Compatibilidade transitória
   attachmentUrl?: string | null;
   attachmentName?: string | null;
+}
+
+export function getCharacterGuides(character?: Character | null): AttachedGuideItem[] {
+  if (!character) return [];
+  if (Array.isArray(character.guideAttachments)) {
+    return character.guideAttachments.filter((item) => item && Boolean(item.url));
+  }
+  if (character.guideAttachmentUrl) {
+    return [
+      {
+        id: `legacy-guide-${character.id}`,
+        name: character.guideAttachmentName || `Guia_Medica_${character.name}.pdf`,
+        url: character.guideAttachmentUrl,
+        uploadedAt: character.createdAt,
+      },
+    ];
+  }
+  return [];
+}
+
+export function getExerciseAttachments(exercise?: Exercise | null): AttachedGuideItem[] {
+  if (!exercise) return [];
+  if (Array.isArray(exercise.attachments)) {
+    return exercise.attachments.filter((item) => item && Boolean(item.url));
+  }
+  if (exercise.attachmentUrl) {
+    return [
+      {
+        id: `legacy-ex-guide-${exercise.id}`,
+        name: exercise.attachmentName || `Documento_${exercise.title}.pdf`,
+        url: exercise.attachmentUrl,
+        uploadedAt: exercise.createdAt,
+      },
+    ];
+  }
+  return [];
 }
 
 // 4. checklists: Modelos flexíveis (com ou sem exercícios simulados)
@@ -310,6 +368,8 @@ export interface ChecklistCriterion {
   weight: number; // peso/pontuação (default 1)
 }
 
+export type VisibilityLevel = 'padrao' | 'restrito';
+
 export interface Checklist {
   id: string;
   title: string;
@@ -317,6 +377,7 @@ export interface Checklist {
   description: string;
   categoryId?: string;
   categoryName?: string;
+  visibility?: VisibilityLevel; // 'padrao' (todos os gestores) | 'restrito' (Guardião Anfitrião / Admin)
   hasExercises: boolean; // default false
   exerciseIds: string[]; // Vínculo N:M opcional
   criteria: ChecklistCriterion[]; // Critérios diretos do checklist
@@ -356,6 +417,11 @@ export interface Collaborator {
   learningTrackId?: string; // vínculo opcional/legado com trilha de aprendizagem
   track?: CollaboratorTrackStep[]; // Trilha de aprendizagem individual e sequencial do colaborador
   status: CollaboratorStatus;
+  isTrackFinalized?: boolean;
+  guardianVerdict?: 'aprovado' | 'necessita_reforco';
+  guardianOpinion?: string;
+  guardianFinalizedBy?: string;
+  guardianFinalizedAt?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -416,6 +482,7 @@ export interface Survey {
   title: string;
   description: string;
   targetCell?: string; // Célula específica ou "Todas"
+  visibility?: VisibilityLevel; // 'padrao' | 'restrito' (Guardião Anfitrião / Admin)
   questions: SurveyQuestion[];
   isActive: boolean;
   createdAt: string;
@@ -494,4 +561,102 @@ export function generateCorporateUsername(firstName: string, lastName: string): 
   if (!cleanFirst) return cleanLast;
   if (!cleanLast) return cleanFirst;
   return `${cleanFirst}.${cleanLast}`;
+}
+
+export type ScorePerformanceTier = 'pending' | 'low' | 'medium' | 'high';
+
+export interface ScorePerformanceMeta {
+  tier: ScorePerformanceTier;
+  label: string;
+  badgeClass: string;
+  borderClass: string;
+  textClass: string;
+}
+
+/**
+ * Classifica notas na escala de 0 a 10 no padrão de semáforo institucional.
+ */
+export function getScorePerformanceMeta(
+  score: number | null | undefined
+): ScorePerformanceMeta {
+  if (score === null || score === undefined || Number.isNaN(score)) {
+    return {
+      tier: 'pending',
+      label: 'Pendente',
+      badgeClass: 'bg-slate-100 text-slate-600 border-slate-200',
+      borderClass: 'border-slate-200',
+      textClass: 'text-slate-600',
+    };
+  }
+
+  if (score < 5.0) {
+    return {
+      tier: 'low',
+      label: 'Crítico / Reprovado',
+      badgeClass: 'bg-red-50 text-red-700 border-red-200',
+      borderClass: 'border-red-300',
+      textClass: 'text-red-700',
+    };
+  }
+
+  if (score < 7.0) {
+    return {
+      tier: 'medium',
+      label: 'Atenção / Reforço',
+      badgeClass: 'bg-amber-50 text-amber-800 border-amber-300',
+      borderClass: 'border-amber-300',
+      textClass: 'text-amber-800',
+    };
+  }
+
+  return {
+    tier: 'high',
+    label: 'Aprovado',
+    badgeClass: 'bg-emerald-50 text-emerald-800 border-emerald-200',
+    borderClass: 'border-emerald-300',
+    textClass: 'text-emerald-800',
+  };
+}
+
+/**
+ * Verifica se o usuário possui a tag/permissão ativa de Guardião Anfitrião.
+ */
+export function isGuardianHostUser(user?: UserProfile | null): boolean {
+  return Boolean(
+    user &&
+      user.isActive &&
+      user.status !== 'arquivado' &&
+      user.status !== 'bloqueado' &&
+      user.role !== 'colaborador' &&
+      (user.isGuardianHost === true ||
+        user.individualPermissions?.includes('can_act_as_guardian_host'))
+  );
+}
+
+/**
+ * Verifica se o usuário pode visualizar conteúdos classificados como 'restrito'.
+ */
+export function canViewRestrictedItem(
+  user: UserProfile | null | undefined,
+  visibility?: VisibilityLevel | null
+): boolean {
+  if (visibility !== 'restrito') {
+    return true;
+  }
+  if (!user || !user.isActive) {
+    return false;
+  }
+  return user.role === 'admin' || isGuardianHostUser(user);
+}
+
+/**
+ * Verifica se o usuário tem permissão para visualizar o veredito final (Aprovado / Validação da liderança)
+ * e o parecer descritivo do Guardião Anfitrião. Apenas Administração e Guardiões Anfitriões podem visualizar.
+ */
+export function canSeeFinalVerdict(user?: UserProfile | null): boolean {
+  return Boolean(
+    user &&
+      user.isActive &&
+      (user.role === 'admin' || isGuardianHostUser(user))
+  );
 }
