@@ -2142,6 +2142,16 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
     [currentUser, appendAudit, showToast]
   );
 
+  const MAX_GUIDE_FILE_SIZE_BYTES = 5 * 1024 * 1024; // 5 MB
+
+  const sanitizeStorageFileName = (originalName: string): string => {
+    const normalized = originalName
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '');
+    const cleaned = normalized.replace(/[^a-zA-Z0-9._-]+/g, '_').replace(/_+/g, '_');
+    return cleaned || `guia_${Date.now()}`;
+  };
+
   const readFileAsDataUrl = (file: File): Promise<string> =>
     new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -2162,7 +2172,16 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
         !checkUserPermission(currentUser, 'can_manage_exercises') &&
         !checkUserPermission(currentUser, 'cells:manage')
       ) {
-        return { success: false, message: 'Acesso negado para upload de guias de clientes.' };
+        const msg = 'Acesso negado para upload de guias de clientes.';
+        showToast(msg, 'error');
+        return { success: false, message: msg };
+      }
+
+      if (file.size > MAX_GUIDE_FILE_SIZE_BYTES) {
+        const sizeMb = (file.size / (1024 * 1024)).toFixed(1);
+        const msg = `O arquivo "${file.name}" (${sizeMb} MB) excede o limite máximo de 5 MB por guia.`;
+        showToast(msg, 'error');
+        return { success: false, message: msg };
       }
 
       if (!isSupabaseConfigured) {
@@ -2175,50 +2194,49 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
             fileName: file.name,
           };
         } catch {
-          return { success: false, message: 'Erro ao processar o arquivo selecionado.' };
+          const msg = 'Erro ao processar o arquivo selecionado em modo local.';
+          showToast(msg, 'error');
+          return { success: false, message: msg };
         }
       }
 
-      const safeName = `cliente_${Date.now()}_${file.name.replace(/\s+/g, '_')}`;
+      const uniqueSuffix = Math.random().toString(36).slice(2, 8);
+      const storagePath = `clients/cliente_${Date.now()}_${uniqueSuffix}_${sanitizeStorageFileName(file.name)}`;
 
       try {
-        const { error } = await supabase.storage.from('client-guides').upload(safeName, file, {
+        const { error } = await supabase.storage.from('client-guides').upload(storagePath, file, {
           cacheControl: '3600',
-          upsert: true,
+          upsert: false,
+          contentType: file.type || undefined,
         });
 
         if (error) {
-          const dataUrl = await readFileAsDataUrl(file);
-          return {
-            success: true,
-            message: 'Guia do cliente preparada e salva em modo local.',
-            url: dataUrl,
-            fileName: file.name,
-          };
+          const msg = `Falha ao enviar "${file.name}" para o Supabase Storage: ${error.message}`;
+          showToast(msg, 'error');
+          return { success: false, message: msg };
         }
 
-        const { data: publicData } = supabase.storage.from('client-guides').getPublicUrl(safeName);
+        const { data: publicData } = supabase.storage.from('client-guides').getPublicUrl(storagePath);
+        if (!publicData?.publicUrl) {
+          const msg = `Não foi possível obter a URL pública do arquivo "${file.name}".`;
+          showToast(msg, 'error');
+          return { success: false, message: msg };
+        }
+
         return {
           success: true,
           message: 'Guia de atendimento do cliente anexada com sucesso!',
           url: publicData.publicUrl,
           fileName: file.name,
         };
-      } catch {
-        try {
-          const dataUrl = await readFileAsDataUrl(file);
-          return {
-            success: true,
-            message: 'Guia do cliente carregada e salva localmente.',
-            url: dataUrl,
-            fileName: file.name,
-          };
-        } catch {
-          return { success: false, message: 'Erro ao processar o arquivo da guia.' };
-        }
+      } catch (err) {
+        const detail = err instanceof Error ? err.message : 'erro inesperado de conexão';
+        const msg = `Erro ao enviar "${file.name}" para o Supabase Storage (${detail}).`;
+        showToast(msg, 'error');
+        return { success: false, message: msg };
       }
     },
-    [currentUser]
+    [currentUser, showToast]
   );
 
   // ==========================================
@@ -2430,7 +2448,16 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
   const uploadExerciseGuide = useCallback(
     async (file: File): Promise<{ success: boolean; message: string; url?: string; fileName?: string }> => {
       if (!checkUserPermission(currentUser, 'can_manage_exercises')) {
-        return { success: false, message: 'Acesso negado para upload de arquivos.' };
+        const msg = 'Acesso negado para upload de arquivos.';
+        showToast(msg, 'error');
+        return { success: false, message: msg };
+      }
+
+      if (file.size > MAX_GUIDE_FILE_SIZE_BYTES) {
+        const sizeMb = (file.size / (1024 * 1024)).toFixed(1);
+        const msg = `O arquivo "${file.name}" (${sizeMb} MB) excede o limite máximo de 5 MB.`;
+        showToast(msg, 'error');
+        return { success: false, message: msg };
       }
 
       if (!isSupabaseConfigured) {
@@ -2443,50 +2470,49 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
             fileName: file.name,
           };
         } catch {
-          return { success: false, message: 'Erro ao processar o arquivo selecionado.' };
+          const msg = 'Erro ao processar o arquivo selecionado em modo local.';
+          showToast(msg, 'error');
+          return { success: false, message: msg };
         }
       }
 
-      const safeName = `${Date.now()}_${file.name.replace(/\s+/g, '_')}`;
+      const uniqueSuffix = Math.random().toString(36).slice(2, 8);
+      const storagePath = `exercises/exercicio_${Date.now()}_${uniqueSuffix}_${sanitizeStorageFileName(file.name)}`;
 
       try {
-        const { error } = await supabase.storage.from('exercise-guides').upload(safeName, file, {
+        const { error } = await supabase.storage.from('client-guides').upload(storagePath, file, {
           cacheControl: '3600',
-          upsert: true,
+          upsert: false,
+          contentType: file.type || undefined,
         });
 
         if (error) {
-          const dataUrl = await readFileAsDataUrl(file);
-          return {
-            success: true,
-            message: 'Documento preparado para visualização e persistido localmente.',
-            url: dataUrl,
-            fileName: file.name,
-          };
+          const msg = `Falha ao enviar "${file.name}" para o Supabase Storage: ${error.message}`;
+          showToast(msg, 'error');
+          return { success: false, message: msg };
         }
 
-        const { data: publicData } = supabase.storage.from('exercise-guides').getPublicUrl(safeName);
+        const { data: publicData } = supabase.storage.from('client-guides').getPublicUrl(storagePath);
+        if (!publicData?.publicUrl) {
+          const msg = `Não foi possível obter a URL pública do arquivo "${file.name}".`;
+          showToast(msg, 'error');
+          return { success: false, message: msg };
+        }
+
         return {
           success: true,
           message: 'Documento enviado com sucesso para o armazenamento seguro.',
           url: publicData.publicUrl,
           fileName: file.name,
         };
-      } catch {
-        try {
-          const dataUrl = await readFileAsDataUrl(file);
-          return {
-            success: true,
-            message: 'Documento carregado e persistido localmente.',
-            url: dataUrl,
-            fileName: file.name,
-          };
-        } catch {
-          return { success: false, message: 'Erro ao ler o arquivo anexado.' };
-        }
+      } catch (err) {
+        const detail = err instanceof Error ? err.message : 'erro inesperado de conexão';
+        const msg = `Erro ao enviar "${file.name}" para o Supabase Storage (${detail}).`;
+        showToast(msg, 'error');
+        return { success: false, message: msg };
       }
     },
-    [currentUser]
+    [currentUser, showToast]
   );
 
   // ==========================================

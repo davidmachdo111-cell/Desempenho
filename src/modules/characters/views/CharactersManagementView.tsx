@@ -269,9 +269,9 @@ export const CharactersManagementView: React.FC = () => {
       );
     }
 
-    if (failedCount > 0) {
+    if (failedCount > 1) {
       showToast(
-        `${failedCount} arquivo(s) não puderam ser processados.`,
+        `${failedCount} arquivos não puderam ser enviados. Verifique o tamanho (máx. 5 MB) e a conexão.`,
         uploadedItems.length > 0 ? 'info' : 'error'
       );
     }
@@ -1125,7 +1125,7 @@ export const CharactersManagementView: React.FC = () => {
                       </span>
                     </span>
                     <p className="text-[11px] text-slate-500 mt-0.5">
-                      Selecione um ou vários arquivos (PDF ou imagem) para anexar ao perfil sem substituir os anteriores.
+                      Selecione um ou vários arquivos (PDF ou imagem, máx. 5 MB por arquivo) para anexar ao perfil sem substituir os anteriores.
                     </p>
                   </div>
 
