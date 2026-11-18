@@ -14,6 +14,7 @@ import {
   Shield,
   Lock,
   RefreshCw,
+  GitBranch,
 } from 'lucide-react';
 import { usePortalStore } from '../../context/PortalStoreContext';
 import { useToast } from '../../context/ToastContext';
@@ -52,6 +53,7 @@ export const PlatformShell: React.FC<PlatformShellProps> = ({
     exercises,
     characters,
     surveys,
+    trackTemplates,
     isSupabaseSynced,
     isSyncing,
     lastSyncedAt,
@@ -66,6 +68,7 @@ export const PlatformShell: React.FC<PlatformShellProps> = ({
   const isGuardianHost = isGuardianHostUser(currentUser);
   const canOpenFinalizedFicha = canSeeFinalVerdict(currentUser);
   const canSeeCollaborators = canAccessPortalRoute(currentUser, 'collaborators');
+  const canSeeTrackTemplates = canAccessPortalRoute(currentUser, 'track-templates');
   const canSeeChecklists = canAccessPortalRoute(currentUser, 'checklists');
   const canSeeExercises = canAccessPortalRoute(currentUser, 'exercises');
   const canSeeCharacters = canAccessPortalRoute(currentUser, 'characters');
@@ -187,6 +190,7 @@ export const PlatformShell: React.FC<PlatformShellProps> = ({
   // Base (fundo): Administração -> Banco de Clientes -> Exercícios -> Checklists -> Pesquisas de Satisfação -> Colaboradores (topo)
   const MASTER_NAV_ORDER: PortalRoute[] = [
     'collaborators',
+    'track-templates',
     'surveys',
     'checklists',
     'exercises',
@@ -217,6 +221,13 @@ export const PlatformShell: React.FC<PlatformShellProps> = ({
           icon: <Users className="w-4 h-4" />,
           visible: canSeeCollaborators,
           badgeCount: collaborators.length,
+        },
+        {
+          id: 'track-templates',
+          label: 'Modelos de Trilha',
+          icon: <GitBranch className="w-4 h-4" />,
+          visible: canSeeTrackTemplates,
+          badgeCount: trackTemplates.length,
         },
         {
           id: 'surveys',

@@ -812,8 +812,36 @@ export interface DossierTrackItem {
   title: string;
   type: 'checklist' | 'survey';
   status: 'concluido' | 'disponivel' | 'bloqueado' | 'em_andamento';
+  stageName?: string;
   score?: number;
   completedAt?: string;
+}
+
+export interface DossierStageChapter {
+  stageName: string;
+  completedSteps: number;
+  totalSteps: number;
+  stageAverage: number | null;
+  trackSteps: DossierTrackItem[];
+  evaluations: DossierEvaluationHistoryItem[];
+  surveys: DossierSurveySummaryItem[];
+}
+
+export interface StageDossierData {
+  collaboratorName: string;
+  corporateUsername?: string;
+  roleTitle: string;
+  registrationCode: string;
+  cellTeam: string;
+  stageName: string;
+  completedSteps: number;
+  totalSteps: number;
+  stageAverage: number | null;
+  trackSteps: DossierTrackItem[];
+  evaluations: DossierEvaluationHistoryItem[];
+  surveys: DossierSurveySummaryItem[];
+  generatedBy?: PdfGeneratedBy;
+  generatedAt: string;
 }
 
 export interface CollaboratorDossierData {
@@ -831,6 +859,7 @@ export interface CollaboratorDossierData {
   trackSteps: DossierTrackItem[];
   evaluationHistory: DossierEvaluationHistoryItem[];
   surveyResponsesSummary?: DossierSurveySummaryItem[];
+  stages?: DossierStageChapter[];
   guardianFinalization?: {
     isFinalized: boolean;
     hideVerdict?: boolean;
@@ -846,7 +875,516 @@ export interface CollaboratorDossierData {
 }
 
 /**
- * Gera e exporta o Dossiê Completo do Colaborador em formato PDF institucional
+ * Helper interno para desenhar a tabela de etapas de uma lista ou capítulo
+ */
+function drawDossierTrackStepsTable(
+  doc: jsPDF,
+  steps: DossierTrackItem[],
+  startY: number,
+  leftMargin: number,
+  contentWidth: number
+): number {
+  const slateDark = [15, 23, 42] as const;
+  const slateMuted = [100, 116, 139] as const;
+  const slateBorder = [203, 213, 225] as const;
+  let currentY = startY;
+
+  if (currentY > 258) {
+    doc.addPage();
+    currentY = 15;
+  }
+
+  doc.setFillColor(241, 245, 249);
+  doc.setDrawColor(...slateBorder);
+  doc.roundedRect(leftMargin, currentY, contentWidth, 6, 1, 1, 'FD');
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(6.5);
+  doc.setTextColor(...slateDark);
+  doc.text('#', leftMargin + 3, currentY + 4);
+  doc.text('ATIVIDADE / TÍTULO', leftMargin + 12, currentY + 4);
+  doc.text('TIPO', leftMargin + 98, currentY + 4);
+  doc.text('STATUS', leftMargin + 125, currentY + 4);
+  doc.text('NOTA', leftMargin + 156, currentY + 4);
+
+  currentY += 6.5;
+
+  if (steps.length === 0) {
+    doc.setFont('helvetica', 'italic');
+    doc.setFontSize(7);
+    doc.setTextColor(...slateMuted);
+    doc.text('Nenhuma atividade vinculada nesta etapa.', leftMargin + 4, currentY + 4);
+    return currentY + 8;
+  }
+
+  steps.forEach((step, idx) => {
+    if (currentY > 268) {
+      doc.addPage();
+      currentY = 15;
+    }
+
+    doc.setFillColor(idx % 2 === 0 ? 255 : 250, idx % 2 === 0 ? 255 : 252, idx % 2 === 0 ? 255 : 254);
+    doc.setDrawColor(241, 245, 249);
+    doc.roundedRect(leftMargin, currentY, contentWidth, 6, 0.5, 0.5, 'FD');
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(6.5);
+    doc.setTextColor(...slateDark);
+    doc.text(String(step.orderIndex).padStart(2, '0'), leftMargin + 3, currentY + 4);
+
+    doc.setFont('helvetica', 'normal');
+    const titleShort = step.title.length > 54 ? step.title.slice(0, 51) + '...' : step.title;
+    doc.text(titleShort, leftMargin + 12, currentY + 4);
+
+    doc.text(step.type === 'survey' ? 'Pesquisa' : 'Checklist', leftMargin + 98, currentY + 4);
+
+    const stLabel =
+      step.status === 'concluido'
+        ? 'Concluído'
+        : step.status === 'em_andamento'
+        ? 'Em Andamento'
+        : step.status === 'disponivel'
+        ? 'Disponível'
+        : 'Bloqueado';
+    if (step.status === 'concluido') {
+      doc.setTextColor(4, 120, 87);
+    } else if (step.status === 'em_andamento') {
+      doc.setTextColor(217, 119, 6);
+    } else {
+      doc.setTextColor(...slateMuted);
+    }
+    doc.text(stLabel, leftMargin + 125, currentY + 4);
+
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(...slateDark);
+    doc.text(step.score !== undefined ? `${step.score.toFixed(1)}/10` : '—', leftMargin + 156, currentY + 4);
+
+    currentY += 6.5;
+  });
+
+  return currentY + 3;
+}
+
+/**
+ * Helper interno para desenhar uma avaliação com critérios detalhados, pesos e apontamentos
+ */
+function drawDetailedEvaluationBlock(
+  doc: jsPDF,
+  evalItem: DossierEvaluationHistoryItem,
+  idx: number,
+  startY: number,
+  leftMargin: number,
+  contentWidth: number
+): number {
+  const slateDark = [15, 23, 42] as const;
+  const slateMuted = [100, 116, 139] as const;
+  const slateBorder = [203, 213, 225] as const;
+  const bgLight = [248, 250, 252] as const;
+  let currentY = startY;
+
+  const cardTextMaxWidth = contentWidth - 42;
+  const titleLabel = `${idx + 1}. ${evalItem.isRestricted ? '[RESTRITO] ' : ''}${evalItem.checklistTitle}`;
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(7.5);
+  const titleLines = doc.splitTextToSize(titleLabel, cardTextMaxWidth);
+
+  const metaLine = `Data: ${evalItem.completedAt}   ·   Avaliador: ${evalItem.evaluatorName}`;
+  const hasScenario = Boolean(evalItem.exerciseTitle || evalItem.characterName);
+  const scenarioText = `Cenário: ${evalItem.exerciseTitle || 'Padrão'}   ·   Cliente: ${evalItem.characterName || 'N/A'}`;
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(6.5);
+  const scenarioLines = hasScenario ? doc.splitTextToSize(scenarioText, cardTextMaxWidth) : [];
+
+  const obsContent = evalItem.observations?.trim() || 'Sem observações gerais registradas';
+  doc.setFont('helvetica', 'italic');
+  doc.setFontSize(6.5);
+  const obsLines = doc.splitTextToSize(`Observações Gerais: ${obsContent}`, cardTextMaxWidth);
+
+  const textHeight =
+    titleLines.length * 3.8 +
+    4.2 +
+    (scenarioLines.length > 0 ? scenarioLines.length * 3.6 + 1 : 0) +
+    obsLines.length * 3.6 +
+    6;
+  const cardHeight = Math.max(24, textHeight);
+
+  if (currentY + cardHeight > 272) {
+    doc.addPage();
+    currentY = 15;
+  }
+
+  doc.setFillColor(...bgLight);
+  doc.setDrawColor(...slateBorder);
+  doc.roundedRect(leftMargin, currentY, contentWidth, cardHeight, 1.5, 1.5, 'FD');
+
+  let lineY = currentY + 5.2;
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(7.5);
+  doc.setTextColor(...slateDark);
+  doc.text(titleLines, leftMargin + 4, lineY);
+  lineY += titleLines.length * 3.8 + 0.5;
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(6.5);
+  doc.setTextColor(...slateMuted);
+  doc.text(metaLine, leftMargin + 4, lineY);
+  lineY += 4.0;
+
+  if (scenarioLines.length > 0) {
+    doc.text(scenarioLines, leftMargin + 4, lineY);
+    lineY += scenarioLines.length * 3.6 + 0.8;
+  }
+
+  doc.setFont('helvetica', 'italic');
+  doc.setFontSize(6.5);
+  doc.setTextColor(51, 65, 85);
+  doc.text(obsLines, leftMargin + 4, lineY);
+
+  // Score Box (Semáforo Institucional)
+  const scoreColors: {
+    fill: [number, number, number];
+    border: [number, number, number];
+    text: [number, number, number];
+  } =
+    evalItem.finalScore >= 7.0
+      ? { fill: [236, 253, 245], border: [4, 120, 87], text: [4, 120, 87] }
+      : evalItem.finalScore >= 5.0
+      ? { fill: [255, 251, 235], border: [180, 83, 9], text: [180, 83, 9] }
+      : { fill: [254, 242, 242], border: [185, 28, 28], text: [185, 28, 28] };
+
+  doc.setFillColor(scoreColors.fill[0], scoreColors.fill[1], scoreColors.fill[2]);
+  doc.setDrawColor(scoreColors.border[0], scoreColors.border[1], scoreColors.border[2]);
+  doc.roundedRect(leftMargin + contentWidth - 33, currentY + 4, 29, 14.5, 1, 1, 'FD');
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(5.8);
+  doc.setTextColor(...slateMuted);
+  doc.text('NOTA FINAL', leftMargin + contentWidth - 18.5, currentY + 8.2, { align: 'center' });
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(9.5);
+  doc.setTextColor(scoreColors.text[0], scoreColors.text[1], scoreColors.text[2]);
+  doc.text(`${evalItem.finalScore.toFixed(1)}/10`, leftMargin + contentWidth - 18.5, currentY + 14.5, { align: 'center' });
+
+  currentY += cardHeight + 1.5;
+
+  // Tabela detalhada de critérios avaliados (marcados/não marcados, pesos e apontamentos)
+  if (evalItem.criteriaAnswers && evalItem.criteriaAnswers.length > 0) {
+    if (currentY + 12 > 272) {
+      doc.addPage();
+      currentY = 15;
+    }
+
+    doc.setFillColor(241, 245, 249);
+    doc.setDrawColor(...slateBorder);
+    doc.roundedRect(leftMargin + 2, currentY, contentWidth - 4, 5.2, 0.8, 0.8, 'FD');
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(5.8);
+    doc.setTextColor(...slateDark);
+    doc.text('CRITÉRIO AVALIADO', leftMargin + 4.5, currentY + 3.6);
+    doc.text('PESO', leftMargin + 104, currentY + 3.6);
+    doc.text('RESULTADO', leftMargin + 121, currentY + 3.6);
+    doc.text('APONTAMENTO', leftMargin + 146, currentY + 3.6);
+    currentY += 5.5;
+
+    evalItem.criteriaAnswers.forEach((crit, cIdx) => {
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(5.8);
+      const critNameLines = doc.splitTextToSize(`${cIdx + 1}. ${crit.name}`, 96);
+      const noteText = crit.notes?.trim() ? crit.notes.trim() : '—';
+      const noteLines = doc.splitTextToSize(noteText, contentWidth - 150);
+      const rowLines = Math.max(critNameLines.length, noteLines.length, 1);
+      const rowHeight = Math.max(5.5, rowLines * 3.1 + 2.4);
+
+      if (currentY + rowHeight > 272) {
+        doc.addPage();
+        currentY = 15;
+      }
+
+      doc.setFillColor(cIdx % 2 === 0 ? 255 : 250, cIdx % 2 === 0 ? 255 : 252, cIdx % 2 === 0 ? 255 : 254);
+      doc.setDrawColor(226, 232, 240);
+      doc.roundedRect(leftMargin + 2, currentY, contentWidth - 4, rowHeight, 0.5, 0.5, 'FD');
+
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(5.8);
+      doc.setTextColor(...slateDark);
+      doc.text(critNameLines, leftMargin + 4.5, currentY + 3.6);
+
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(...slateMuted);
+      doc.text(`Peso ${crit.weight}`, leftMargin + 104, currentY + 3.6);
+
+      if (crit.checked) {
+        doc.setTextColor(4, 120, 87);
+        doc.text('Atendido', leftMargin + 121, currentY + 3.6);
+      } else {
+        doc.setTextColor(185, 28, 28);
+        doc.text('Não Atendido', leftMargin + 121, currentY + 3.6);
+      }
+
+      doc.setFont('helvetica', 'italic');
+      doc.setTextColor(71, 85, 105);
+      doc.text(noteLines, leftMargin + 146, currentY + 3.6);
+
+      currentY += rowHeight + 0.5;
+    });
+  }
+
+  return currentY + 3;
+}
+
+/**
+ * Helper interno para desenhar um bloco de Pesquisa de Satisfação
+ */
+function drawDetailedSurveyBlock(
+  doc: jsPDF,
+  surveyItem: DossierSurveySummaryItem,
+  startY: number,
+  leftMargin: number,
+  contentWidth: number
+): number {
+  const slateDark = [15, 23, 42] as const;
+  const slateMuted = [100, 116, 139] as const;
+  const slateBorder = [203, 213, 225] as const;
+  const bgLight = [248, 250, 252] as const;
+  let currentY = startY;
+
+  const surveyHeading = `${surveyItem.isRestricted ? '[RESTRITO] ' : ''}${surveyItem.surveyTitle}`;
+  const innerWidth = contentWidth - 10;
+
+  const preparedQuestions = surveyItem.questions.map((q, qIdx) => {
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(6.2);
+    const qLines = doc.splitTextToSize(`${qIdx + 1}. ${q.questionText}`, innerWidth);
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(6);
+    const ansString = `Resposta: ${q.answer}${q.notes ? `   ·   Justificativa / Obs.: "${q.notes}"` : ''}`;
+    const aLines = doc.splitTextToSize(ansString, innerWidth - 2);
+    return { qLines, aLines };
+  });
+
+  const questionsHeight = preparedQuestions.reduce(
+    (acc, item) => acc + item.qLines.length * 3.3 + item.aLines.length * 3.2 + 2.2,
+    0
+  );
+  const srvCardHeight = 14 + questionsHeight;
+
+  if (currentY + srvCardHeight > 272) {
+    doc.addPage();
+    currentY = 15;
+  }
+
+  doc.setFillColor(...bgLight);
+  doc.setDrawColor(...slateBorder);
+  doc.roundedRect(leftMargin, currentY, contentWidth, srvCardHeight, 1.5, 1.5, 'FD');
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(7.5);
+  doc.setTextColor(...slateDark);
+  doc.text(surveyHeading, leftMargin + 4, currentY + 5.5);
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(6.5);
+  doc.setTextColor(...slateMuted);
+  doc.text(`Data de Resposta: ${surveyItem.completedAt}`, leftMargin + 4, currentY + 9.5);
+
+  let qY = currentY + 14;
+  preparedQuestions.forEach((pq) => {
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(6.2);
+    doc.setTextColor(51, 65, 85);
+    doc.text(pq.qLines, leftMargin + 4, qY);
+    qY += pq.qLines.length * 3.3;
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(6);
+    doc.setTextColor(4, 120, 87);
+    doc.text(pq.aLines, leftMargin + 6, qY);
+    qY += pq.aLines.length * 3.2 + 2.2;
+  });
+
+  return currentY + srvCardHeight + 3.5;
+}
+
+/**
+ * Gera e exporta o Dossiê Individual de uma Etapa/Semana específica em PDF
+ */
+export function downloadStageDossierPdf(stageData: StageDossierData): void {
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+
+  const primaryEmerald = [6, 78, 59] as const;
+  const mediumEmerald = [5, 150, 105] as const;
+  const slateDark = [15, 23, 42] as const;
+  const slateMuted = [100, 116, 139] as const;
+  const slateBorder = [203, 213, 225] as const;
+  const bgLight = [248, 250, 252] as const;
+  const white = [255, 255, 255] as const;
+
+  const leftMargin = 14;
+  const contentWidth = 182;
+  let currentY = 12;
+
+  // 1. Cabeçalho Institucional da Etapa
+  doc.setFillColor(...primaryEmerald);
+  doc.roundedRect(leftMargin, currentY, contentWidth, 24, 2, 2, 'F');
+
+  doc.setFillColor(...mediumEmerald);
+  doc.roundedRect(122, currentY + 3.5, 70, 5.5, 1, 1, 'F');
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(6.5);
+  doc.setTextColor(...white);
+  doc.text('DOSSIÊ INDIVIDUAL POR ETAPA', 157, currentY + 7.5, { align: 'center' });
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(11);
+  doc.setTextColor(...white);
+  doc.text(`ETAPA: ${stageData.stageName.toUpperCase()}`, leftMargin + 5, currentY + 9.5);
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(7.5);
+  doc.setTextColor(209, 250, 229);
+  doc.text('Relatório Detalhado de Checklists, Critérios, Apontamentos e Pesquisas da Etapa', leftMargin + 5, currentY + 15.5);
+  doc.text(`Emissão: ${stageData.generatedAt}`, leftMargin + 5, currentY + 20);
+
+  currentY += 28;
+
+  // 2. Identificação do Colaborador
+  doc.setFillColor(...bgLight);
+  doc.setDrawColor(...slateBorder);
+  doc.roundedRect(leftMargin, currentY, contentWidth, 18, 2, 2, 'FD');
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(10);
+  doc.setTextColor(...slateDark);
+  const collabHeader = stageData.corporateUsername
+    ? `${stageData.collaboratorName} (${stageData.corporateUsername})`
+    : stageData.collaboratorName;
+  doc.text(collabHeader, leftMargin + 4, currentY + 6.5);
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(7.5);
+  doc.setTextColor(...slateMuted);
+  doc.text(
+    `Cargo: ${stageData.roleTitle}   ·   Matrícula: ${stageData.registrationCode || 'N/A'}   ·   Célula: ${stageData.cellTeam}`,
+    leftMargin + 4,
+    currentY + 12.5
+  );
+
+  currentY += 22;
+
+  // 3. Indicadores da Etapa
+  const stagePct =
+    stageData.totalSteps > 0 ? Math.round((stageData.completedSteps / stageData.totalSteps) * 100) : 0;
+  const metricBoxWidth = (contentWidth - 6) / 3;
+  const stageMetrics = [
+    {
+      label: 'ETAPA / FASE',
+      val: stageData.stageName,
+      sub: `${stageData.completedSteps} de ${stageData.totalSteps} concluída(s)`,
+    },
+    {
+      label: 'PROGRESSO DA ETAPA',
+      val: `${stagePct}%`,
+      sub: `${stageData.evaluations.length} avaliação(ões) · ${stageData.surveys.length} pesquisa(s)`,
+    },
+    {
+      label: 'MÉDIA PARCIAL DA ETAPA',
+      val: stageData.stageAverage !== null ? `${stageData.stageAverage.toFixed(1)} / 10` : 'Pendente',
+      sub:
+        stageData.stageAverage !== null
+          ? `${Math.round(stageData.stageAverage * 10)}% de aproveitamento`
+          : 'Sem notas lançadas',
+    },
+  ];
+
+  stageMetrics.forEach((m, idx) => {
+    const bx = leftMargin + idx * (metricBoxWidth + 3);
+    doc.setFillColor(255, 255, 255);
+    doc.setDrawColor(...slateBorder);
+    doc.roundedRect(bx, currentY, metricBoxWidth, 16, 1.5, 1.5, 'FD');
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(6.2);
+    doc.setTextColor(...slateMuted);
+    doc.text(m.label, bx + 3, currentY + 4.5);
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9.5);
+    doc.setTextColor(...primaryEmerald);
+    const valShort = m.val.length > 22 ? m.val.slice(0, 19) + '...' : m.val;
+    doc.text(valShort, bx + 3, currentY + 10);
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(6);
+    doc.setTextColor(...slateMuted);
+    doc.text(m.sub, bx + 3, currentY + 14);
+  });
+
+  currentY += 20;
+
+  // 4. Atividades da Etapa
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8.5);
+  doc.setTextColor(...primaryEmerald);
+  doc.text(`1. ATIVIDADES DA ETAPA — ${stageData.stageName.toUpperCase()}`, leftMargin, currentY + 3);
+  currentY += 5.5;
+
+  currentY = drawDossierTrackStepsTable(doc, stageData.trackSteps, currentY, leftMargin, contentWidth);
+  currentY += 2;
+
+  // 5. Detalhamento das Avaliações (Critérios, Pesos e Apontamentos)
+  if (currentY > 245) {
+    doc.addPage();
+    currentY = 15;
+  }
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8.5);
+  doc.setTextColor(...primaryEmerald);
+  doc.text('2. DETALHAMENTO COMPLETO DAS AVALIAÇÕES & CRITÉRIOS', leftMargin, currentY + 3);
+  currentY += 6;
+
+  if (stageData.evaluations.length === 0) {
+    doc.setFont('helvetica', 'italic');
+    doc.setFontSize(7);
+    doc.setTextColor(...slateMuted);
+    doc.text('Nenhuma avaliação concluída nesta etapa até o momento.', leftMargin + 4, currentY + 4);
+    currentY += 10;
+  } else {
+    stageData.evaluations.forEach((evalItem, idx) => {
+      currentY = drawDetailedEvaluationBlock(doc, evalItem, idx, currentY, leftMargin, contentWidth);
+    });
+  }
+
+  // 6. Pesquisas de Satisfação da Etapa
+  if (stageData.surveys.length > 0) {
+    if (currentY > 235) {
+      doc.addPage();
+      currentY = 15;
+    } else {
+      currentY += 3;
+    }
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8.5);
+    doc.setTextColor(...primaryEmerald);
+    doc.text('3. PESQUISAS DE SATISFAÇÃO DA ETAPA', leftMargin, currentY + 3);
+    currentY += 6;
+
+    stageData.surveys.forEach((srvItem) => {
+      currentY = drawDetailedSurveyBlock(doc, srvItem, currentY, leftMargin, contentWidth);
+    });
+  }
+
+  applyPdfTraceabilityFooter(doc, stageData.generatedBy);
+
+  const safeStageName = stageData.stageName.replace(/[^a-zA-Z0-9_\u00C0-\u017F]+/g, '_');
+  const safeCollabName = stageData.collaboratorName.replace(/[^a-zA-Z0-9_\u00C0-\u017F]+/g, '_');
+  doc.save(`Dossie_${safeStageName}_${safeCollabName}.pdf`);
+}
+
+/**
+ * Gera e exporta o Dossiê Completo Consolidado do Colaborador em formato PDF institucional
  */
 export function downloadCollaboratorDossierPdf(dossier: CollaboratorDossierData): void {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
@@ -863,16 +1401,23 @@ export function downloadCollaboratorDossierPdf(dossier: CollaboratorDossierData)
   const contentWidth = 182;
   let currentY = 12;
 
+  const hasChapters = Boolean(dossier.stages && dossier.stages.length > 0);
+
   // 1. Cabeçalho Corporativo Institucional
   doc.setFillColor(...primaryEmerald);
   doc.roundedRect(leftMargin, currentY, contentWidth, 24, 2, 2, 'F');
 
   doc.setFillColor(...mediumEmerald);
-  doc.roundedRect(120, currentY + 3.5, 72, 5.5, 1, 1, 'F');
+  doc.roundedRect(118, currentY + 3.5, 74, 5.5, 1, 1, 'F');
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(6.5);
   doc.setTextColor(...white);
-  doc.text('DOSSIÊ OFICIAL DO COLABORADOR', 156, currentY + 7.5, { align: 'center' });
+  doc.text(
+    hasChapters ? 'DOSSIÊ FINAL CONSOLIDADO' : 'DOSSIÊ OFICIAL DO COLABORADOR',
+    155,
+    currentY + 7.5,
+    { align: 'center' }
+  );
 
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(11);
@@ -923,7 +1468,6 @@ export function downloadCollaboratorDossierPdf(dossier: CollaboratorDossierData)
   doc.text(`Cargo: ${dossier.roleTitle}   ·   Matrícula: ${dossier.registrationCode || 'N/A'}   ·   Célula: ${dossier.cellTeam}`, leftMargin + 4, currentY + 12);
   doc.text(`Status Oficial de Desempenho: ${dossier.status}`, leftMargin + 4, currentY + 17);
 
-  // Status Badge com cor semântica (#064E3B / amber / slate neutro para Finalizado sigiloso)
   const stLower = dossier.status.toLowerCase();
   const statusColor =
     stLower === 'finalizado'
@@ -950,17 +1494,17 @@ export function downloadCollaboratorDossierPdf(dossier: CollaboratorDossierData)
     {
       label: '% CONCLUÍDO',
       val: `${dossier.completionRate ?? (dossier.trackSteps.length > 0 ? Math.round((dossier.trackSteps.filter((s) => s.status === 'concluido').length / dossier.trackSteps.length) * 100) : 0)}%`,
-      sub: 'Evolução na trilha',
+      sub: hasChapters ? `${dossier.stages!.length} etapa(s)/semana(s) registrada(s)` : 'Evolução na trilha',
     },
     {
-      label: 'MÉDIA GERAL DAS NOTAS',
-      val: `${dossier.averageScore.toFixed(1)} / 10`,
-      sub: `${Math.round(dossier.averageScore * 10)}% de aproveitamento`,
+      label: 'MÉDIA GERAL ACUMULADA',
+      val: dossier.totalEvaluations > 0 ? `${dossier.averageScore.toFixed(1)} / 10` : 'Pendente',
+      sub: dossier.totalEvaluations > 0 ? `${Math.round(dossier.averageScore * 10)}% de aproveitamento` : 'Sem avaliações concluídas',
     },
     {
-      label: 'TOTAL DE ETAPAS',
-      val: `${dossier.totalTrackSteps ?? dossier.trackSteps.length}`,
-      sub: `${dossier.totalEvaluations} avaliações realizadas`,
+      label: 'ATIVIDADES & AVALIAÇÕES',
+      val: `${dossier.totalTrackSteps ?? dossier.trackSteps.length} atividade(s)`,
+      sub: `${dossier.totalEvaluations} avaliação(ões) · ${dossier.totalSurveys} pesquisa(s)`,
     },
   ];
 
@@ -971,7 +1515,7 @@ export function downloadCollaboratorDossierPdf(dossier: CollaboratorDossierData)
     doc.roundedRect(bx, currentY, metricBoxWidth, 16, 1.5, 1.5, 'FD');
 
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(6.5);
+    doc.setFontSize(6.2);
     doc.setTextColor(...slateMuted);
     doc.text(m.label, bx + 3, currentY + 4.5);
 
@@ -988,267 +1532,12 @@ export function downloadCollaboratorDossierPdf(dossier: CollaboratorDossierData)
 
   currentY += 20;
 
-  // 4. Trilha de Desenvolvimento (Lista ordenada de etapas)
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(8.5);
-  doc.setTextColor(...primaryEmerald);
-  doc.text('1. TRILHA DE DESENVOLVIMENTO & LINHA DO TEMPO', leftMargin, currentY + 3);
-
-  currentY += 5.5;
-
-  // Cabeçalho da Tabela da Trilha
-  doc.setFillColor(241, 245, 249);
-  doc.setDrawColor(...slateBorder);
-  doc.roundedRect(leftMargin, currentY, contentWidth, 6, 1, 1, 'FD');
-
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(6.5);
-  doc.setTextColor(...slateDark);
-  doc.text('#', leftMargin + 3, currentY + 4);
-  doc.text('ETAPA / TÍTULO', leftMargin + 12, currentY + 4);
-  doc.text('TIPO', leftMargin + 95, currentY + 4);
-  doc.text('STATUS', leftMargin + 125, currentY + 4);
-  doc.text('PONTUAÇÃO', leftMargin + 152, currentY + 4);
-
-  currentY += 6.5;
-
-  if (dossier.trackSteps.length === 0) {
-    doc.setFont('helvetica', 'italic');
-    doc.setFontSize(7);
-    doc.setTextColor(...slateMuted);
-    doc.text('Nenhuma etapa cadastrada na trilha do colaborador.', leftMargin + 4, currentY + 4);
-    currentY += 8;
-  } else {
-    dossier.trackSteps.forEach((step, idx) => {
-      if (currentY > 265) {
-        doc.addPage();
-        currentY = 15;
-      }
-
-      doc.setFillColor(idx % 2 === 0 ? 255 : 250, idx % 2 === 0 ? 255 : 252, idx % 2 === 0 ? 255 : 254);
-      doc.setDrawColor(241, 245, 249);
-      doc.roundedRect(leftMargin, currentY, contentWidth, 6, 0.5, 0.5, 'FD');
-
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(6.5);
-      doc.setTextColor(...slateDark);
-      doc.text(String(step.orderIndex).padStart(2, '0'), leftMargin + 3, currentY + 4);
-
-      doc.setFont('helvetica', 'normal');
-      const titleShort = step.title.length > 55 ? step.title.slice(0, 52) + '...' : step.title;
-      doc.text(titleShort, leftMargin + 12, currentY + 4);
-
-      doc.text(step.type === 'survey' ? 'Pesquisa' : 'Checklist', leftMargin + 95, currentY + 4);
-
-      const stLabel = step.status === 'concluido' ? 'Concluído' : step.status === 'em_andamento' ? 'Em Andamento' : step.status === 'disponivel' ? 'Disponível' : 'Bloqueado';
-      if (step.status === 'concluido') {
-        doc.setTextColor(4, 120, 87);
-      } else if (step.status === 'em_andamento') {
-        doc.setTextColor(217, 119, 6);
-      } else {
-        doc.setTextColor(...slateMuted);
-      }
-      doc.text(stLabel, leftMargin + 125, currentY + 4);
-
-      doc.setFont('helvetica', 'bold');
-      doc.setTextColor(...slateDark);
-      doc.text(step.score !== undefined ? `${step.score.toFixed(1)}/10` : '—', leftMargin + 155, currentY + 4);
-
-      currentY += 6.5;
-    });
-  }
-
-  currentY += 4;
-
-  // 5. Histórico Executivo de Avaliações Realizadas (Enxuto, sem listagem de critérios)
-  if (currentY > 240) {
-    doc.addPage();
-    currentY = 15;
-  }
-
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(8.5);
-  doc.setTextColor(...primaryEmerald);
-  doc.text('2. HISTÓRICO EXECUTIVO DE AVALIAÇÕES REALIZADAS', leftMargin, currentY + 3);
-
-  currentY += 6;
-
-  if (dossier.evaluationHistory.length === 0) {
-    doc.setFont('helvetica', 'italic');
-    doc.setFontSize(7);
-    doc.setTextColor(...slateMuted);
-    doc.text('Nenhuma avaliação individual registrada para este colaborador até o momento.', leftMargin + 4, currentY + 4);
-    currentY += 12;
-  } else {
-    dossier.evaluationHistory.forEach((evalItem, idx) => {
-      const cardTextMaxWidth = contentWidth - 42;
-      const titleLabel = `${idx + 1}. ${evalItem.isRestricted ? '[RESTRITO] ' : ''}${evalItem.checklistTitle}`;
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(7.5);
-      const titleLines = doc.splitTextToSize(titleLabel, cardTextMaxWidth);
-
-      const metaLine = `Data: ${evalItem.completedAt}   ·   Avaliador: ${evalItem.evaluatorName}`;
-      const hasScenario = Boolean(evalItem.exerciseTitle || evalItem.characterName);
-      const scenarioText = `Cenário: ${evalItem.exerciseTitle || 'Padrão'}   ·   Cliente: ${evalItem.characterName || 'N/A'}`;
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(6.5);
-      const scenarioLines = hasScenario ? doc.splitTextToSize(scenarioText, cardTextMaxWidth) : [];
-
-      const obsContent = evalItem.observations?.trim() || 'Sem observações registradas';
-      doc.setFont('helvetica', 'italic');
-      doc.setFontSize(6.5);
-      const obsLines = doc.splitTextToSize(`Observação: ${obsContent}`, cardTextMaxWidth);
-
-      const textHeight =
-        titleLines.length * 3.8 +
-        4.2 +
-        (scenarioLines.length > 0 ? scenarioLines.length * 3.6 + 1 : 0) +
-        obsLines.length * 3.6 +
-        6;
-      const cardHeight = Math.max(24, textHeight);
-
-      if (currentY + cardHeight > 272) {
-        doc.addPage();
-        currentY = 15;
-      }
-
-      doc.setFillColor(...bgLight);
-      doc.setDrawColor(...slateBorder);
-      doc.roundedRect(leftMargin, currentY, contentWidth, cardHeight, 1.5, 1.5, 'FD');
-
-      let lineY = currentY + 5.2;
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(7.5);
-      doc.setTextColor(...slateDark);
-      doc.text(titleLines, leftMargin + 4, lineY);
-      lineY += titleLines.length * 3.8 + 0.5;
-
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(6.5);
-      doc.setTextColor(...slateMuted);
-      doc.text(metaLine, leftMargin + 4, lineY);
-      lineY += 4.0;
-
-      if (scenarioLines.length > 0) {
-        doc.text(scenarioLines, leftMargin + 4, lineY);
-        lineY += scenarioLines.length * 3.6 + 0.8;
-      }
-
-      doc.setFont('helvetica', 'italic');
-      doc.setFontSize(6.5);
-      doc.setTextColor(51, 65, 85);
-      doc.text(obsLines, leftMargin + 4, lineY);
-
-      // Score Box (Semáforo Institucional)
-      const scoreColors: {
-        fill: [number, number, number];
-        border: [number, number, number];
-        text: [number, number, number];
-      } =
-        evalItem.finalScore >= 7.0
-          ? { fill: [236, 253, 245], border: [4, 120, 87], text: [4, 120, 87] }
-          : evalItem.finalScore >= 5.0
-          ? { fill: [255, 251, 235], border: [180, 83, 9], text: [180, 83, 9] }
-          : { fill: [254, 242, 242], border: [185, 28, 28], text: [185, 28, 28] };
-
-      doc.setFillColor(scoreColors.fill[0], scoreColors.fill[1], scoreColors.fill[2]);
-      doc.setDrawColor(scoreColors.border[0], scoreColors.border[1], scoreColors.border[2]);
-      doc.roundedRect(leftMargin + contentWidth - 33, currentY + 4, 29, 14.5, 1, 1, 'FD');
-
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(5.8);
-      doc.setTextColor(...slateMuted);
-      doc.text('NOTA FINAL', leftMargin + contentWidth - 18.5, currentY + 8.2, { align: 'center' });
-
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(9.5);
-      doc.setTextColor(scoreColors.text[0], scoreColors.text[1], scoreColors.text[2]);
-      doc.text(`${evalItem.finalScore.toFixed(1)}/10`, leftMargin + contentWidth - 18.5, currentY + 14.5, { align: 'center' });
-
-      currentY += cardHeight + 3.5;
-    });
-  }
-
-  // 3. Resumo das Pesquisas de Satisfação & Feedback do Aluno
-  const hasSurveys = Boolean(dossier.surveyResponsesSummary && dossier.surveyResponsesSummary.length > 0);
-  if (hasSurveys && dossier.surveyResponsesSummary) {
-    if (currentY > 235) {
-      doc.addPage();
-      currentY = 15;
-    } else {
-      currentY += 4;
+  // Parecer Oficial do Guardião Anfitrião (exibido no Resumo Executivo quando finalizado e autorizado)
+  const renderGuardianVerdictSection = (sectionLabel: string) => {
+    if (!(dossier.guardianFinalization?.isFinalized && !dossier.guardianFinalization.hideVerdict)) {
+      return;
     }
 
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(8.5);
-    doc.setTextColor(...primaryEmerald);
-    doc.text('3. PESQUISAS DE SATISFAÇÃO & RESPOSTAS DO ALUNO', leftMargin, currentY + 3);
-
-    currentY += 6;
-
-    dossier.surveyResponsesSummary.forEach((surveyItem) => {
-      const surveyHeading = `${surveyItem.isRestricted ? '[RESTRITO] ' : ''}${surveyItem.surveyTitle}`;
-      const innerWidth = contentWidth - 10;
-
-      const preparedQuestions = surveyItem.questions.map((q, qIdx) => {
-        doc.setFont('helvetica', 'bold');
-        doc.setFontSize(6.2);
-        const qLines = doc.splitTextToSize(`${qIdx + 1}. ${q.questionText}`, innerWidth);
-
-        doc.setFont('helvetica', 'normal');
-        doc.setFontSize(6);
-        const ansString = `Resposta: ${q.answer}${q.notes ? `   ·   Justificativa: "${q.notes}"` : ''}`;
-        const aLines = doc.splitTextToSize(ansString, innerWidth - 2);
-        return { qLines, aLines };
-      });
-
-      const questionsHeight = preparedQuestions.reduce(
-        (acc, item) => acc + item.qLines.length * 3.3 + item.aLines.length * 3.2 + 2.2,
-        0
-      );
-      const srvCardHeight = 14 + questionsHeight;
-
-      if (currentY + srvCardHeight > 272) {
-        doc.addPage();
-        currentY = 15;
-      }
-
-      doc.setFillColor(...bgLight);
-      doc.setDrawColor(...slateBorder);
-      doc.roundedRect(leftMargin, currentY, contentWidth, srvCardHeight, 1.5, 1.5, 'FD');
-
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(7.5);
-      doc.setTextColor(...slateDark);
-      doc.text(surveyHeading, leftMargin + 4, currentY + 5.5);
-
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(6.5);
-      doc.setTextColor(...slateMuted);
-      doc.text(`Data de Resposta: ${surveyItem.completedAt}`, leftMargin + 4, currentY + 9.5);
-
-      let qY = currentY + 14;
-      preparedQuestions.forEach((pq) => {
-        doc.setFont('helvetica', 'bold');
-        doc.setFontSize(6.2);
-        doc.setTextColor(51, 65, 85);
-        doc.text(pq.qLines, leftMargin + 4, qY);
-        qY += pq.qLines.length * 3.3;
-
-        doc.setFont('helvetica', 'normal');
-        doc.setFontSize(6);
-        doc.setTextColor(4, 120, 87);
-        doc.text(pq.aLines, leftMargin + 6, qY);
-        qY += pq.aLines.length * 3.2 + 2.2;
-      });
-
-      currentY += srvCardHeight + 4;
-    });
-  }
-
-  // 4. Parecer Oficial do Guardião Anfitrião (exibido apenas para Admin e Guardião Anfitrião)
-  if (dossier.guardianFinalization?.isFinalized && !dossier.guardianFinalization.hideVerdict) {
-    const opinionSectionNum = hasSurveys ? 4 : 3;
     const isApproved = dossier.guardianFinalization.verdict === 'aprovado';
     const opinionText = dossier.guardianFinalization.opinion?.trim() || 'Sem parecer descritivo registrado.';
 
@@ -1262,13 +1551,13 @@ export function downloadCollaboratorDossierPdf(dossier: CollaboratorDossierData)
       doc.addPage();
       currentY = 15;
     } else {
-      currentY += 4;
+      currentY += 2;
     }
 
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(8.5);
     doc.setTextColor(...primaryEmerald);
-    doc.text(`${opinionSectionNum}. PARECER OFICIAL DO GUARDIÃO ANFITRIÃO`, leftMargin, currentY + 3);
+    doc.text(sectionLabel, leftMargin, currentY + 3);
     currentY += 6;
 
     doc.setFillColor(isApproved ? 236 : 255, isApproved ? 253 : 251, isApproved ? 245 : 235);
@@ -1276,7 +1565,6 @@ export function downloadCollaboratorDossierPdf(dossier: CollaboratorDossierData)
     doc.setLineWidth(0.4);
     doc.roundedRect(leftMargin, currentY, contentWidth, opinionCardHeight, 2, 2, 'FD');
 
-    // Badge da Decisão
     const verdictBadgeW = isApproved ? 34 : 52;
     doc.setFillColor(isApproved ? 4 : 180, isApproved ? 120 : 83, isApproved ? 87 : 9);
     doc.roundedRect(leftMargin + 4, currentY + 4, verdictBadgeW, 5.5, 1, 1, 'F');
@@ -1317,12 +1605,187 @@ export function downloadCollaboratorDossierPdf(dossier: CollaboratorDossierData)
     doc.setTextColor(...slateDark);
     doc.text(opinionLines, leftMargin + 4, textStartY);
 
-    currentY += opinionCardHeight + 4;
+    currentY += opinionCardHeight + 5;
+  };
+
+  if (hasChapters && dossier.stages) {
+    renderGuardianVerdictSection('PARECER OFICIAL DA LIDERANÇA / GUARDIÃO ANFITRIÃO');
+
+    // Sumário rápido das etapas / semanas
+    if (currentY > 245) {
+      doc.addPage();
+      currentY = 15;
+    }
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8.5);
+    doc.setTextColor(...primaryEmerald);
+    doc.text('RESUMO POR ETAPAS / SEMANAS', leftMargin, currentY + 3);
+    currentY += 6;
+
+    dossier.stages.forEach((chapter, chIdx) => {
+      if (currentY > 266) {
+        doc.addPage();
+        currentY = 15;
+      }
+      const chPct = chapter.totalSteps > 0 ? Math.round((chapter.completedSteps / chapter.totalSteps) * 100) : 0;
+      doc.setFillColor(chIdx % 2 === 0 ? 255 : 248, chIdx % 2 === 0 ? 255 : 250, chIdx % 2 === 0 ? 255 : 252);
+      doc.setDrawColor(...slateBorder);
+      doc.roundedRect(leftMargin, currentY, contentWidth, 7, 1, 1, 'FD');
+
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(7);
+      doc.setTextColor(...slateDark);
+      doc.text(`Capítulo ${chIdx + 1}: ${chapter.stageName}`, leftMargin + 4, currentY + 4.7);
+
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(6.5);
+      doc.setTextColor(...slateMuted);
+      doc.text(
+        `${chapter.completedSteps}/${chapter.totalSteps} atividade(s) (${chPct}%)`,
+        leftMargin + 104,
+        currentY + 4.7
+      );
+
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(...primaryEmerald);
+      doc.text(
+        chapter.stageAverage !== null ? `Média: ${chapter.stageAverage.toFixed(1)}/10` : 'Sem notas',
+        leftMargin + contentWidth - 4,
+        currentY + 4.7,
+        { align: 'right' }
+      );
+      currentY += 8;
+    });
+
+    currentY += 4;
+
+    // Capítulos sequenciais por Etapa/Semana com detalhes completos
+    dossier.stages.forEach((chapter, chIdx) => {
+      if (currentY > 230) {
+        doc.addPage();
+        currentY = 15;
+      }
+
+      // Faixa de Capítulo
+      doc.setFillColor(...primaryEmerald);
+      doc.roundedRect(leftMargin, currentY, contentWidth, 10, 1.5, 1.5, 'F');
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(8.5);
+      doc.setTextColor(...white);
+      doc.text(
+        `CAPÍTULO ${chIdx + 1} — ${chapter.stageName.toUpperCase()}`,
+        leftMargin + 4,
+        currentY + 6.4
+      );
+      doc.setFontSize(7);
+      doc.setTextColor(209, 250, 229);
+      doc.text(
+        chapter.stageAverage !== null
+          ? `${chapter.completedSteps}/${chapter.totalSteps} concluída(s) · Média da Etapa: ${chapter.stageAverage.toFixed(1)}/10`
+          : `${chapter.completedSteps}/${chapter.totalSteps} concluída(s)`,
+        leftMargin + contentWidth - 4,
+        currentY + 6.4,
+        { align: 'right' }
+      );
+      currentY += 12.5;
+
+      currentY = drawDossierTrackStepsTable(doc, chapter.trackSteps, currentY, leftMargin, contentWidth);
+
+      if (chapter.evaluations.length > 0) {
+        if (currentY > 250) {
+          doc.addPage();
+          currentY = 15;
+        }
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(7.5);
+        doc.setTextColor(...primaryEmerald);
+        doc.text(`Avaliações e Critérios — ${chapter.stageName}`, leftMargin, currentY + 2.5);
+        currentY += 5;
+
+        chapter.evaluations.forEach((evalItem, evalIdx) => {
+          currentY = drawDetailedEvaluationBlock(doc, evalItem, evalIdx, currentY, leftMargin, contentWidth);
+        });
+      }
+
+      if (chapter.surveys.length > 0) {
+        if (currentY > 245) {
+          doc.addPage();
+          currentY = 15;
+        }
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(7.5);
+        doc.setTextColor(...primaryEmerald);
+        doc.text(`Pesquisas de Satisfação — ${chapter.stageName}`, leftMargin, currentY + 2.5);
+        currentY += 5;
+
+        chapter.surveys.forEach((srvItem) => {
+          currentY = drawDetailedSurveyBlock(doc, srvItem, currentY, leftMargin, contentWidth);
+        });
+      }
+
+      currentY += 4;
+    });
+  } else {
+    // Fallback legado sem capítulos
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8.5);
+    doc.setTextColor(...primaryEmerald);
+    doc.text('1. TRILHA DE DESENVOLVIMENTO & LINHA DO TEMPO', leftMargin, currentY + 3);
+    currentY += 5.5;
+
+    currentY = drawDossierTrackStepsTable(doc, dossier.trackSteps, currentY, leftMargin, contentWidth);
+    currentY += 2;
+
+    if (currentY > 240) {
+      doc.addPage();
+      currentY = 15;
+    }
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8.5);
+    doc.setTextColor(...primaryEmerald);
+    doc.text('2. HISTÓRICO DE AVALIAÇÕES REALIZADAS', leftMargin, currentY + 3);
+    currentY += 6;
+
+    if (dossier.evaluationHistory.length === 0) {
+      doc.setFont('helvetica', 'italic');
+      doc.setFontSize(7);
+      doc.setTextColor(...slateMuted);
+      doc.text('Nenhuma avaliação individual registrada para este colaborador até o momento.', leftMargin + 4, currentY + 4);
+      currentY += 12;
+    } else {
+      dossier.evaluationHistory.forEach((evalItem, idx) => {
+        currentY = drawDetailedEvaluationBlock(doc, evalItem, idx, currentY, leftMargin, contentWidth);
+      });
+    }
+
+    const hasSurveys = Boolean(dossier.surveyResponsesSummary && dossier.surveyResponsesSummary.length > 0);
+    if (hasSurveys && dossier.surveyResponsesSummary) {
+      if (currentY > 235) {
+        doc.addPage();
+        currentY = 15;
+      } else {
+        currentY += 4;
+      }
+
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(8.5);
+      doc.setTextColor(...primaryEmerald);
+      doc.text('3. PESQUISAS DE SATISFAÇÃO & RESPOSTAS DO ALUNO', leftMargin, currentY + 3);
+      currentY += 6;
+
+      dossier.surveyResponsesSummary.forEach((surveyItem) => {
+        currentY = drawDetailedSurveyBlock(doc, surveyItem, currentY, leftMargin, contentWidth);
+      });
+    }
+
+    const opinionSectionNum = hasSurveys ? 4 : 3;
+    renderGuardianVerdictSection(`${opinionSectionNum}. PARECER OFICIAL DO GUARDIÃO ANFITRIÃO`);
   }
 
   applyPdfTraceabilityFooter(doc, dossier.generatedBy);
 
   const safeCollabName = dossier.collaboratorName.replace(/[^a-zA-Z0-9_\u00C0-\u017F]+/g, '_');
-  doc.save(`Dossie_${safeCollabName}.pdf`);
+  doc.save(`Dossie_Completo_${safeCollabName}.pdf`);
 }
 

@@ -198,6 +198,7 @@ export function getEffectivePermissions(user: UserProfile | null | undefined): P
 
 export const MANAGER_ROUTE_PRIORITY: PortalRoute[] = [
   'collaborators',
+  'track-templates',
   'surveys',
   'checklists',
   'exercises',
@@ -238,6 +239,8 @@ export function canAccessPortalRoute(
         checkUserPermission(user, 'can_view_scenarios') ||
         isGuardianHostUser(user)
       );
+    case 'track-templates':
+      return checkUserPermission(user, 'can_manage_collaborators');
     case 'checklists':
       return checkUserPermission(user, 'can_manage_checklists');
     case 'exercises':

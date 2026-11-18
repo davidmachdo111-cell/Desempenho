@@ -24,6 +24,7 @@ import {
   Survey,
   SurveyAnswerItem,
   getCellName,
+  normalizeStageName,
 } from '../../../types/portal';
 
 interface CollaboratorPortalViewProps {
@@ -39,7 +40,6 @@ export const CollaboratorPortalView: React.FC<CollaboratorPortalViewProps> = () 
     checklists,
     surveys,
     submitSurveyResponse,
-    completeCollaboratorTrackStep,
     submitCollaboratorChecklistSelfAssessment,
   } = usePortalStore();
   const { showToast } = useToast();
@@ -176,15 +176,6 @@ export const CollaboratorPortalView: React.FC<CollaboratorPortalViewProps> = () 
 
     if (res.success) {
       showToast(res.message, 'success');
-      // Se houver etapa correspondente na trilha, conclui
-      if (currentCollaborator) {
-        const step = (currentCollaborator.track || []).find(
-          (s) => s.type === 'survey' && s.refId === activeSurveyToAnswer.id
-        );
-        if (step) {
-          await completeCollaboratorTrackStep(currentCollaborator.id, step.id);
-        }
-      }
       setActiveSurveyToAnswer(null);
     } else {
       showToast(res.message, 'error');
@@ -463,6 +454,11 @@ export const CollaboratorPortalView: React.FC<CollaboratorPortalViewProps> = () 
                         </span>
 
                         <h3 className="font-bold text-sm text-slate-900">{step.title}</h3>
+
+                        {/* Badge da Etapa / Semana */}
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-200">
+                          {normalizeStageName(step.stageName)}
+                        </span>
 
                         {/* Badge do Tipo de Atividade */}
                         <span

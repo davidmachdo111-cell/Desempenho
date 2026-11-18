@@ -1,5 +1,6 @@
 export type PortalRoute =
   | 'collaborators'
+  | 'track-templates'
   | 'surveys'
   | 'checklists'
   | 'exercises'
@@ -395,6 +396,7 @@ export type CollaboratorTrackStepStatus = 'disponivel' | 'bloqueado' | 'concluid
 
 export interface CollaboratorTrackStep {
   id: string; // id único da etapa na trilha
+  stageName?: string; // ex: "Semana 1", "Semana 2", "Reciclagem" (fallback: "Etapa Geral")
   type: CollaboratorTrackStepType; // 'checklist' | 'survey'
   title: string;
   refId: string; // id do Checklist ou da Survey de referência
@@ -407,7 +409,20 @@ export interface CollaboratorTrackStep {
   surveyResponseId?: string | null; // vínculo se resposta enviada
 }
 
+export type TrackStep = CollaboratorTrackStep;
+
+export function normalizeStageName(stageName?: string | null): string {
+  const trimmed = stageName?.trim();
+  return trimmed && trimmed.length > 0 ? trimmed : 'Etapa Geral';
+}
+
+export function normalizeTemplateStageName(stageName?: string | null): string {
+  const trimmed = stageName?.trim();
+  return trimmed && trimmed.length > 0 ? trimmed : 'Etapa 1';
+}
+
 export interface TrackTemplateStep {
+  stageName: string;
   type: CollaboratorTrackStepType;
   refId: string;
   filledBy: CollaboratorTrackFilledBy;
@@ -416,9 +431,11 @@ export interface TrackTemplateStep {
 export interface TrackTemplate {
   id: string;
   name: string;
+  description?: string;
   cell: string;
   steps: TrackTemplateStep[];
   createdAt: string;
+  updatedAt?: string;
 }
 
 export interface Collaborator {
@@ -462,6 +479,51 @@ export interface EvaluationSnapshotItem {
   notes?: string;
 }
 
+export interface FrozenSnapshotCharacter {
+  id: string;
+  name: string;
+  cell: string;
+  age?: string;
+  gender?: Gender;
+  city?: string;
+  cardNumber?: string;
+  customerTier?: CustomerTier;
+  serviceContext?: string;
+  temperament?: string;
+  objectives?: string;
+  typicalPhrases?: string[] | string;
+  guideAttachments?: Array<{
+    id?: string;
+    name: string;
+    url: string;
+    uploadedAt?: string;
+  }>;
+}
+
+export interface FrozenSnapshotExercise {
+  id: string;
+  title: string;
+  cell?: OfficialCell;
+  difficulty?: ExerciseDifficulty;
+  categoryName?: string;
+  scenarioInstructions: string;
+  attachments?: Array<{
+    id?: string;
+    name: string;
+    url: string;
+    uploadedAt?: string;
+  }>;
+  characters: FrozenSnapshotCharacter[];
+}
+
+export interface EvaluationFrozenSnapshot {
+  frozenAt: string;
+  checklistTitle: string;
+  checklistCategoryName?: string;
+  checklistDescription?: string;
+  exercises: FrozenSnapshotExercise[];
+}
+
 export interface CollaboratorChecklist {
   id: string;
   collaboratorId: string;
@@ -473,6 +535,7 @@ export interface CollaboratorChecklist {
   instructorAuxiliarId?: string | null;
   actorAuxiliarId?: string | null;
   completedAt?: string | null;
+  frozenSnapshot?: EvaluationFrozenSnapshot;
   createdAt: string;
   updatedAt: string;
 }

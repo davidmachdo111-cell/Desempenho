@@ -100,13 +100,88 @@ export const EvaluationExecutionView: React.FC<EvaluationExecutionViewProps> = (
     [assignment, checklists]
   );
 
-  // Todos os cenários de exercícios vinculados ao checklist (na ordem configurada)
+  const activeSnapshot = useMemo(
+    () => (assignment?.status === 'concluido' ? assignment.frozenSnapshot : undefined),
+    [assignment]
+  );
+
+  const effectiveChecklistMeta = useMemo(() => {
+    if (!checklist && !activeSnapshot) return null;
+    return {
+      title: activeSnapshot?.checklistTitle || checklist?.title || 'Checklist de Avaliação',
+      categoryName: activeSnapshot?.checklistCategoryName || checklist?.categoryName,
+      description:
+        activeSnapshot?.checklistDescription !== undefined
+          ? activeSnapshot.checklistDescription
+          : checklist?.description || '',
+      visibility: checklist?.visibility || ('padrao' as const),
+    };
+  }, [checklist, activeSnapshot]);
+
+  // Mapa de clientes congelados no snapshot (usado prioritariamente quando avaliação está concluída)
+  const snapshotCharactersById = useMemo(() => {
+    const map = new Map<string, Character>();
+    if (!activeSnapshot) return map;
+
+    (activeSnapshot.exercises || []).forEach((snapEx) => {
+      (snapEx.characters || []).forEach((snapChar) => {
+        if (!map.has(snapChar.id)) {
+          map.set(snapChar.id, {
+            id: snapChar.id,
+            name: snapChar.name,
+            cell: (snapChar.cell || 'OPERADORA') as OfficialCell,
+            age: snapChar.age || '',
+            gender: snapChar.gender || 'Outro',
+            city: snapChar.city || '',
+            cardNumber: snapChar.cardNumber || '',
+            customerTier: snapChar.customerTier || 'Mediano',
+            serviceContext: snapChar.serviceContext || '',
+            temperament: snapChar.temperament || '',
+            objectives: snapChar.objectives || '',
+            typicalPhrases: snapChar.typicalPhrases || [],
+            guideAttachments: (snapChar.guideAttachments || []).map((g, gIdx) => ({
+              id: g.id || `snap-guide-${snapChar.id}-${gIdx}`,
+              name: g.name,
+              url: g.url,
+              uploadedAt: g.uploadedAt,
+            })),
+            createdAt: activeSnapshot.frozenAt,
+          });
+        }
+      });
+    });
+
+    return map;
+  }, [activeSnapshot]);
+
+  // Todos os cenários de exercícios vinculados ao checklist (prioriza snapshot quando concluído; senão lê dinâmico do store)
   const linkedExercises = useMemo(() => {
+    if (activeSnapshot) {
+      return (activeSnapshot.exercises || []).map(
+        (snapEx): Exercise => ({
+          id: snapEx.id,
+          title: snapEx.title,
+          cell: snapEx.cell || 'OPERADORA',
+          difficulty: snapEx.difficulty || 'Mediano',
+          categoryName: snapEx.categoryName,
+          scenarioInstructions: snapEx.scenarioInstructions,
+          characterIds: (snapEx.characters || []).map((c) => c.id),
+          attachments: (snapEx.attachments || []).map((att, aIdx) => ({
+            id: att.id || `snap-att-${snapEx.id}-${aIdx}`,
+            name: att.name,
+            url: att.url,
+            uploadedAt: att.uploadedAt,
+          })),
+          createdAt: activeSnapshot.frozenAt,
+        })
+      );
+    }
+
     if (!checklist || !checklist.exerciseIds || checklist.exerciseIds.length === 0) return [];
     return checklist.exerciseIds
       .map((id) => exercises.find((e) => e.id === id))
       .filter(Boolean) as Exercise[];
-  }, [checklist, exercises]);
+  }, [activeSnapshot, checklist, exercises]);
 
   const displayedExercises = useMemo(() => {
     if (linkedExercises.length === 0) return [];
@@ -124,7 +199,9 @@ export const EvaluationExecutionView: React.FC<EvaluationExecutionViewProps> = (
     linkedExercises.forEach((ex) => {
       ex.characterIds.forEach((id) => {
         if (!seen.has(id)) {
-          const found = characters.find((c) => c.id === id);
+          const found = activeSnapshot
+            ? snapshotCharactersById.get(id)
+            : characters.find((c) => c.id === id);
           if (found) {
             seen.add(id);
             list.push(found);
@@ -133,7 +210,7 @@ export const EvaluationExecutionView: React.FC<EvaluationExecutionViewProps> = (
       });
     });
     return list;
-  }, [linkedExercises, characters]);
+  }, [linkedExercises, activeSnapshot, snapshotCharactersById, characters]);
 
   const buildInitialCriteria = (): CriteriaAnswerSnapshot[] => {
     if (assignment && assignment.criteriaAnswers && assignment.criteriaAnswers.length > 0) {
@@ -158,6 +235,7 @@ export const EvaluationExecutionView: React.FC<EvaluationExecutionViewProps> = (
   );
   const [selectedResultStatus, setSelectedResultStatus] = useState<CollaboratorStatus>('aprovado');
   const [isFinishing, setIsFinishing] = useState(false);
+  const [isReevaluating, setIsReevaluating] = useState(false);
   const [lastAutoSavedAt, setLastAutoSavedAt] = useState<string | null>(null);
   const [hasAutoSavedDraft, setHasAutoSavedDraft] = useState(false);
 
@@ -236,6 +314,7 @@ export const EvaluationExecutionView: React.FC<EvaluationExecutionViewProps> = (
     if (
       draftStorageKey &&
       canApplyEvaluations &&
+      assignment?.status !== 'concluido' &&
       !collaborator?.isTrackFinalized
     ) {
       try {
@@ -287,6 +366,7 @@ export const EvaluationExecutionView: React.FC<EvaluationExecutionViewProps> = (
     setGeneralObservations(restoredObservations);
     setHasAutoSavedDraft(restoredFromLocalDraft);
     setLastAutoSavedAt(restoredSavedAt);
+    setIsReevaluating(false);
     setSelectedExerciseTab('0');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [assignmentId, draftStorageKey]);
@@ -312,7 +392,7 @@ export const EvaluationExecutionView: React.FC<EvaluationExecutionViewProps> = (
     setSelectedResultStatus(currentScore >= 7.0 ? 'aprovado' : 'necessita_reforco');
   }, [currentScore]);
 
-  if (!assignment || !collaborator || !checklist) {
+  if (!assignment || !collaborator || !effectiveChecklistMeta) {
     return (
       <div className="bg-white border border-slate-200 rounded-2xl p-12 text-center max-w-lg mx-auto shadow-xs space-y-4">
         <AlertTriangle className="w-12 h-12 text-amber-500 mx-auto" />
@@ -331,7 +411,7 @@ export const EvaluationExecutionView: React.FC<EvaluationExecutionViewProps> = (
     );
   }
 
-  if (!canViewRestrictedItem(currentUser, checklist.visibility)) {
+  if (!canViewRestrictedItem(currentUser, effectiveChecklistMeta.visibility)) {
     return (
       <div className="bg-white border border-amber-200 rounded-2xl p-12 text-center max-w-lg mx-auto shadow-xs space-y-4">
         <Lock className="w-12 h-12 text-amber-600 mx-auto" />
@@ -370,7 +450,9 @@ export const EvaluationExecutionView: React.FC<EvaluationExecutionViewProps> = (
   }
 
   const isTrackLocked = Boolean(collaborator.isTrackFinalized);
-  const canEditEvaluation = canApplyEvaluations && !isTrackLocked;
+  const isCompletedAssignment = assignment.status === 'concluido';
+  const isReadOnlyCompleted = isCompletedAssignment && !isReevaluating;
+  const canEditEvaluation = canApplyEvaluations && !isTrackLocked && !isReadOnlyCompleted;
 
   const persistProgressNow = (
     nextCriteria: CriteriaAnswerSnapshot[],
@@ -525,8 +607,16 @@ export const EvaluationExecutionView: React.FC<EvaluationExecutionViewProps> = (
         <div className="space-y-2">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-[10px] font-bold text-emerald-800 bg-emerald-50 px-2.5 py-0.5 rounded-full uppercase tracking-wider">
-              {checklist.categoryName || 'Avaliação Operacional'}
+              {effectiveChecklistMeta.categoryName || 'Avaliação Operacional'}
             </span>
+            {isReadOnlyCompleted && (
+              <span className="inline-flex items-center gap-1 text-[10px] font-bold text-slate-700 bg-slate-100 border border-slate-300 px-2.5 py-0.5 rounded-full">
+                <Lock className="w-3 h-3 text-slate-600" />
+                <span>
+                  {activeSnapshot ? 'Histórico Congelado · Somente Leitura' : 'Avaliação Concluída · Somente Leitura'}
+                </span>
+              </span>
+            )}
             <span className="text-xs text-slate-400">·</span>
             <span className="text-xs text-slate-500 font-medium">
               Colaborador: <strong>{collaborator.fullName}</strong> ({collaborator.roleTitle})
@@ -534,11 +624,11 @@ export const EvaluationExecutionView: React.FC<EvaluationExecutionViewProps> = (
           </div>
 
           <h1 className="text-2xl font-bold font-display text-slate-900 tracking-tight">
-            {checklist.title}
+            {effectiveChecklistMeta.title}
           </h1>
 
           <p className="text-xs text-slate-600 max-w-2xl leading-relaxed">
-            {checklist.description ||
+            {effectiveChecklistMeta.description ||
               'Marque os critérios atendidos durante o atendimento simulado. O progresso parcial é salvo automaticamente em andamento.'}
           </p>
         </div>
@@ -547,12 +637,14 @@ export const EvaluationExecutionView: React.FC<EvaluationExecutionViewProps> = (
         <div className="bg-[#0f3e2e] text-white p-5 rounded-2xl flex items-center gap-5 shrink-0 shadow-md">
           <div className="space-y-0.5">
             <div className="text-[10px] text-emerald-300 font-bold uppercase tracking-wider">
-              Nota Calculada
+              {isReadOnlyCompleted ? 'Nota Registrada' : 'Nota Calculada'}
             </div>
             <div className="text-4xl font-black font-mono tracking-tight text-white">
               {currentScore.toFixed(1)}
             </div>
-            <div className="text-[10px] text-emerald-200">em tempo real</div>
+            <div className="text-[10px] text-emerald-200">
+              {isReadOnlyCompleted ? 'histórico salvo' : 'em tempo real'}
+            </div>
           </div>
           <div className="h-10 w-px bg-emerald-800" />
           <div className="text-right">
@@ -569,6 +661,46 @@ export const EvaluationExecutionView: React.FC<EvaluationExecutionViewProps> = (
           </div>
         </div>
       </div>
+
+      {/* Faixa Informativa de Snapshot Congelado (Imutabilidade Histórica) */}
+      {isReadOnlyCompleted && (
+        <div className="bg-slate-50 border border-slate-300 rounded-2xl px-5 py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-slate-700 shadow-2xs">
+          <div className="flex items-start gap-2.5">
+            <Lock className="w-4 h-4 text-[#0f3e2e] shrink-0 mt-0.5" />
+            <div>
+              <div className="font-bold text-slate-900">
+                {activeSnapshot
+                  ? `Imutabilidade Histórica Ativa — Snapshot congelado em ${new Date(
+                      activeSnapshot.frozenAt
+                    ).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}`
+                  : `Avaliação Concluída${
+                      assignment.completedAt
+                        ? ` em ${new Date(assignment.completedAt).toLocaleString('pt-BR', {
+                            dateStyle: 'short',
+                            timeStyle: 'short',
+                          })}`
+                        : ''
+                    } (Registro Histórico Legado)`}
+              </div>
+              <p className="text-[11px] text-slate-600 mt-0.5">
+                {activeSnapshot
+                  ? 'Os dados de checklist, exercícios, clientes e guias exibidos nesta revisão refletem exatamente o momento em que a avaliação foi concluída.'
+                  : 'Registro anterior à captura automática de snapshot; utilizando referência atual dos cadastros vinculados.'}
+              </p>
+            </div>
+          </div>
+
+          {canApplyEvaluations && !isTrackLocked && (
+            <button
+              type="button"
+              onClick={() => setIsReevaluating(true)}
+              className="px-3 py-1.5 text-xs font-bold text-[#0f3e2e] bg-white hover:bg-emerald-50 border border-emerald-300 rounded-xl transition-colors cursor-pointer shrink-0"
+            >
+              Reavaliar esta Etapa
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Split View: Coluna Esquerda Fixa/Sticky (Briefing do Caso e Guia) & Coluna Direita (Critérios e Conclusão) */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
@@ -593,7 +725,7 @@ export const EvaluationExecutionView: React.FC<EvaluationExecutionViewProps> = (
                 onClick={() => {
                   downloadMultipleGuidesPdf(
                     allLinkedCharacters,
-                    checklist?.title || 'Checklist de Simulação',
+                    effectiveChecklistMeta.title || 'Checklist de Simulação',
                     undefined,
                     pdfGeneratedBy
                   );
@@ -648,7 +780,11 @@ export const EvaluationExecutionView: React.FC<EvaluationExecutionViewProps> = (
               {displayedExercises.map((ex) => {
                 const exIndex = linkedExercises.findIndex((item) => item.id === ex.id);
                 const exCharacters = ex.characterIds
-                  .map((id) => characters.find((c) => c.id === id))
+                  .map((id) =>
+                    activeSnapshot
+                      ? snapshotCharactersById.get(id)
+                      : characters.find((c) => c.id === id)
+                  )
                   .filter(Boolean) as Character[];
 
                 return (
@@ -945,8 +1081,14 @@ export const EvaluationExecutionView: React.FC<EvaluationExecutionViewProps> = (
             {criteriaState.map((crit) => (
               <div
                 key={crit.criterionId}
-                onClick={() => handleToggleCheck(crit.criterionId)}
-                className={`p-4 rounded-xl border transition-all cursor-pointer ${
+                onClick={() => {
+                  if (canEditEvaluation) {
+                    handleToggleCheck(crit.criterionId);
+                  }
+                }}
+                className={`p-4 rounded-xl border transition-all ${
+                  canEditEvaluation ? 'cursor-pointer' : 'cursor-default'
+                } ${
                   crit.checked
                     ? 'bg-emerald-50/60 border-emerald-300 shadow-2xs'
                     : 'bg-slate-50/70 border-slate-200 hover:border-slate-300'
@@ -981,9 +1123,15 @@ export const EvaluationExecutionView: React.FC<EvaluationExecutionViewProps> = (
                       <input
                         type="text"
                         value={crit.notes || ''}
+                        readOnly={!canEditEvaluation}
+                        disabled={!canEditEvaluation}
                         onChange={(e) => handleUpdateNotes(crit.criterionId, e.target.value)}
-                        placeholder="Adicionar apontamento ou observação deste critério..."
-                        className="w-full text-[11px] px-2.5 py-1 bg-slate-50 border border-slate-200 rounded-md focus:bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500 text-slate-800 placeholder-slate-400"
+                        placeholder={
+                          canEditEvaluation
+                            ? 'Adicionar apontamento ou observação deste critério...'
+                            : 'Sem apontamento registrado'
+                        }
+                        className="w-full text-[11px] px-2.5 py-1 bg-slate-50 border border-slate-200 rounded-md focus:bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500 text-slate-800 placeholder-slate-400 disabled:opacity-80 disabled:cursor-default"
                       />
                     </div>
                   </div>
@@ -1005,60 +1153,89 @@ export const EvaluationExecutionView: React.FC<EvaluationExecutionViewProps> = (
               <textarea
                 rows={4}
                 value={generalObservations}
+                readOnly={!canEditEvaluation}
+                disabled={!canEditEvaluation}
                 onChange={(e) => handleUpdateGeneralObservations(e.target.value)}
-                placeholder="Digite anotações gerais sobre o desempenho, postura, empatia, aderência aos processos e oportunidades de melhoria do colaborador durante o atendimento..."
-                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500 font-medium text-slate-800 text-xs placeholder-slate-400 leading-relaxed resize-y"
+                placeholder={
+                  canEditEvaluation
+                    ? 'Digite anotações gerais sobre o desempenho, postura, empatia, aderência aos processos e oportunidades de melhoria do colaborador durante o atendimento...'
+                    : 'Sem observações gerais registradas.'
+                }
+                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500 font-medium text-slate-800 text-xs placeholder-slate-400 leading-relaxed resize-y disabled:opacity-85 disabled:cursor-default"
               />
             </div>
 
-            <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3">
-              <div className="flex items-center justify-between">
-                <label className="block text-xs font-bold text-slate-900">
-                  Resultado / Próximo Status do Colaborador:
-                </label>
-                <span className="text-[11px] text-slate-500 font-medium">
-                  Pontuação: <strong className="text-slate-800">{currentScore.toFixed(1)}/10</strong> (
-                  {Math.round(currentScore * 10)}%)
-                </span>
+            {!isReadOnlyCompleted && (
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <label className="block text-xs font-bold text-slate-900">
+                    Resultado / Próximo Status do Colaborador:
+                  </label>
+                  <span className="text-[11px] text-slate-500 font-medium">
+                    Pontuação: <strong className="text-slate-800">{currentScore.toFixed(1)}/10</strong> (
+                    {Math.round(currentScore * 10)}%)
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 gap-3 text-xs">
+                  <button
+                    type="button"
+                    disabled={!canEditEvaluation}
+                    onClick={() => setSelectedResultStatus('aprovado')}
+                    className={`p-3 rounded-xl border text-center font-bold cursor-pointer transition-all disabled:opacity-60 ${
+                      selectedResultStatus === 'aprovado'
+                        ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm'
+                        : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-100'
+                    }`}
+                  >
+                    <div>✓ Aprovado na Etapa</div>
+                    {currentScore >= 7.0 && (
+                      <div className="text-[10px] font-medium opacity-90 mt-0.5">
+                        (Sugerido por pontuação ≥ 70%)
+                      </div>
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!canEditEvaluation}
+                    onClick={() => setSelectedResultStatus('necessita_reforco')}
+                    className={`p-3 rounded-xl border text-center font-bold cursor-pointer transition-all disabled:opacity-60 ${
+                      selectedResultStatus === 'necessita_reforco'
+                        ? 'bg-red-600 text-white border-red-600 shadow-sm'
+                        : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-100'
+                    }`}
+                  >
+                    <div>⚠ Validação da liderança</div>
+                    {currentScore < 7.0 && (
+                      <div className="text-[10px] font-medium opacity-90 mt-0.5">
+                        (Sugerido por pontuação &lt; 70%)
+                      </div>
+                    )}
+                  </button>
+                </div>
               </div>
-              <div className="grid grid-cols-2 gap-3 text-xs">
-                <button
-                  type="button"
-                  onClick={() => setSelectedResultStatus('aprovado')}
-                  className={`p-3 rounded-xl border text-center font-bold cursor-pointer transition-all ${
-                    selectedResultStatus === 'aprovado'
-                      ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm'
-                      : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-100'
-                  }`}
-                >
-                  <div>✓ Aprovado na Etapa</div>
-                  {currentScore >= 7.0 && (
-                    <div className="text-[10px] font-medium opacity-90 mt-0.5">
-                      (Sugerido por pontuação ≥ 70%)
-                    </div>
-                  )}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setSelectedResultStatus('necessita_reforco')}
-                  className={`p-3 rounded-xl border text-center font-bold cursor-pointer transition-all ${
-                    selectedResultStatus === 'necessita_reforco'
-                      ? 'bg-red-600 text-white border-red-600 shadow-sm'
-                      : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-100'
-                  }`}
-                >
-                  <div>⚠ Validação da liderança</div>
-                  {currentScore < 7.0 && (
-                    <div className="text-[10px] font-medium opacity-90 mt-0.5">
-                      (Sugerido por pontuação &lt; 70%)
-                    </div>
-                  )}
-                </button>
-              </div>
-            </div>
+            )}
 
             {/* Apenas usuários com permissão can_apply_evaluations e trilha aberta podem concluir e registrar */}
-            {!canApplyEvaluations ? (
+            {isReadOnlyCompleted ? (
+              <div className="p-3.5 bg-emerald-50/70 border border-emerald-200 rounded-xl text-xs text-emerald-950 flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2 font-semibold">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0" />
+                  <span>
+                    Avaliação registrada em modo somente leitura · Nota final:{' '}
+                    <strong className="font-mono">{currentScore.toFixed(1)}/10</strong>
+                  </span>
+                </div>
+                {canApplyEvaluations && !isTrackLocked && (
+                  <button
+                    type="button"
+                    onClick={() => setIsReevaluating(true)}
+                    className="px-3 py-1.5 text-xs font-bold text-[#0f3e2e] bg-white hover:bg-emerald-100 border border-emerald-300 rounded-lg transition-colors cursor-pointer"
+                  >
+                    Habilitar Reavaliação
+                  </button>
+                )}
+              </div>
+            ) : !canApplyEvaluations ? (
               <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-800 text-center font-medium">
                 Visualização Somente Leitura: O registro e a finalização de avaliações exigem a permissão de aplicar avaliações.
               </div>

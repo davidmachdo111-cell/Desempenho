@@ -18,6 +18,7 @@ import { CharactersManagementView } from './modules/characters/views/CharactersM
 import { EvaluationExecutionView } from './modules/evaluations/views/EvaluationExecutionView';
 import { AdminGovernanceView } from './modules/admin/views/AdminGovernanceView';
 import { CollaboratorPortalView } from './modules/collaborator-portal/views/CollaboratorPortalView';
+import { TrackTemplatesView } from './modules/tracks/views/TrackTemplatesView';
 import { canSeeFinalVerdict, UserProfile } from './types/portal';
 
 interface ParsedLocation {
@@ -42,6 +43,9 @@ function parsePortalLocation(pathname: string): ParsedLocation {
       collaboratorId: second || null,
       assignmentId: null,
     };
+  }
+  if (first === 'modelos-de-trilha') {
+    return { route: 'track-templates', collaboratorId: null, assignmentId: null };
   }
   if (first === 'pesquisas') {
     return { route: 'surveys', collaboratorId: null, assignmentId: null };
@@ -78,6 +82,8 @@ function buildPortalPath(
       return collaboratorId
         ? `/colaboradores/${encodeURIComponent(collaboratorId)}`
         : '/colaboradores';
+    case 'track-templates':
+      return '/modelos-de-trilha';
     case 'surveys':
       return '/pesquisas';
     case 'checklists':
@@ -309,6 +315,11 @@ const PortalAppInner: React.FC = () => {
             onStartEvaluation={handleStartEvaluation}
           />
         )}
+
+      {/* Modelos de Trilha (/modelos-de-trilha) */}
+      {!isCollaborator &&
+        canAccessPortalRoute(currentUser, 'track-templates') &&
+        activeRoute === 'track-templates' && <TrackTemplatesView />}
 
       {/* Checklists (/checklists) */}
       {!isCollaborator &&
