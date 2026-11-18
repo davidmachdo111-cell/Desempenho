@@ -18,6 +18,7 @@ import {
   Archive,
   Sliders,
   RotateCcw,
+  Download,
 } from 'lucide-react';
 import { usePortalStore } from '../../../context/PortalStoreContext';
 import { useToast } from '../../../context/ToastContext';
@@ -36,10 +37,20 @@ import {
 
 export const AdminGovernanceView: React.FC = () => {
   const {
+    currentUser,
     users,
     categories,
+    cells,
+    criteria,
+    characters,
     checklists,
     exercises,
+    collaborators,
+    collaboratorChecklists,
+    learningTracks,
+    trackTemplates,
+    surveys,
+    surveyResponses,
     auditLogs,
     roleDefaultPermissions,
     updateRoleDefaultPermissions,
@@ -471,6 +482,76 @@ export const AdminGovernanceView: React.FC = () => {
     showToast(res.message, res.success ? 'success' : 'error');
   };
 
+  const handleExportFullBackupJson = () => {
+    const now = new Date();
+    const dateStamp = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(
+      now.getDate()
+    ).padStart(2, '0')}_${String(now.getHours()).padStart(2, '0')}-${String(
+      now.getMinutes()
+    ).padStart(2, '0')}`;
+
+    const sanitizedUsers = users.map(({ password: _ignoredPassword, ...rest }) => rest);
+
+    const backupPayload = {
+      schemaVersion: '1.0',
+      portal: 'Portal de Desempenho',
+      exportedAt: now.toISOString(),
+      exportedBy: currentUser
+        ? {
+            id: currentUser.id,
+            fullName: currentUser.fullName,
+            username: currentUser.username,
+            role: currentUser.role,
+          }
+        : null,
+      counts: {
+        characters: characters.length,
+        exercises: exercises.length,
+        checklists: checklists.length,
+        collaborators: collaborators.length,
+        collaboratorChecklists: collaboratorChecklists.length,
+        learningTracks: learningTracks.length,
+        trackTemplates: trackTemplates.length,
+        surveys: surveys.length,
+        surveyResponses: surveyResponses.length,
+        categories: categories.length,
+        users: sanitizedUsers.length,
+      },
+      data: {
+        characters,
+        exercises,
+        checklists,
+        collaborators,
+        collaboratorChecklists,
+        learningTracks,
+        trackTemplates,
+        surveys,
+        surveyResponses,
+        categories,
+        cells,
+        criteria,
+        users: sanitizedUsers,
+      },
+      settings: {
+        roleDefaultPermissions,
+        track_templates: trackTemplates,
+      },
+    };
+
+    const jsonString = JSON.stringify(backupPayload, null, 2);
+    const blob = new Blob([jsonString], { type: 'application/json;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `portal_desempenho_backup_${dateStamp}.json`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+
+    showToast('Backup completo exportado com sucesso em JSON!', 'success');
+  };
+
   return (
     <div className="space-y-6">
 
@@ -547,6 +628,16 @@ export const AdminGovernanceView: React.FC = () => {
               Logs ({auditLogs.length})
             </button>
           </div>
+
+          <button
+            type="button"
+            onClick={handleExportFullBackupJson}
+            className="px-3.5 py-2 text-xs font-bold text-[#0f3e2e] bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 rounded-xl transition-colors flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0 shadow-xs"
+            title="Baixar cópia de segurança completa do portal em formato JSON"
+          >
+            <Download className="w-3.5 h-3.5 text-[#0f3e2e]" />
+            <span>Exportar Backup Completo (.json)</span>
+          </button>
 
           {activeSubTab === 'categories' ? (
             <button

@@ -11,6 +11,7 @@ import {
   Check,
   Building2,
   Lock,
+  Save,
 } from 'lucide-react';
 import { usePortalStore } from '../../../context/PortalStoreContext';
 import { useToast } from '../../../context/ToastContext';
@@ -158,6 +159,7 @@ export const EvaluationExecutionView: React.FC<EvaluationExecutionViewProps> = (
   const [selectedResultStatus, setSelectedResultStatus] = useState<CollaboratorStatus>('aprovado');
   const [isFinishing, setIsFinishing] = useState(false);
   const [lastAutoSavedAt, setLastAutoSavedAt] = useState<string | null>(null);
+  const [hasAutoSavedDraft, setHasAutoSavedDraft] = useState(false);
 
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const latestCriteriaRef = useRef<CriteriaAnswerSnapshot[]>(criteriaState);
@@ -166,14 +168,54 @@ export const EvaluationExecutionView: React.FC<EvaluationExecutionViewProps> = (
   latestCriteriaRef.current = criteriaState;
   latestObservationsRef.current = generalObservations;
 
-  // Ressincroniza estados locais apenas quando mudar de avaliação (assignmentId)
+  const draftStorageKey = useMemo(() => {
+    if (!assignment) return null;
+    return `portal_eval_draft_${assignment.collaboratorId}_${assignment.checklistId}`;
+  }, [assignment]);
+
+  const writeLocalDraft = (
+    nextCriteria: CriteriaAnswerSnapshot[],
+    nextObservations: string
+  ) => {
+    if (!draftStorageKey) return;
+    try {
+      const nowTime = new Date().toLocaleTimeString('pt-BR', {
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+      localStorage.setItem(
+        draftStorageKey,
+        JSON.stringify({
+          criteriaAnswers: nextCriteria,
+          generalObservations: nextObservations,
+          savedAt: new Date().toISOString(),
+        })
+      );
+      setHasAutoSavedDraft(true);
+      setLastAutoSavedAt(nowTime);
+    } catch {
+      // ignora erro de quota do localStorage
+    }
+  };
+
+  const clearLocalDraft = () => {
+    if (!draftStorageKey) return;
+    try {
+      localStorage.removeItem(draftStorageKey);
+    } catch {
+      // ignore
+    }
+    setHasAutoSavedDraft(false);
+  };
+
+  // Ressincroniza estados locais apenas quando mudar de avaliação (assignmentId) e restaura rascunho se houver
   useEffect(() => {
     if (autoSaveTimerRef.current) {
       clearTimeout(autoSaveTimerRef.current);
       autoSaveTimerRef.current = null;
     }
 
-    const initialCriteria =
+    const baseCriteria: CriteriaAnswerSnapshot[] =
       assignment && assignment.criteriaAnswers && assignment.criteriaAnswers.length > 0
         ? assignment.criteriaAnswers
         : checklist
@@ -186,12 +228,68 @@ export const EvaluationExecutionView: React.FC<EvaluationExecutionViewProps> = (
           }))
         : [];
 
-    setCriteriaState(initialCriteria);
-    setGeneralObservations(assignment?.generalObservations || '');
-    setLastAutoSavedAt(null);
+    let restoredCriteria = baseCriteria;
+    let restoredObservations = assignment?.generalObservations || '';
+    let restoredSavedAt: string | null = null;
+    let restoredFromLocalDraft = false;
+
+    if (
+      draftStorageKey &&
+      canApplyEvaluations &&
+      !collaborator?.isTrackFinalized
+    ) {
+      try {
+        const rawDraft = localStorage.getItem(draftStorageKey);
+        if (rawDraft) {
+          const parsed = JSON.parse(rawDraft) as {
+            criteriaAnswers?: CriteriaAnswerSnapshot[];
+            generalObservations?: string;
+            savedAt?: string;
+          };
+
+          if (Array.isArray(parsed.criteriaAnswers) && parsed.criteriaAnswers.length > 0) {
+            const draftMap = new Map(
+              parsed.criteriaAnswers.map((item) => [item.criterionId, item])
+            );
+            restoredCriteria = baseCriteria.map((item) => {
+              const matched = draftMap.get(item.criterionId);
+              if (!matched) return item;
+              return {
+                ...item,
+                checked: Boolean(matched.checked),
+                notes: typeof matched.notes === 'string' ? matched.notes : item.notes || '',
+              };
+            });
+            restoredFromLocalDraft = true;
+          }
+
+          if (typeof parsed.generalObservations === 'string') {
+            restoredObservations = parsed.generalObservations;
+            restoredFromLocalDraft = true;
+          }
+
+          if (parsed.savedAt) {
+            const parsedDate = new Date(parsed.savedAt);
+            if (!Number.isNaN(parsedDate.getTime())) {
+              restoredSavedAt = parsedDate.toLocaleTimeString('pt-BR', {
+                hour: '2-digit',
+                minute: '2-digit',
+              });
+            }
+          }
+        }
+      } catch {
+        // ignora rascunho corrompido
+      }
+    }
+
+    setCriteriaState(restoredCriteria);
+    setGeneralObservations(restoredObservations);
+    setHasAutoSavedDraft(restoredFromLocalDraft);
+    setLastAutoSavedAt(restoredSavedAt);
     setSelectedExerciseTab('0');
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [assignmentId]);
+  }, [assignmentId, draftStorageKey]);
 
   useEffect(() => {
     return () => {
@@ -279,6 +377,7 @@ export const EvaluationExecutionView: React.FC<EvaluationExecutionViewProps> = (
     nextObservations: string
   ) => {
     if (!canEditEvaluation || isFinishing) return;
+    writeLocalDraft(nextCriteria, nextObservations);
     if (autoSaveTimerRef.current) {
       clearTimeout(autoSaveTimerRef.current);
       autoSaveTimerRef.current = null;
@@ -303,6 +402,7 @@ export const EvaluationExecutionView: React.FC<EvaluationExecutionViewProps> = (
     nextObservations: string
   ) => {
     if (!canEditEvaluation || isFinishing) return;
+    writeLocalDraft(nextCriteria, nextObservations);
     if (autoSaveTimerRef.current) {
       clearTimeout(autoSaveTimerRef.current);
     }
@@ -383,6 +483,7 @@ export const EvaluationExecutionView: React.FC<EvaluationExecutionViewProps> = (
     setIsFinishing(false);
 
     if (res.success) {
+      clearLocalDraft();
       showToast('Avaliação concluída e registrada com sucesso!', 'success');
       onBack(collaborator?.id);
     } else {
@@ -403,11 +504,14 @@ export const EvaluationExecutionView: React.FC<EvaluationExecutionViewProps> = (
           <span>Voltar para a Ficha do Colaborador</span>
         </button>
 
-        <div className="flex items-center gap-3 text-xs text-slate-500 font-medium">
-          {lastAutoSavedAt && (
+        <div className="flex items-center gap-3 flex-wrap text-xs text-slate-500 font-medium">
+          {(hasAutoSavedDraft || lastAutoSavedAt) && canEditEvaluation && (
             <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-emerald-800 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-full">
-              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-              <span>Rascunho salvo às {lastAutoSavedAt}</span>
+              <Save className="w-3.5 h-3.5 text-emerald-600" />
+              <span>
+                Rascunho salvo automaticamente
+                {lastAutoSavedAt ? ` · ${lastAutoSavedAt}` : ''}
+              </span>
             </span>
           )}
           <span>

@@ -1486,9 +1486,9 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
         /* ======================================================== */
         /* MODO LISTAGEM GERAL DE COLABORADORES (TABELA + CADASTRO) */
         /* ======================================================== */
-        <div className="space-y-6">
+        <div className="space-y-4">
           {/* Header Corporativo do Módulo */}
-          <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
             <div>
               <div className="flex items-center gap-2 text-emerald-800 text-xs font-bold uppercase tracking-wider mb-1">
                 <Users className="w-4 h-4 text-emerald-600" />
@@ -1516,7 +1516,7 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
 
           {/* Indicadores Resumidos Clicáveis (Filtros Rápidos de Ação) */}
           <div
-            className={`grid gap-3 ${
+            className={`grid gap-2.5 ${
               canSeeVerdict
                 ? 'grid-cols-2 sm:grid-cols-3 lg:grid-cols-6'
                 : 'grid-cols-2 lg:grid-cols-4'
@@ -1582,7 +1582,7 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
                   key={item.key}
                   type="button"
                   onClick={() => setSelectedStatusFilter(item.key)}
-                  className={`p-3.5 rounded-2xl border text-left transition-all cursor-pointer flex flex-col justify-between gap-1 ${
+                  className={`p-3.5 py-2.5 rounded-2xl border text-left transition-all cursor-pointer flex flex-col justify-between gap-0.5 ${
                     isSelected ? item.active : item.accent
                   }`}
                 >
@@ -1597,7 +1597,7 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
                     )}
                   </div>
                   <div className="flex items-baseline justify-between">
-                    <span className="text-2xl font-black font-mono tracking-tight">
+                    <span className="text-xl font-black font-mono tracking-tight">
                       {item.count}
                     </span>
                     <span
@@ -1614,9 +1614,9 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
           </div>
 
           {/* Barra de Filtros e Busca */}
-          <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-xs space-y-3">
+          <div className="bg-white border border-slate-200 rounded-2xl p-3.5 shadow-xs space-y-2.5">
             {/* Filtro por Célula (Padrão Corporativo Limpo) */}
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pb-3 border-b border-slate-100">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2.5 border-b border-slate-100">
               <div className="flex items-center gap-2">
                 <Building2 className="w-4 h-4 text-emerald-700 shrink-0" />
                 <span className="text-xs font-bold text-slate-800 uppercase tracking-wide">
@@ -1656,7 +1656,7 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
             </div>
 
             <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-0.5">
-              <div className="relative w-full sm:w-80">
+              <div className="relative w-full sm:w-96">
                 <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
                 <input
                   type="text"
@@ -1667,29 +1667,8 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
                 />
               </div>
 
-              <div className="flex items-center gap-2 w-full sm:w-auto">
-                <span className="text-xs font-medium text-slate-600">Status:</span>
-                <select
-                  value={selectedStatusFilter}
-                  onChange={(e) => setSelectedStatusFilter(e.target.value)}
-                  className="text-xs bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer"
-                >
-                  <option value="all">Todos os Status</option>
-                  <option value="a_realizar">A Realizar</option>
-                  <option value="em_treinamento">Em Treinamento</option>
-                  <option value="concluido">Concluído</option>
-                  {canSeeVerdict ? (
-                    <>
-                      <option value="finalizado_aprovado">Aprovado</option>
-                      <option value="finalizado_validacao">Validação da liderança</option>
-                    </>
-                  ) : (
-                    <option value="finalizado">Finalizado</option>
-                  )}
-                </select>
-                <div className="text-xs text-slate-500 font-medium ml-2">
-                  {filteredCollaborators.length} colaborador(es)
-                </div>
+              <div className="text-xs text-slate-500 font-semibold">
+                {filteredCollaborators.length} colaborador(es)
               </div>
             </div>
           </div>
@@ -1779,8 +1758,9 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
 
                         <td className="px-5 py-4 text-slate-600">
                           {(() => {
-                            const total = col.track?.length || 0;
-                            const done = col.track?.filter((s) => s.status === 'concluido').length || 0;
+                            const trackList = col.track || [];
+                            const total = trackList.length;
+                            const done = trackList.filter((s) => s.status === 'concluido').length;
                             const pct = total > 0 ? Math.round((done / total) * 100) : 0;
                             const barColor = pct === 100 ? 'bg-emerald-600' : 'bg-emerald-500';
 
@@ -1798,18 +1778,59 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
                               return <span className="text-slate-400 italic text-xs">Sem trilha configurada</span>;
                             }
 
+                            let pendingBadge: { label: string; className: string } | null = null;
+                            if (!col.isTrackFinalized) {
+                              if (done === total) {
+                                pendingBadge = {
+                                  label: 'Pronto p/ Finalizar',
+                                  className: 'bg-blue-50 text-blue-800 border-blue-200',
+                                };
+                              } else {
+                                const availableStep = trackList.find(
+                                  (s) => s.status === 'disponivel'
+                                );
+                                if (availableStep) {
+                                  if (
+                                    availableStep.type === 'checklist' &&
+                                    availableStep.filledBy === 'evaluator'
+                                  ) {
+                                    pendingBadge = {
+                                      label: 'Aguardando Avaliação',
+                                      className: 'bg-emerald-50 text-emerald-800 border-emerald-200',
+                                    };
+                                  } else if (
+                                    availableStep.type === 'survey' ||
+                                    (availableStep.type === 'checklist' &&
+                                      availableStep.filledBy === 'collaborator')
+                                  ) {
+                                    pendingBadge = {
+                                      label: 'Aguardando Colaborador',
+                                      className: 'bg-amber-50 text-amber-800 border-amber-200',
+                                    };
+                                  }
+                                }
+                              }
+                            }
+
                             return (
-                              <div className="flex flex-col gap-1.5 min-w-[120px] max-w-[150px]">
+                              <div className="flex flex-col gap-1.5 min-w-[130px] max-w-[165px]">
                                 <div className="flex items-center justify-between text-xs">
                                   <span className="font-semibold text-slate-700">{pct}%</span>
                                   <span className="text-slate-500">{done} de {total}</span>
                                 </div>
-                                <div className="w-full h-2.5 bg-slate-100 rounded-full overflow-hidden border border-slate-200/60">
+                                <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden border border-slate-200/60">
                                   <div
                                     className={`h-full ${barColor} rounded-full transition-all duration-300`}
                                     style={{ width: `${pct}%` }}
                                   />
                                 </div>
+                                {pendingBadge && (
+                                  <span
+                                    className={`inline-flex items-center w-fit text-[10px] font-bold px-2 py-0.5 rounded-full border whitespace-nowrap ${pendingBadge.className}`}
+                                  >
+                                    {pendingBadge.label}
+                                  </span>
+                                )}
                               </div>
                             );
                           })()}

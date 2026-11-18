@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   FileText,
   Plus,
@@ -10,6 +10,9 @@ import {
   X,
   CreditCard,
   Download,
+  ChevronLeft,
+  ChevronRight,
+  ArrowUpDown,
 } from 'lucide-react';
 import { usePortalStore } from '../../../context/PortalStoreContext';
 import { useToast } from '../../../context/ToastContext';
@@ -90,9 +93,12 @@ export const ExercisesSimulationView: React.FC = () => {
 
   const canManageExercises = hasPermission('can_manage_exercises');
 
+  const ITEMS_PER_PAGE = 18;
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedDifficultyFilter, setSelectedDifficultyFilter] = useState<string>('all');
   const [selectedCellFilter, setSelectedCellFilter] = useState<string>('all');
+  const [sortOrder, setSortOrder] = useState<'recent' | 'alpha'>('recent');
+  const [currentPage, setCurrentPage] = useState(1);
   const [briefingModalExercise, setBriefingModalExercise] = useState<Exercise | null>(null);
   const [briefingActiveCharIndex, setBriefingActiveCharIndex] = useState(0);
 
@@ -102,10 +108,15 @@ export const ExercisesSimulationView: React.FC = () => {
   }>({ open: false });
 
   const [deleteConfirmExercise, setDeleteConfirmExercise] = useState<Exercise | null>(null);
+  const titleInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery, selectedDifficultyFilter, selectedCellFilter, sortOrder]);
 
   const filteredExercises = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    return exercises.filter((ex) => {
+    const filtered = exercises.filter((ex) => {
       const exCell = ex.cell || 'OPERADORA';
       if (selectedCellFilter !== 'all' && exCell !== selectedCellFilter) return false;
       const difficulty = ex.difficulty || 'Mediano';
@@ -118,7 +129,46 @@ export const ExercisesSimulationView: React.FC = () => {
         difficulty.toLowerCase().includes(q)
       );
     });
-  }, [exercises, searchQuery, selectedDifficultyFilter, selectedCellFilter]);
+
+    const sorted = [...filtered];
+    if (sortOrder === 'alpha') {
+      sorted.sort((a, b) =>
+        a.title.localeCompare(b.title, 'pt-BR', { sensitivity: 'base' })
+      );
+    } else {
+      sorted.sort((a, b) => {
+        const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+        return timeB - timeA;
+      });
+    }
+    return sorted;
+  }, [exercises, searchQuery, selectedDifficultyFilter, selectedCellFilter, sortOrder]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredExercises.length / ITEMS_PER_PAGE));
+  const safePage = Math.min(currentPage, totalPages);
+  const startIndex = (safePage - 1) * ITEMS_PER_PAGE;
+  const endIndex = Math.min(startIndex + ITEMS_PER_PAGE, filteredExercises.length);
+  const paginatedExercises = useMemo(
+    () => filteredExercises.slice(startIndex, endIndex),
+    [filteredExercises, startIndex, endIndex]
+  );
+
+  const paginationPages = useMemo(() => {
+    const pages: (number | 'ellipsis')[] = [];
+    if (totalPages <= 7) {
+      for (let i = 1; i <= totalPages; i++) pages.push(i);
+    } else {
+      pages.push(1);
+      if (safePage > 3) pages.push('ellipsis');
+      const start = Math.max(2, safePage - 1);
+      const end = Math.min(totalPages - 1, safePage + 1);
+      for (let i = start; i <= end; i++) pages.push(i);
+      if (safePage < totalPages - 2) pages.push('ellipsis');
+      pages.push(totalPages);
+    }
+    return pages;
+  }, [totalPages, safePage]);
 
   // Estados do formulário de criação/edição vinculando até 4 clientes
   const [guideMirrorChar, setGuideMirrorChar] = useState<Character | null>(null);
@@ -174,10 +224,13 @@ export const ExercisesSimulationView: React.FC = () => {
     });
   };
 
-  const handleSaveExercise = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const executeSaveExercise = async (keepOpenForNext: boolean) => {
     if (!formTitle.trim()) {
       showToast('Informe o título do exercício.', 'error');
+      return;
+    }
+    if (!formInstructions.trim()) {
+      showToast('Informe as instruções e o roteiro geral do caso.', 'error');
       return;
     }
     if (formSelectedCharacterIds.length === 0) {
@@ -199,16 +252,33 @@ export const ExercisesSimulationView: React.FC = () => {
     setIsSubmitting(false);
 
     if (res.success) {
-      showToast(
-        editorModalExercise.exercise
-          ? 'Exercício atualizado com sucesso!'
-          : 'Novo exercício criado com sucesso e pronto para uso!',
-        'success'
-      );
-      setEditorModalExercise({ open: false });
+      if (keepOpenForNext && !editorModalExercise.exercise) {
+        showToast(
+          'Exercício salvo com sucesso! Preencha os dados do próximo cenário.',
+          'success'
+        );
+        setFormTitle('');
+        setFormInstructions('');
+        setFormSelectedCharacterIds([]);
+        setModalCharCellFilter('all');
+        setTimeout(() => titleInputRef.current?.focus(), 50);
+      } else {
+        showToast(
+          editorModalExercise.exercise
+            ? 'Exercício atualizado com sucesso!'
+            : 'Novo exercício criado com sucesso e pronto para uso!',
+          'success'
+        );
+        setEditorModalExercise({ open: false });
+      }
     } else {
       showToast(res.message, 'error');
     }
+  };
+
+  const handleSaveExercise = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await executeSaveExercise(false);
   };
 
   const handleDuplicateExercise = async (exercise: Exercise) => {
@@ -326,9 +396,9 @@ export const ExercisesSimulationView: React.FC = () => {
           </div>
         </div>
 
-        {/* Linha de Busca e Dificuldade */}
-        <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-0.5">
-          <div className="relative w-full sm:w-96">
+        {/* Linha de Busca, Dificuldade e Ordenação */}
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 pt-0.5">
+          <div className="relative w-full lg:w-96">
             <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
             <input
               type="text"
@@ -339,21 +409,37 @@ export const ExercisesSimulationView: React.FC = () => {
             />
           </div>
 
-          <div className="flex items-center gap-2 w-full sm:w-auto">
-            <span className="text-xs font-medium text-slate-600">Dificuldade:</span>
-            <select
-              value={selectedDifficultyFilter}
-              onChange={(e) => setSelectedDifficultyFilter(e.target.value)}
-              className="text-xs bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-            >
-              <option value="all">Todas as Dificuldades</option>
-              <option value="Iniciante">Iniciante</option>
-              <option value="Simples">Simples</option>
-              <option value="Mediano">Mediano</option>
-              <option value="Intermediário">Intermediário</option>
-              <option value="Crítico">Crítico</option>
-            </select>
-            <div className="text-xs text-slate-500 font-medium ml-2">
+          <div className="flex items-center gap-2.5 flex-wrap w-full lg:w-auto justify-start lg:justify-end">
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs font-medium text-slate-600">Dificuldade:</span>
+              <select
+                value={selectedDifficultyFilter}
+                onChange={(e) => setSelectedDifficultyFilter(e.target.value)}
+                className="text-xs bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              >
+                <option value="all">Todas as Dificuldades</option>
+                <option value="Iniciante">Iniciante</option>
+                <option value="Simples">Simples</option>
+                <option value="Mediano">Mediano</option>
+                <option value="Intermediário">Intermediário</option>
+                <option value="Crítico">Crítico</option>
+              </select>
+            </div>
+
+            <div className="flex items-center gap-1.5">
+              <ArrowUpDown className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+              <select
+                value={sortOrder}
+                onChange={(e) => setSortOrder(e.target.value as 'recent' | 'alpha')}
+                aria-label="Ordenar exercícios"
+                className="text-xs bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              >
+                <option value="recent">Mais Recentes</option>
+                <option value="alpha">Ordem Alfabética A–Z</option>
+              </select>
+            </div>
+
+            <div className="text-xs text-slate-500 font-semibold pl-1">
               {filteredExercises.length} exercício(s)
             </div>
           </div>
@@ -362,8 +448,9 @@ export const ExercisesSimulationView: React.FC = () => {
 
       {/* Grid de Cards de Exercícios */}
       {filteredExercises.length > 0 ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-          {filteredExercises.map((exercise) => {
+        <div className="space-y-5">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+            {paginatedExercises.map((exercise) => {
             const diffBadge =
               DIFFICULTY_BADGES[exercise.difficulty || 'Mediano'] ||
               DIFFICULTY_BADGES['Mediano'];
@@ -506,6 +593,67 @@ export const ExercisesSimulationView: React.FC = () => {
               </div>
             );
           })}
+          </div>
+
+          {/* Paginação Limpa (18 exercícios por página) */}
+          <div className="bg-white border border-slate-200 rounded-2xl px-4 py-3 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="text-xs text-slate-600 font-medium">
+              Mostrando{' '}
+              <span className="font-bold text-slate-900">
+                {startIndex + 1}–{endIndex}
+              </span>{' '}
+              de <span className="font-bold text-slate-900">{filteredExercises.length}</span>{' '}
+              exercícios
+            </div>
+
+            {totalPages > 1 && (
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <button
+                  type="button"
+                  onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                  disabled={safePage === 1}
+                  className="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors inline-flex items-center gap-1 cursor-pointer"
+                >
+                  <ChevronLeft className="w-3.5 h-3.5" />
+                  <span>Anterior</span>
+                </button>
+
+                {paginationPages.map((pageItem, idx) =>
+                  pageItem === 'ellipsis' ? (
+                    <span
+                      key={`ellipsis-${idx}`}
+                      className="px-2 py-1 text-xs text-slate-400 font-bold select-none"
+                    >
+                      …
+                    </span>
+                  ) : (
+                    <button
+                      key={pageItem}
+                      type="button"
+                      onClick={() => setCurrentPage(pageItem)}
+                      className={`min-w-[32px] px-2.5 py-1.5 text-xs font-bold rounded-lg border transition-colors cursor-pointer ${
+                        safePage === pageItem
+                          ? 'bg-[#0f3e2e] text-white border-[#0f3e2e] shadow-2xs'
+                          : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
+                      }`}
+                    >
+                      {pageItem}
+                    </button>
+                  )
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                  disabled={safePage === totalPages}
+                  className="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors inline-flex items-center gap-1 cursor-pointer"
+                >
+                  <span>Próxima</span>
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       ) : (
         <div className="bg-white border border-slate-200 rounded-2xl p-12 text-center shadow-xs">
@@ -819,6 +967,7 @@ export const ExercisesSimulationView: React.FC = () => {
                     Título do Exercício / Caso *
                   </label>
                   <input
+                    ref={titleInputRef}
                     type="text"
                     required
                     value={formTitle}
@@ -1033,7 +1182,7 @@ export const ExercisesSimulationView: React.FC = () => {
                 </div>
               </div>
 
-              <div className="pt-2 flex items-center justify-end gap-3 border-t border-slate-100">
+              <div className="pt-2 flex flex-wrap items-center justify-end gap-2.5 border-t border-slate-100">
                 <button
                   type="button"
                   onClick={() => setEditorModalExercise({ open: false })}
@@ -1041,6 +1190,17 @@ export const ExercisesSimulationView: React.FC = () => {
                 >
                   Cancelar
                 </button>
+                {!editorModalExercise.exercise && (
+                  <button
+                    type="button"
+                    disabled={isSubmitting}
+                    onClick={() => void executeSaveExercise(true)}
+                    className="px-4 py-2.5 font-bold text-[#0f3e2e] bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 rounded-xl transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>{isSubmitting ? 'Salvando...' : 'Salvar e Criar Próximo'}</span>
+                  </button>
+                )}
                 <button
                   type="submit"
                   disabled={isSubmitting}

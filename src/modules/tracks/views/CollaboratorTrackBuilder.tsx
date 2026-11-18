@@ -16,6 +16,9 @@ import {
   User,
   X,
   Shield,
+  BookmarkPlus,
+  Layers,
+  Building2,
 } from 'lucide-react';
 import { usePortalStore } from '../../../context/PortalStoreContext';
 import { useToast } from '../../../context/ToastContext';
@@ -25,9 +28,11 @@ import {
   CollaboratorTrackStep,
   Checklist,
   Survey,
+  TrackTemplate,
   getCellName,
   getScorePerformanceMeta,
   OfficialCell,
+  CLEAN_CELL_NAMES,
 } from '../../../types/portal';
 
 interface CollaboratorTrackBuilderProps {
@@ -46,12 +51,15 @@ export const CollaboratorTrackBuilder: React.FC<CollaboratorTrackBuilderProps> =
     checklists,
     surveys,
     categories,
+    trackTemplates,
     currentUser,
     hasPermission,
     updateCollaboratorTrack,
     addStepToCollaboratorTrack,
     removeStepFromCollaboratorTrack,
     ensureCollaboratorChecklistAssignment,
+    saveTrackTemplate,
+    deleteTrackTemplate,
   } = usePortalStore();
   const { showToast } = useToast();
 
@@ -74,6 +82,16 @@ export const CollaboratorTrackBuilder: React.FC<CollaboratorTrackBuilderProps> =
   const [draggedStepIndex, setDraggedStepIndex] = useState<number | null>(null);
   const [dragOverStepIndex, setDragOverStepIndex] = useState<number | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+
+  // Estados de Modelos de Trilha Reutilizáveis
+  const [isSaveTemplateModalOpen, setIsSaveTemplateModalOpen] = useState(false);
+  const [templateNameInput, setTemplateNameInput] = useState('');
+  const [templateCellInput, setTemplateCellInput] = useState(
+    collaborator.cellTeam ? getCellName(collaborator.cellTeam) : 'Laboratório'
+  );
+  const [isSavingTemplate, setIsSavingTemplate] = useState(false);
+  const [isApplyTemplateModalOpen, setIsApplyTemplateModalOpen] = useState(false);
+  const [isApplyingTemplate, setIsApplyingTemplate] = useState(false);
 
   // Trilha reativa do colaborador
   const currentTrack: CollaboratorTrackStep[] = useMemo(() => {
@@ -217,6 +235,137 @@ export const CollaboratorTrackBuilder: React.FC<CollaboratorTrackBuilderProps> =
     setDraggedStepIndex(null);
     setDragOverStepIndex(null);
     await updateCollaboratorTrack(collaborator.id, updated);
+  };
+
+  const handleOpenSaveTemplateModal = () => {
+    if (currentTrack.length === 0) {
+      showToast('Adicione ao menos uma etapa na trilha antes de salvar como modelo.', 'info');
+      return;
+    }
+    setTemplateNameInput('');
+    setTemplateCellInput(collaborator.cellTeam ? getCellName(collaborator.cellTeam) : 'Geral');
+    setIsSaveTemplateModalOpen(true);
+  };
+
+  const handleConfirmSaveTemplate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!templateNameInput.trim()) {
+      showToast('Informe um nome para identificar este modelo de trilha.', 'error');
+      return;
+    }
+
+    setIsSavingTemplate(true);
+    const res = await saveTrackTemplate(
+      templateNameInput.trim(),
+      templateCellInput,
+      currentTrack.map((step) => ({
+        type: step.type,
+        refId: step.refId,
+        filledBy: step.filledBy,
+      }))
+    );
+    setIsSavingTemplate(false);
+
+    if (res.success) {
+      showToast(res.message, 'success');
+      setIsSaveTemplateModalOpen(false);
+      setTemplateNameInput('');
+    } else {
+      showToast(res.message, 'error');
+    }
+  };
+
+  const handleApplyTemplate = async (template: TrackTemplate) => {
+    if (!canEditStructure || isApplyingTemplate) return;
+
+    const existingKeys = new Set(currentTrack.map((s) => `${s.type}:${s.refId}`));
+    const hasAnyIncomplete = currentTrack.some((s) => s.status !== 'concluido');
+
+    const stepsToAppend: CollaboratorTrackStep[] = [];
+    let skippedDuplicates = 0;
+
+    template.steps.forEach((tplStep, idx) => {
+      const key = `${tplStep.type}:${tplStep.refId}`;
+      if (existingKeys.has(key)) {
+        skippedDuplicates++;
+        return;
+      }
+
+      const linkedItem =
+        tplStep.type === 'checklist'
+          ? checklists.find((c) => c.id === tplStep.refId)
+          : surveys.find((s) => s.id === tplStep.refId);
+
+      if (!linkedItem) {
+        return;
+      }
+
+      existingKeys.add(key);
+      const isFirstNewPending =
+        !hasAnyIncomplete && stepsToAppend.length === 0;
+
+      stepsToAppend.push({
+        id: `trk-step-${Date.now()}-${idx}-${Math.random().toString(36).slice(2, 6)}`,
+        type: tplStep.type,
+        title: linkedItem.title,
+        refId: tplStep.refId,
+        filledBy:
+          tplStep.type === 'survey'
+            ? 'collaborator'
+            : tplStep.filledBy || 'evaluator',
+        order: currentTrack.length + stepsToAppend.length + 1,
+        status:
+          currentTrack.length === 0 && stepsToAppend.length === 0
+            ? 'disponivel'
+            : isFirstNewPending
+            ? 'disponivel'
+            : 'bloqueado',
+        completedAt: null,
+        finalScore: null,
+        collaboratorChecklistId:
+          tplStep.type === 'checklist'
+            ? `asg-${Date.now()}-${idx}-${Math.random().toString(36).slice(2, 5)}`
+            : undefined,
+      });
+    });
+
+    if (stepsToAppend.length === 0) {
+      showToast(
+        skippedDuplicates > 0
+          ? 'Todas as etapas deste modelo já estão presentes na trilha do colaborador.'
+          : 'Nenhuma etapa válida encontrada neste modelo.',
+        'info'
+      );
+      return;
+    }
+
+    setIsApplyingTemplate(true);
+    const res = await updateCollaboratorTrack(collaborator.id, [
+      ...currentTrack,
+      ...stepsToAppend,
+    ]);
+    setIsApplyingTemplate(false);
+
+    if (res.success) {
+      showToast(
+        `Modelo "${template.name}" aplicado! ${stepsToAppend.length} etapa(s) adicionada(s)${
+          skippedDuplicates > 0 ? ` (${skippedDuplicates} duplicada(s) ignorada(s))` : ''
+        }.`,
+        'success'
+      );
+      setIsApplyTemplateModalOpen(false);
+    } else {
+      showToast(res.message, 'error');
+    }
+  };
+
+  const handleDeleteTemplate = async (template: TrackTemplate) => {
+    const res = await deleteTrackTemplate(template.id);
+    if (res.success) {
+      showToast(`Modelo "${template.name}" removido.`, 'success');
+    } else {
+      showToast(res.message, 'error');
+    }
   };
 
   return (
@@ -610,7 +759,32 @@ export const CollaboratorTrackBuilder: React.FC<CollaboratorTrackBuilderProps> =
               </p>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
+              {canEditStructure && (
+                <>
+                  <button
+                    type="button"
+                    onClick={handleOpenSaveTemplateModal}
+                    className="px-2.5 py-1.5 text-[11px] font-bold text-[#0f3e2e] bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg transition-colors inline-flex items-center gap-1.5 cursor-pointer"
+                    title="Salvar a sequência atual da trilha como modelo reutilizável"
+                  >
+                    <BookmarkPlus className="w-3.5 h-3.5" />
+                    <span>Salvar como Modelo</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsApplyTemplateModalOpen(true)}
+                    className="px-2.5 py-1.5 text-[11px] font-bold text-white bg-[#0f3e2e] hover:bg-emerald-900 rounded-lg transition-colors inline-flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                    title="Aplicar um modelo de trilha salvo"
+                  >
+                    <Layers className="w-3.5 h-3.5 text-emerald-200" />
+                    <span>
+                      Aplicar Modelo
+                      {trackTemplates.length > 0 ? ` (${trackTemplates.length})` : ''}
+                    </span>
+                  </button>
+                </>
+              )}
               <span className="text-xs font-bold text-slate-600 bg-white px-3 py-1 rounded-lg border border-slate-200">
                 {currentTrack.length} etapa(s)
               </span>
@@ -954,6 +1128,257 @@ export const CollaboratorTrackBuilder: React.FC<CollaboratorTrackBuilderProps> =
           </div>
         </div>
       </div>
+
+      {/* ========================================================= */}
+      {/* MODAL: SALVAR TRILHA ATUAL COMO MODELO REUTILIZÁVEL */}
+      {/* ========================================================= */}
+      {isSaveTemplateModalOpen && (
+        <div
+          className="fixed inset-0 z-60 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4"
+          onClick={() => setIsSaveTemplateModalOpen(false)}
+        >
+          <div
+            className="bg-white rounded-2xl shadow-2xl max-w-md w-full border border-slate-200 overflow-hidden animate-in fade-in zoom-in-95 duration-150"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-5 py-4 bg-[#0f3e2e] text-white flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <BookmarkPlus className="w-5 h-5 text-emerald-200" />
+                <div>
+                  <h3 className="text-sm font-bold text-white">Salvar como Modelo de Trilha</h3>
+                  <p className="text-[11px] text-emerald-200">
+                    Reutilize esta sequência de {currentTrack.length} etapa(s) em outros colaboradores
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsSaveTemplateModalOpen(false)}
+                className="text-emerald-200 hover:text-white p-1 rounded-lg hover:bg-white/10 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleConfirmSaveTemplate} className="p-5 space-y-4 text-xs">
+              <div>
+                <label className="block text-xs font-bold text-slate-800 mb-1">
+                  Nome do Modelo *
+                </label>
+                <input
+                  type="text"
+                  required
+                  autoFocus
+                  value={templateNameInput}
+                  onChange={(e) => setTemplateNameInput(e.target.value)}
+                  placeholder="Ex: Onboarding Padrão - Laboratório"
+                  className="w-full px-3.5 py-2 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 font-medium text-slate-900"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-800 mb-1">
+                  Célula de Referência
+                </label>
+                <select
+                  value={templateCellInput}
+                  onChange={(e) => setTemplateCellInput(e.target.value)}
+                  className="w-full px-3.5 py-2 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 font-medium text-slate-900"
+                >
+                  <option value="Geral">Geral (Todas as Células)</option>
+                  {CLEAN_CELL_NAMES.map((cellName) => (
+                    <option key={cellName} value={cellName}>
+                      {cellName}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-1.5 max-h-40 overflow-y-auto">
+                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
+                  Etapas incluídas no modelo ({currentTrack.length}):
+                </span>
+                {currentTrack.map((s, idx) => (
+                  <div
+                    key={s.id}
+                    className="flex items-center justify-between gap-2 text-[11px] text-slate-700"
+                  >
+                    <span className="truncate font-medium">
+                      {idx + 1}. {s.title}
+                    </span>
+                    <span className="text-[10px] text-slate-500 shrink-0">
+                      {s.type === 'survey'
+                        ? 'Pesquisa'
+                        : s.filledBy === 'collaborator'
+                        ? 'Colaborador'
+                        : 'Avaliador'}
+                    </span>
+                  </div>
+                ))}
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setIsSaveTemplateModalOpen(false)}
+                  className="px-4 py-2 font-semibold text-slate-600 hover:bg-slate-100 rounded-xl transition-colors cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSavingTemplate}
+                  className="px-5 py-2 font-bold text-white bg-[#0f3e2e] hover:bg-emerald-900 rounded-xl transition-colors shadow-sm cursor-pointer disabled:opacity-50"
+                >
+                  {isSavingTemplate ? 'Salvando...' : 'Salvar Modelo'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* MODAL: APLICAR MODELO DE TRILHA SALVO */}
+      {/* ========================================================= */}
+      {isApplyTemplateModalOpen && (
+        <div
+          className="fixed inset-0 z-60 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4"
+          onClick={() => setIsApplyTemplateModalOpen(false)}
+        >
+          <div
+            className="bg-white rounded-2xl shadow-2xl max-w-xl w-full max-h-[85vh] border border-slate-200 overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-150"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-5 py-4 bg-[#0f3e2e] text-white flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-2.5">
+                <Layers className="w-5 h-5 text-emerald-200" />
+                <div>
+                  <h3 className="text-sm font-bold text-white">Aplicar Modelo de Trilha</h3>
+                  <p className="text-[11px] text-emerald-200">
+                    Etapas já existentes na trilha de {collaborator.fullName} serão ignoradas automaticamente
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsApplyTemplateModalOpen(false)}
+                className="text-emerald-200 hover:text-white p-1 rounded-lg hover:bg-white/10 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-5 overflow-y-auto space-y-3 flex-1">
+              {trackTemplates.length === 0 ? (
+                <div className="border-2 border-dashed border-slate-200 rounded-2xl p-8 text-center space-y-2 bg-slate-50/50">
+                  <Layers className="w-10 h-10 text-slate-300 mx-auto" />
+                  <h4 className="text-sm font-bold text-slate-800">
+                    Nenhum modelo de trilha salvo ainda
+                  </h4>
+                  <p className="text-xs text-slate-500 max-w-sm mx-auto">
+                    Monte uma sequência na Linha do Tempo e clique em{' '}
+                    <strong>Salvar como Modelo</strong> para reutilizá-la em novos colaboradores.
+                  </p>
+                </div>
+              ) : (
+                trackTemplates.map((tpl) => {
+                  const newCount = tpl.steps.filter(
+                    (tplStep) =>
+                      !currentTrack.some(
+                        (s) => s.type === tplStep.type && s.refId === tplStep.refId
+                      )
+                  ).length;
+
+                  return (
+                    <div
+                      key={tpl.id}
+                      className="border border-slate-200 hover:border-emerald-400 rounded-xl p-4 bg-white transition-all space-y-3"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="space-y-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <h4 className="text-sm font-bold text-slate-900 truncate">
+                              {tpl.name}
+                            </h4>
+                            <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 border border-slate-200">
+                              <Building2 className="w-3 h-3 text-slate-500" />
+                              <span>{tpl.cell}</span>
+                            </span>
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-900 border border-emerald-200">
+                              {tpl.steps.length} etapa(s)
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-slate-500">
+                            Criado em {new Date(tpl.createdAt).toLocaleDateString('pt-BR')}
+                            {newCount < tpl.steps.length &&
+                              ` · ${tpl.steps.length - newCount} etapa(s) já na trilha`}
+                          </p>
+                        </div>
+
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => handleApplyTemplate(tpl)}
+                            disabled={isApplyingTemplate || newCount === 0}
+                            className="px-3 py-1.5 text-xs font-bold text-white bg-[#0f3e2e] hover:bg-emerald-900 rounded-lg transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed shadow-2xs"
+                          >
+                            {newCount === 0 ? 'Já Aplicado' : `Aplicar (+${newCount})`}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteTemplate(tpl)}
+                            className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
+                            title="Excluir modelo"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Prévia compacta das etapas */}
+                      <div className="flex flex-wrap gap-1.5 pt-2 border-t border-slate-100">
+                        {tpl.steps.map((step, sIdx) => {
+                          const item =
+                            step.type === 'checklist'
+                              ? checklists.find((c) => c.id === step.refId)
+                              : surveys.find((s) => s.id === step.refId);
+                          const alreadyAdded = currentTrack.some(
+                            (s) => s.type === step.type && s.refId === step.refId
+                          );
+                          return (
+                            <span
+                              key={`${tpl.id}-${sIdx}`}
+                              className={`text-[10px] px-2 py-0.5 rounded-md border truncate max-w-[230px] ${
+                                alreadyAdded
+                                  ? 'bg-emerald-50/60 text-emerald-800 border-emerald-200 line-through opacity-75'
+                                  : 'bg-slate-50 text-slate-700 border-slate-200'
+                              }`}
+                              title={item?.title || 'Atividade removida'}
+                            >
+                              {sIdx + 1}. {item?.title || 'Atividade removida'}
+                            </span>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            <div className="px-5 py-3 bg-slate-50 border-t border-slate-200 flex justify-end shrink-0">
+              <button
+                type="button"
+                onClick={() => setIsApplyTemplateModalOpen(false)}
+                className="px-4 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-200 rounded-xl transition-colors cursor-pointer"
+              >
+                Fechar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

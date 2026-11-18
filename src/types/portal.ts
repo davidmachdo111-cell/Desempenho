@@ -407,6 +407,20 @@ export interface CollaboratorTrackStep {
   surveyResponseId?: string | null; // vínculo se resposta enviada
 }
 
+export interface TrackTemplateStep {
+  type: CollaboratorTrackStepType;
+  refId: string;
+  filledBy: CollaboratorTrackFilledBy;
+}
+
+export interface TrackTemplate {
+  id: string;
+  name: string;
+  cell: string;
+  steps: TrackTemplateStep[];
+  createdAt: string;
+}
+
 export interface Collaborator {
   id: string;
   fullName: string;

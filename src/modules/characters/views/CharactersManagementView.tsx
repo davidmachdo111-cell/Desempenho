@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Users,
   Plus,
@@ -18,6 +18,10 @@ import {
   CheckCircle2,
   AlertTriangle,
   FileSpreadsheet,
+  ChevronLeft,
+  ChevronRight,
+  ArrowUpDown,
+  Paperclip,
 } from 'lucide-react';
 import { usePortalStore } from '../../../context/PortalStoreContext';
 import { useToast } from '../../../context/ToastContext';
@@ -99,9 +103,13 @@ export const CharactersManagementView: React.FC = () => {
   const canManage =
     hasPermission('can_manage_exercises') || hasPermission('cells:manage');
 
+  const ITEMS_PER_PAGE = 18;
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedTierFilter, setSelectedTierFilter] = useState<string>('all');
   const [selectedCellFilter, setSelectedCellFilter] = useState<string>('all');
+  const [attachmentFilter, setAttachmentFilter] = useState<'all' | 'with_guide' | 'without_guide'>('all');
+  const [sortOrder, setSortOrder] = useState<'recent' | 'alpha'>('recent');
+  const [currentPage, setCurrentPage] = useState(1);
   const [modalState, setModalState] = useState<{
     open: boolean;
     character?: Character;
@@ -153,12 +161,23 @@ export const CharactersManagementView: React.FC = () => {
 
   const parsedBatch = useMemo(() => parseBatchCharactersInput(batchRawText), [batchRawText]);
 
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery, selectedTierFilter, selectedCellFilter, attachmentFilter, sortOrder]);
+
   const filteredCharacters = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    return characters.filter((c) => {
+    const filtered = characters.filter((c) => {
       const charCell = c.cell || 'OPERADORA';
       if (selectedCellFilter !== 'all' && charCell !== selectedCellFilter) return false;
       if (selectedTierFilter !== 'all' && c.customerTier !== selectedTierFilter) return false;
+
+      if (attachmentFilter !== 'all') {
+        const hasGuides = getCharacterGuides(c).length > 0;
+        if (attachmentFilter === 'with_guide' && !hasGuides) return false;
+        if (attachmentFilter === 'without_guide' && hasGuides) return false;
+      }
+
       if (!q) return true;
 
       const phrasesText = normalizePhrases(c.typicalPhrases).join(' ').toLowerCase();
@@ -173,7 +192,53 @@ export const CharactersManagementView: React.FC = () => {
         c.serviceContext.toLowerCase().includes(q)
       );
     });
-  }, [characters, searchQuery, selectedTierFilter, selectedCellFilter]);
+
+    const sorted = [...filtered];
+    if (sortOrder === 'alpha') {
+      sorted.sort((a, b) =>
+        a.name.localeCompare(b.name, 'pt-BR', { sensitivity: 'base' })
+      );
+    } else {
+      sorted.sort((a, b) => {
+        const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+        return timeB - timeA;
+      });
+    }
+    return sorted;
+  }, [
+    characters,
+    searchQuery,
+    selectedTierFilter,
+    selectedCellFilter,
+    attachmentFilter,
+    sortOrder,
+  ]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredCharacters.length / ITEMS_PER_PAGE));
+  const safePage = Math.min(currentPage, totalPages);
+  const startIndex = (safePage - 1) * ITEMS_PER_PAGE;
+  const endIndex = Math.min(startIndex + ITEMS_PER_PAGE, filteredCharacters.length);
+  const paginatedCharacters = useMemo(
+    () => filteredCharacters.slice(startIndex, endIndex),
+    [filteredCharacters, startIndex, endIndex]
+  );
+
+  const paginationPages = useMemo(() => {
+    const pages: (number | 'ellipsis')[] = [];
+    if (totalPages <= 7) {
+      for (let i = 1; i <= totalPages; i++) pages.push(i);
+    } else {
+      pages.push(1);
+      if (safePage > 3) pages.push('ellipsis');
+      const start = Math.max(2, safePage - 1);
+      const end = Math.min(totalPages - 1, safePage + 1);
+      for (let i = start; i <= end; i++) pages.push(i);
+      if (safePage < totalPages - 2) pages.push('ellipsis');
+      pages.push(totalPages);
+    }
+    return pages;
+  }, [totalPages, safePage]);
 
   const openModal = (character?: Character) => {
     setPhraseInput('');
@@ -540,9 +605,9 @@ export const CharactersManagementView: React.FC = () => {
           </div>
         </div>
 
-        {/* Linha de Busca e Filtro de Classificação */}
-        <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-0.5">
-          <div className="relative w-full sm:w-96">
+        {/* Linha de Busca, Filtros Avançados e Ordenação */}
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 pt-0.5">
+          <div className="relative w-full lg:w-80 xl:w-96">
             <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
             <input
               type="text"
@@ -553,21 +618,53 @@ export const CharactersManagementView: React.FC = () => {
             />
           </div>
 
-          <div className="flex items-center gap-2 w-full sm:w-auto">
-            <span className="text-xs font-medium text-slate-600">Classificação:</span>
-            <select
-              value={selectedTierFilter}
-              onChange={(e) => setSelectedTierFilter(e.target.value)}
-              className="text-xs bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-            >
-              <option value="all">Todas as Classificações</option>
-              <option value="Iniciante">Iniciante</option>
-              <option value="Simples">Simples</option>
-              <option value="Mediano">Mediano</option>
-              <option value="Intermediário">Intermediário</option>
-              <option value="Crítico">Crítico</option>
-            </select>
-            <div className="text-xs text-slate-500 font-medium ml-2">
+          <div className="flex items-center gap-2.5 flex-wrap w-full lg:w-auto justify-start lg:justify-end">
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs font-medium text-slate-600">Classificação:</span>
+              <select
+                value={selectedTierFilter}
+                onChange={(e) => setSelectedTierFilter(e.target.value)}
+                className="text-xs bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              >
+                <option value="all">Todas as Classificações</option>
+                <option value="Iniciante">Iniciante</option>
+                <option value="Simples">Simples</option>
+                <option value="Mediano">Mediano</option>
+                <option value="Intermediário">Intermediário</option>
+                <option value="Crítico">Crítico</option>
+              </select>
+            </div>
+
+            <div className="flex items-center gap-1.5">
+              <Paperclip className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+              <select
+                value={attachmentFilter}
+                onChange={(e) =>
+                  setAttachmentFilter(e.target.value as 'all' | 'with_guide' | 'without_guide')
+                }
+                aria-label="Filtrar por status de anexo"
+                className="text-xs bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              >
+                <option value="all">Todos os Anexos</option>
+                <option value="with_guide">Com Guia Anexada</option>
+                <option value="without_guide">Sem Guia Anexada</option>
+              </select>
+            </div>
+
+            <div className="flex items-center gap-1.5">
+              <ArrowUpDown className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+              <select
+                value={sortOrder}
+                onChange={(e) => setSortOrder(e.target.value as 'recent' | 'alpha')}
+                aria-label="Ordenar clientes"
+                className="text-xs bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              >
+                <option value="recent">Mais Recentes</option>
+                <option value="alpha">Ordem Alfabética A–Z</option>
+              </select>
+            </div>
+
+            <div className="text-xs text-slate-500 font-semibold pl-1">
               {filteredCharacters.length} cliente(s)
             </div>
           </div>
@@ -605,8 +702,9 @@ export const CharactersManagementView: React.FC = () => {
 
       {/* Grid de Cards dos Clientes */}
       {filteredCharacters.length > 0 && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-          {filteredCharacters.map((char) => {
+        <div className="space-y-5">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+            {paginatedCharacters.map((char) => {
             const tierBadge =
               CUSTOMER_TIER_BADGES[char.customerTier || 'Mediano'] ||
               CUSTOMER_TIER_BADGES['Mediano'];
@@ -843,6 +941,67 @@ export const CharactersManagementView: React.FC = () => {
               </div>
             );
           })}
+          </div>
+
+          {/* Paginação Limpa (18 cards por página) */}
+          <div className="bg-white border border-slate-200 rounded-2xl px-4 py-3 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="text-xs text-slate-600 font-medium">
+              Mostrando{' '}
+              <span className="font-bold text-slate-900">
+                {startIndex + 1}–{endIndex}
+              </span>{' '}
+              de <span className="font-bold text-slate-900">{filteredCharacters.length}</span>{' '}
+              clientes
+            </div>
+
+            {totalPages > 1 && (
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <button
+                  type="button"
+                  onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                  disabled={safePage === 1}
+                  className="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors inline-flex items-center gap-1 cursor-pointer"
+                >
+                  <ChevronLeft className="w-3.5 h-3.5" />
+                  <span>Anterior</span>
+                </button>
+
+                {paginationPages.map((pageItem, idx) =>
+                  pageItem === 'ellipsis' ? (
+                    <span
+                      key={`ellipsis-${idx}`}
+                      className="px-2 py-1 text-xs text-slate-400 font-bold select-none"
+                    >
+                      …
+                    </span>
+                  ) : (
+                    <button
+                      key={pageItem}
+                      type="button"
+                      onClick={() => setCurrentPage(pageItem)}
+                      className={`min-w-[32px] px-2.5 py-1.5 text-xs font-bold rounded-lg border transition-colors cursor-pointer ${
+                        safePage === pageItem
+                          ? 'bg-[#0f3e2e] text-white border-[#0f3e2e] shadow-2xs'
+                          : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
+                      }`}
+                    >
+                      {pageItem}
+                    </button>
+                  )
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                  disabled={safePage === totalPages}
+                  className="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors inline-flex items-center gap-1 cursor-pointer"
+                >
+                  <span>Próxima</span>
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       )}
 

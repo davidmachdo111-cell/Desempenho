@@ -44,6 +44,8 @@ import {
   SurveyAnswerItem,
   SurveyQuestion,
   SurveyResponse,
+  TrackTemplate,
+  TrackTemplateStep,
   UserProfile,
   UserRole,
   UserStatus,
@@ -102,6 +104,7 @@ interface PortalStoreContextValue {
   collaborators: Collaborator[];
   collaboratorChecklists: CollaboratorChecklist[];
   learningTracks: LearningTrack[];
+  trackTemplates: TrackTemplate[];
   surveys: Survey[];
   surveyResponses: SurveyResponse[];
   auditLogs: AuditLogEntry[];
@@ -264,6 +267,12 @@ interface PortalStoreContextValue {
     }
   ) => Promise<MutationResult>;
   reopenCollaboratorTrack: (collaboratorId: string) => Promise<MutationResult>;
+  saveTrackTemplate: (
+    name: string,
+    cell: string,
+    steps: TrackTemplateStep[]
+  ) => Promise<MutationResult & { template?: TrackTemplate }>;
+  deleteTrackTemplate: (templateId: string) => Promise<MutationResult>;
 
   // 6. Trilhas de Aprendizagem Dinâmicas (CRUD)
   createLearningTrack: (payload: {
@@ -640,6 +649,17 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
     return INITIAL_LEARNING_TRACKS;
   });
 
+  const [trackTemplates, setTrackTemplates] = useState<TrackTemplate[]>(() => {
+    try {
+      const s = localStorage.getItem('portal_track_templates_store');
+      if (s !== null) {
+        const parsed = JSON.parse(s);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch {}
+    return [];
+  });
+
   const [surveys, setSurveys] = useState<Survey[]>(() => {
     try {
       const s = localStorage.getItem('portal_surveys_store');
@@ -729,6 +749,12 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
 
   React.useEffect(() => {
     try {
+      localStorage.setItem('portal_track_templates_store', JSON.stringify(trackTemplates));
+    } catch {}
+  }, [trackTemplates]);
+
+  React.useEffect(() => {
+    try {
       localStorage.setItem('portal_surveys_store', JSON.stringify(surveys));
     } catch {}
   }, [surveys]);
@@ -784,8 +810,7 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
         supabase
           .from('portal_settings')
           .select('*')
-          .eq('key', 'roleDefaultPermissions')
-          .maybeSingle(),
+          .in('key', ['roleDefaultPermissions', 'track_templates']),
       ]);
 
       // 0. Usuários do Portal
@@ -981,9 +1006,21 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
         );
       }
 
-      // 10. Configurações Compartilhadas (roleDefaultPermissions)
-      if (!settingsRes.error && settingsRes.data?.value) {
-        setRoleDefaultPermissions(normalizeRoleDefaultPermissions(settingsRes.data.value));
+      // 10. Configurações Compartilhadas (roleDefaultPermissions e track_templates)
+      if (!settingsRes.error && Array.isArray(settingsRes.data)) {
+        const roleDefaultsRow = settingsRes.data.find(
+          (row: any) => row.key === 'roleDefaultPermissions'
+        );
+        if (roleDefaultsRow?.value) {
+          setRoleDefaultPermissions(normalizeRoleDefaultPermissions(roleDefaultsRow.value));
+        }
+
+        const trackTemplatesRow = settingsRes.data.find(
+          (row: any) => row.key === 'track_templates'
+        );
+        if (Array.isArray(trackTemplatesRow?.value)) {
+          setTrackTemplates(trackTemplatesRow.value as TrackTemplate[]);
+        }
       }
 
       setLastSyncedAt(new Date().toISOString());
@@ -3639,6 +3676,105 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
     [collaborators, updateCollaboratorTrack]
   );
 
+  const saveTrackTemplate = useCallback(
+    async (
+      name: string,
+      cell: string,
+      steps: TrackTemplateStep[]
+    ): Promise<MutationResult & { template?: TrackTemplate }> => {
+      if (!checkUserPermission(currentUser, 'can_manage_collaborators')) {
+        return { success: false, message: 'Acesso negado para salvar modelos de trilha.' };
+      }
+
+      const trimmedName = name.trim();
+      if (!trimmedName) {
+        return { success: false, message: 'Informe um nome para o modelo de trilha.' };
+      }
+
+      if (!Array.isArray(steps) || steps.length === 0) {
+        return {
+          success: false,
+          message: 'Adicione ao menos uma etapa antes de salvar como modelo.',
+        };
+      }
+
+      const cleanSteps: TrackTemplateStep[] = steps.map((s) => ({
+        type: s.type,
+        refId: s.refId,
+        filledBy: s.filledBy || (s.type === 'checklist' ? 'evaluator' : 'collaborator'),
+      }));
+
+      const newTemplate: TrackTemplate = {
+        id: `tpl-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        name: trimmedName,
+        cell: cell.trim() || 'Geral',
+        steps: cleanSteps,
+        createdAt: new Date().toISOString(),
+      };
+
+      const nextTemplates = [newTemplate, ...trackTemplates];
+      setTrackTemplates(nextTemplates);
+
+      if (isSupabaseConfigured) {
+        const { error } = await supabase.from('portal_settings').upsert({
+          key: 'track_templates',
+          value: nextTemplates,
+          updated_at: new Date().toISOString(),
+        });
+        if (error) {
+          console.error('Erro ao salvar modelos de trilha no Supabase:', error);
+        }
+      }
+
+      appendAudit(
+        'Criação de Modelo de Trilha',
+        'Trilhas',
+        `Modelo "${newTemplate.name}" (${cleanSteps.length} etapas)`,
+        'Sucesso'
+      );
+
+      return {
+        success: true,
+        message: `Modelo "${newTemplate.name}" salvo com sucesso!`,
+        template: newTemplate,
+      };
+    },
+    [currentUser, trackTemplates, appendAudit]
+  );
+
+  const deleteTrackTemplate = useCallback(
+    async (templateId: string): Promise<MutationResult> => {
+      if (!checkUserPermission(currentUser, 'can_manage_collaborators')) {
+        return { success: false, message: 'Acesso negado para excluir modelos de trilha.' };
+      }
+
+      const target = trackTemplates.find((t) => t.id === templateId);
+      const nextTemplates = trackTemplates.filter((t) => t.id !== templateId);
+      setTrackTemplates(nextTemplates);
+
+      if (isSupabaseConfigured) {
+        const { error } = await supabase.from('portal_settings').upsert({
+          key: 'track_templates',
+          value: nextTemplates,
+          updated_at: new Date().toISOString(),
+        });
+        if (error) {
+          console.error('Erro ao atualizar modelos de trilha no Supabase:', error);
+        }
+      }
+
+      appendAudit(
+        'Exclusão de Modelo de Trilha',
+        'Trilhas',
+        `Modelo: ${target?.name || templateId}`,
+        'Sucesso'
+      );
+
+      return { success: true, message: 'Modelo de trilha removido com sucesso.' };
+    },
+    [currentUser, trackTemplates, appendAudit]
+  );
+
   const completeCollaboratorTrackStep = useCallback(
     async (
       collaboratorId: string,
@@ -4510,6 +4646,7 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
       collaborators,
       collaboratorChecklists,
       learningTracks,
+      trackTemplates,
       surveys,
       surveyResponses,
       auditLogs,
@@ -4535,6 +4672,8 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
       submitCollaboratorChecklistSelfAssessment,
       finalizeCollaboratorTrack,
       reopenCollaboratorTrack,
+      saveTrackTemplate,
+      deleteTrackTemplate,
       updateCollaboratorChecklistAssignments,
       ensureCollaboratorChecklistAssignment,
       createLearningTrack,
@@ -4581,6 +4720,7 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
       collaborators,
       collaboratorChecklists,
       learningTracks,
+      trackTemplates,
       surveys,
       surveyResponses,
       auditLogs,
@@ -4606,6 +4746,8 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
       submitCollaboratorChecklistSelfAssessment,
       finalizeCollaboratorTrack,
       reopenCollaboratorTrack,
+      saveTrackTemplate,
+      deleteTrackTemplate,
       updateCollaboratorChecklistAssignments,
       ensureCollaboratorChecklistAssignment,
       createLearningTrack,
