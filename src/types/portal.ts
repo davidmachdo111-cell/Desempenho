@@ -78,6 +78,7 @@ export interface Category {
 }
 
 export type OfficialCell = 'LAB' | 'IMG' | 'CONSULTA' | 'TERAPIA' | 'OPERADORA';
+export type ChecklistCell = OfficialCell | 'GERAL';
 
 export const OFFICIAL_CELL_NAMES: Record<OfficialCell, string> = {
   LAB: 'Laboratório',
@@ -95,8 +96,30 @@ export const CLEAN_CELL_NAMES: string[] = [
   'Operadora',
 ];
 
+export function isGeneralCell(cell?: string | null): boolean {
+  if (!cell) return false;
+  const normalized = cell.trim().toLowerCase();
+  return normalized === 'geral' || normalized === 'todas';
+}
+
+export function normalizeChecklistCell(cell?: string | null): ChecklistCell {
+  if (!cell) return 'OPERADORA';
+  if (isGeneralCell(cell)) return 'GERAL';
+  const upper = cell.trim().toUpperCase();
+  if (upper in OFFICIAL_CELL_NAMES) {
+    return upper as OfficialCell;
+  }
+  const lower = cell.trim().toLowerCase();
+  if (lower.includes('laborat')) return 'LAB';
+  if (lower.includes('imagem')) return 'IMG';
+  if (lower.includes('consulta')) return 'CONSULTA';
+  if (lower.includes('terapia') || lower.includes('tratamento')) return 'TERAPIA';
+  return 'OPERADORA';
+}
+
 export function getCellName(cell?: string | null): string {
   if (!cell) return 'Operadora';
+  if (isGeneralCell(cell)) return 'Geral';
   if (cell in OFFICIAL_CELL_NAMES) {
     return OFFICIAL_CELL_NAMES[cell as OfficialCell];
   }
@@ -244,6 +267,34 @@ export const OFFICIAL_CELL_LIST: OfficialCell[] = [
   'OPERADORA',
 ];
 
+export interface ChecklistCellMetadata {
+  code: ChecklistCell;
+  name: string;
+  fullName: string;
+  description: string;
+  badgeBg: string;
+  badgeText: string;
+  badgeBorder: string;
+}
+
+export const CHECKLIST_GENERAL_CELL_META: ChecklistCellMetadata = {
+  code: 'GERAL',
+  name: 'Geral',
+  fullName: 'Geral (Todas as Células)',
+  description: 'Aplicável a colaboradores de qualquer célula · permite vincular exercícios de todas as células',
+  badgeBg: 'bg-teal-50',
+  badgeText: 'text-teal-800',
+  badgeBorder: 'border-teal-200',
+};
+
+export function getChecklistCellMeta(cell?: string | null): ChecklistCellMetadata {
+  const normalized = normalizeChecklistCell(cell);
+  if (normalized === 'GERAL') {
+    return CHECKLIST_GENERAL_CELL_META;
+  }
+  return OFFICIAL_CELLS[normalized] || OFFICIAL_CELLS.OPERADORA;
+}
+
 /**
  * Converte falas/objeções armazenadas (string, array ou JSON) em uma lista de strings limpas
  */
@@ -374,7 +425,7 @@ export type VisibilityLevel = 'padrao' | 'restrito';
 export interface Checklist {
   id: string;
   title: string;
-  cell: OfficialCell; // Célula do Checklist (LAB, IMG, CONSULTA, TERAPIA, OPERADORA)
+  cell: ChecklistCell; // Célula do Checklist (GERAL, LAB, IMG, CONSULTA, TERAPIA, OPERADORA)
   description: string;
   categoryId?: string;
   categoryName?: string;
@@ -521,6 +572,7 @@ export interface EvaluationFrozenSnapshot {
   checklistTitle: string;
   checklistCategoryName?: string;
   checklistDescription?: string;
+  criteriaAnswers?: CriteriaAnswerSnapshot[];
   exercises: FrozenSnapshotExercise[];
 }
 

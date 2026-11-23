@@ -22,16 +22,23 @@ import {
   Download,
   Calendar,
   Eye,
+  Globe,
+  MessageSquareText,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 import { usePortalStore } from '../../../context/PortalStoreContext';
 import { useToast } from '../../../context/ToastContext';
 import {
   canViewRestrictedItem,
+  ChecklistCell,
   Collaborator,
   CollaboratorTrackStep,
   TrackTemplate,
   getCellName,
   getScorePerformanceMeta,
+  isGeneralCell,
+  normalizeChecklistCell,
   normalizeStageName,
   normalizeTemplateStageName,
 } from '../../../types/portal';
@@ -98,12 +105,14 @@ export const CollaboratorTrackBuilder: React.FC<CollaboratorTrackBuilderProps> =
   const [singleNewStageName, setSingleNewStageName] = useState('Etapa 1');
   const [singleExistingStageName, setSingleExistingStageName] = useState('');
   const [singleStepType, setSingleStepType] = useState<'checklist' | 'survey'>('checklist');
+  const [singleStepCellFilter, setSingleStepCellFilter] = useState<'all' | ChecklistCell>('all');
   const [singleStepSearch, setSingleStepSearch] = useState('');
   const [singleStepRefId, setSingleStepRefId] = useState('');
   const [singleStepFilledBy, setSingleStepFilledBy] = useState<'collaborator' | 'evaluator'>(
     'evaluator'
   );
   const [isAddingSingleStep, setIsAddingSingleStep] = useState(false);
+  const [expandedNotesStepIds, setExpandedNotesStepIds] = useState<Record<string, boolean>>({});
 
   const currentTrack: CollaboratorTrackStep[] = useMemo(() => {
     return collaborator.track || [];
@@ -171,14 +180,30 @@ export const CollaboratorTrackBuilder: React.FC<CollaboratorTrackBuilderProps> =
   const filteredSingleStepOptions = useMemo(() => {
     const q = singleStepSearch.trim().toLowerCase();
     if (singleStepType === 'checklist') {
-      return checklists.filter((c) => {
-        if (!q) return true;
-        return (
-          c.title.toLowerCase().includes(q) ||
-          (c.categoryName && c.categoryName.toLowerCase().includes(q)) ||
-          getCellName(c.cell).toLowerCase().includes(q)
-        );
-      });
+      return checklists
+        .filter((c) => {
+          const chkCell = normalizeChecklistCell(c.cell);
+          if (singleStepCellFilter === 'GERAL') {
+            if (!isGeneralCell(chkCell)) return false;
+          } else if (singleStepCellFilter !== 'all') {
+            // Sempre inclui checklists da célula selecionada + checklists marcados como Geral
+            if (chkCell !== singleStepCellFilter && !isGeneralCell(chkCell)) return false;
+          }
+          if (!q) return true;
+          return (
+            c.title.toLowerCase().includes(q) ||
+            (c.categoryName && c.categoryName.toLowerCase().includes(q)) ||
+            getCellName(chkCell).toLowerCase().includes(q)
+          );
+        })
+        .sort((a, b) => {
+          if (singleStepCellFilter !== 'all' && singleStepCellFilter !== 'GERAL') {
+            const aExact = normalizeChecklistCell(a.cell) === singleStepCellFilter ? 0 : 1;
+            const bExact = normalizeChecklistCell(b.cell) === singleStepCellFilter ? 0 : 1;
+            if (aExact !== bExact) return aExact - bExact;
+          }
+          return a.title.localeCompare(b.title, 'pt-BR');
+        });
     }
     return surveys.filter((s) => {
       if (!q) return true;
@@ -187,7 +212,7 @@ export const CollaboratorTrackBuilder: React.FC<CollaboratorTrackBuilderProps> =
         (s.targetCell && s.targetCell.toLowerCase().includes(q))
       );
     });
-  }, [singleStepType, singleStepSearch, checklists, surveys]);
+  }, [singleStepType, singleStepCellFilter, singleStepSearch, checklists, surveys]);
 
   const selectedSingleAlreadyInSameStage = useMemo(() => {
     if (!singleStepRefId) return false;
@@ -292,9 +317,18 @@ export const CollaboratorTrackBuilder: React.FC<CollaboratorTrackBuilderProps> =
   };
 
   const handleOpenAddSingleStepModal = (targetStageName?: string) => {
+    const defaultCellFilter = normalizeChecklistCell(collaborator.cellTeam);
+    const matchingChecklists = checklists.filter((c) => {
+      const chkCell = normalizeChecklistCell(c.cell);
+      return chkCell === defaultCellFilter || isGeneralCell(chkCell);
+    });
+    const effectiveCellFilter: 'all' | ChecklistCell =
+      matchingChecklists.length > 0 ? defaultCellFilter : 'all';
+
     setSingleStepType('checklist');
+    setSingleStepCellFilter(effectiveCellFilter);
     setSingleStepSearch('');
-    setSingleStepRefId(checklists[0]?.id || '');
+    setSingleStepRefId(matchingChecklists[0]?.id || checklists[0]?.id || '');
     setSingleStepFilledBy('evaluator');
     if (targetStageName) {
       setSingleStageMode('existing');
@@ -664,6 +698,27 @@ export const CollaboratorTrackBuilder: React.FC<CollaboratorTrackBuilderProps> =
                       const scoreMeta = getScorePerformanceMeta(
                         hasNumericScore ? step.finalScore : undefined
                       );
+                      const completedCriteriaSource =
+                        frozenSnapshot?.criteriaAnswers && frozenSnapshot.criteriaAnswers.length > 0
+                          ? frozenSnapshot.criteriaAnswers
+                          : linkedAssignment?.criteriaAnswers || [];
+                      const criteriaWithEvaluatorNotes = isCompleted
+                        ? completedCriteriaSource.filter((c) => Boolean(c.notes?.trim()))
+                        : [];
+                      const generalObsPreview = isCompleted
+                        ? linkedAssignment?.generalObservations?.trim() || ''
+                        : '';
+                      const hasEvaluatorNotesPreview =
+                        isChecklist &&
+                        isCompleted &&
+                        canViewThisStep &&
+                        (criteriaWithEvaluatorNotes.length > 0 || Boolean(generalObsPreview));
+                      const isNotesExpanded = Boolean(expandedNotesStepIds[step.id]);
+                      const isGeneralChecklistStep =
+                        isChecklist &&
+                        linkedItem &&
+                        'cell' in linkedItem &&
+                        isGeneralCell(linkedItem.cell);
 
                       return (
                         <div
@@ -744,6 +799,16 @@ export const CollaboratorTrackBuilder: React.FC<CollaboratorTrackBuilderProps> =
                                   >
                                     {isChecklist ? 'Checklist' : 'Pesquisa de Satisfação'}
                                   </span>
+
+                                  {isGeneralChecklistStep && (
+                                    <span
+                                      title="Checklist Geral aplicável a todas as células"
+                                      className="inline-flex items-center gap-1 text-[10px] font-bold text-teal-800 bg-teal-50 border border-teal-200 px-2 py-0.5 rounded-full"
+                                    >
+                                      <Globe className="w-2.5 h-2.5 text-teal-600" />
+                                      <span>Geral</span>
+                                    </span>
+                                  )}
 
                                   {isRestrictedStep && (
                                     <span
@@ -1020,6 +1085,83 @@ export const CollaboratorTrackBuilder: React.FC<CollaboratorTrackBuilderProps> =
                                   )
                                 )}
                               </div>
+
+                              {/* Revisão rápida das Observações do Avaliador (por critério e geral) */}
+                              {hasEvaluatorNotesPreview && (
+                                <div className="pt-2 border-t border-slate-100">
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setExpandedNotesStepIds((prev) => ({
+                                        ...prev,
+                                        [step.id]: !prev[step.id],
+                                      }))
+                                    }
+                                    className="inline-flex items-center gap-1.5 text-[11px] font-bold text-[#0f3e2e] hover:text-emerald-800 bg-emerald-50/70 hover:bg-emerald-100/70 border border-emerald-200/80 px-2.5 py-1 rounded-lg transition-colors cursor-pointer"
+                                  >
+                                    <MessageSquareText className="w-3.5 h-3.5 text-emerald-700" />
+                                    <span>
+                                      Observações do Avaliador
+                                      {criteriaWithEvaluatorNotes.length > 0
+                                        ? ` (${criteriaWithEvaluatorNotes.length} ${
+                                            criteriaWithEvaluatorNotes.length === 1
+                                              ? 'critério'
+                                              : 'critérios'
+                                          })`
+                                        : ' (Geral)'}
+                                    </span>
+                                    {isNotesExpanded ? (
+                                      <ChevronUp className="w-3.5 h-3.5" />
+                                    ) : (
+                                      <ChevronDown className="w-3.5 h-3.5" />
+                                    )}
+                                  </button>
+
+                                  {isNotesExpanded && (
+                                    <div className="mt-2 bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-2 text-xs">
+                                      {criteriaWithEvaluatorNotes.map((crit, cIdx) => (
+                                        <div
+                                          key={crit.criterionId || cIdx}
+                                          className={`p-2.5 rounded-lg border space-y-1 ${
+                                            crit.checked
+                                              ? 'bg-emerald-50/50 border-emerald-200'
+                                              : 'bg-amber-50/60 border-amber-200'
+                                          }`}
+                                        >
+                                          <div className="flex items-center justify-between gap-2">
+                                            <span className="font-bold text-slate-900 text-[11px]">
+                                              {crit.name}
+                                            </span>
+                                            <span
+                                              className={`text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 ${
+                                                crit.checked
+                                                  ? 'bg-emerald-100 text-emerald-800'
+                                                  : 'bg-red-100 text-red-700'
+                                              }`}
+                                            >
+                                              {crit.checked ? 'Atendido' : 'Não Atendido'}
+                                            </span>
+                                          </div>
+                                          <p className="text-[11px] text-slate-700 leading-relaxed italic">
+                                            &ldquo;{crit.notes?.trim()}&rdquo;
+                                          </p>
+                                        </div>
+                                      ))}
+
+                                      {generalObsPreview && (
+                                        <div className="p-2.5 rounded-lg bg-white border border-slate-200 space-y-0.5">
+                                          <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                                            Observações Gerais do Avaliador
+                                          </div>
+                                          <p className="text-[11px] text-slate-700 leading-relaxed">
+                                            {generalObsPreview}
+                                          </p>
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
                             </div>
                           </div>
                         </div>
@@ -1402,14 +1544,56 @@ export const CollaboratorTrackBuilder: React.FC<CollaboratorTrackBuilderProps> =
                 </div>
               </div>
 
-              {/* Busca + Seleção da Atividade */}
-              <div className="space-y-1.5">
+              {/* Busca + Filtro por Célula + Seleção da Atividade */}
+              <div className="space-y-2">
                 <label className="block font-bold text-slate-800">
                   {singleStepType === 'checklist'
                     ? 'Selecionar Checklist *'
                     : 'Selecionar Pesquisa de Satisfação *'}
                 </label>
-                <div className="relative mb-1.5">
+
+                {singleStepType === 'checklist' && (
+                  <div className="space-y-1.5">
+                    <div className="flex items-center gap-1 flex-wrap text-[10px]">
+                      {[
+                        { key: 'all', label: 'Todas' },
+                        { key: 'GERAL', label: 'Geral' },
+                        { key: 'LAB', label: 'Lab' },
+                        { key: 'IMG', label: 'Imagem' },
+                        { key: 'CONSULTA', label: 'Consultas' },
+                        { key: 'TERAPIA', label: 'Terapias' },
+                        { key: 'OPERADORA', label: 'Operadora' },
+                      ].map((cellOpt) => (
+                        <button
+                          key={cellOpt.key}
+                          type="button"
+                          onClick={() =>
+                            setSingleStepCellFilter(cellOpt.key as 'all' | ChecklistCell)
+                          }
+                          className={`px-2 py-0.5 rounded font-semibold cursor-pointer border transition-colors ${
+                            singleStepCellFilter === cellOpt.key
+                              ? 'bg-[#0f3e2e] text-white border-[#0f3e2e]'
+                              : cellOpt.key === 'GERAL'
+                              ? 'bg-teal-50 text-teal-800 border-teal-200 hover:bg-teal-100'
+                              : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'
+                          }`}
+                        >
+                          {cellOpt.label}
+                        </button>
+                      ))}
+                    </div>
+                    {singleStepCellFilter !== 'all' && singleStepCellFilter !== 'GERAL' && (
+                      <p className="text-[10px] text-teal-800 font-medium flex items-center gap-1">
+                        <Globe className="w-3 h-3 shrink-0" />
+                        <span>
+                          Exibindo checklists de <strong>{getCellName(singleStepCellFilter)}</strong> + checklists <strong>Geral</strong>
+                        </span>
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                <div className="relative">
                   <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
                   <input
                     type="text"
@@ -1434,13 +1618,16 @@ export const CollaboratorTrackBuilder: React.FC<CollaboratorTrackBuilderProps> =
                         normalizeStageName(s.stageName).toLowerCase() ===
                           resolvedSingleStageName.toLowerCase()
                     );
+                    const isItemGeral = 'cell' in item && isGeneralCell(item.cell);
                     const cellTag =
                       'cell' in item
-                        ? getCellName(item.cell)
+                        ? isItemGeral
+                          ? 'Geral'
+                          : getCellName(item.cell)
                         : item.targetCell || 'Todas';
                     return (
                       <option key={item.id} value={item.id}>
-                        {item.title} ({cellTag})
+                        {isItemGeral ? `[Geral] ${item.title}` : `${item.title} (${cellTag})`}
                         {inSameStage ? ` · [Já em ${resolvedSingleStageName}]` : ''}
                       </option>
                     );

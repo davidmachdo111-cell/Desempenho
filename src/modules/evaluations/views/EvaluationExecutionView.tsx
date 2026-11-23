@@ -12,6 +12,7 @@ import {
   Building2,
   Lock,
   Save,
+  MessageSquareText,
 } from 'lucide-react';
 import { usePortalStore } from '../../../context/PortalStoreContext';
 import { useToast } from '../../../context/ToastContext';
@@ -213,6 +214,9 @@ export const EvaluationExecutionView: React.FC<EvaluationExecutionViewProps> = (
   }, [linkedExercises, activeSnapshot, snapshotCharactersById, characters]);
 
   const buildInitialCriteria = (): CriteriaAnswerSnapshot[] => {
+    if (activeSnapshot?.criteriaAnswers && activeSnapshot.criteriaAnswers.length > 0) {
+      return activeSnapshot.criteriaAnswers;
+    }
     if (assignment && assignment.criteriaAnswers && assignment.criteriaAnswers.length > 0) {
       return assignment.criteriaAnswers;
     }
@@ -294,7 +298,9 @@ export const EvaluationExecutionView: React.FC<EvaluationExecutionViewProps> = (
     }
 
     const baseCriteria: CriteriaAnswerSnapshot[] =
-      assignment && assignment.criteriaAnswers && assignment.criteriaAnswers.length > 0
+      activeSnapshot?.criteriaAnswers && activeSnapshot.criteriaAnswers.length > 0
+        ? activeSnapshot.criteriaAnswers
+        : assignment && assignment.criteriaAnswers && assignment.criteriaAnswers.length > 0
         ? assignment.criteriaAnswers
         : checklist
         ? checklist.criteria.map((c) => ({
@@ -1106,33 +1112,77 @@ export const EvaluationExecutionView: React.FC<EvaluationExecutionViewProps> = (
                   </div>
 
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-start justify-between gap-2.5">
                       <span className="font-bold text-xs text-slate-900 leading-snug">
                         {crit.name}
                       </span>
-                      <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-slate-100 text-slate-600 font-mono shrink-0">
-                        Peso {crit.weight}
+                      <span
+                        title={`Critério com Peso ${crit.weight || 1} na pontuação final`}
+                        className={`text-[11px] font-bold px-2.5 py-0.5 rounded-md border font-mono shrink-0 ${
+                          (crit.weight || 1) >= 3
+                            ? 'bg-[#0f3e2e] text-white border-[#0f3e2e] shadow-2xs'
+                            : (crit.weight || 1) === 2
+                            ? 'bg-emerald-100 text-emerald-950 border-emerald-300'
+                            : 'bg-slate-100 text-slate-700 border-slate-300'
+                        }`}
+                      >
+                        Peso {crit.weight || 1}
                       </span>
                     </div>
 
-                    {/* Observação / Feedback Opcional */}
+                    {/* Observação do Avaliador por Critério (sempre visível para atendidos e não atendidos) */}
                     <div
-                      className="mt-2.5 pt-2 border-t border-slate-100/80"
+                      className="mt-2.5 pt-2.5 border-t border-slate-200/70 space-y-1"
                       onClick={(e) => e.stopPropagation()}
                     >
-                      <input
-                        type="text"
-                        value={crit.notes || ''}
-                        readOnly={!canEditEvaluation}
-                        disabled={!canEditEvaluation}
-                        onChange={(e) => handleUpdateNotes(crit.criterionId, e.target.value)}
-                        placeholder={
-                          canEditEvaluation
-                            ? 'Adicionar apontamento ou observação deste critério...'
-                            : 'Sem apontamento registrado'
-                        }
-                        className="w-full text-[11px] px-2.5 py-1 bg-slate-50 border border-slate-200 rounded-md focus:bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500 text-slate-800 placeholder-slate-400 disabled:opacity-80 disabled:cursor-default"
-                      />
+                      <div className="flex items-center justify-between gap-2">
+                        <label
+                          htmlFor={`crit-obs-${crit.criterionId}`}
+                          className="inline-flex items-center gap-1.5 text-[11px] font-bold text-slate-700"
+                        >
+                          <MessageSquareText
+                            className={`w-3.5 h-3.5 ${
+                              crit.notes?.trim() ? 'text-emerald-700' : 'text-slate-400'
+                            }`}
+                          />
+                          <span>Observação do Avaliador</span>
+                          {canEditEvaluation && (
+                            <span className="text-[10px] font-normal text-slate-400">
+                              (opcional · aparece no Dossiê)
+                            </span>
+                          )}
+                        </label>
+                        {crit.notes?.trim() && (
+                          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-100/80 text-emerald-900">
+                            Registrada
+                          </span>
+                        )}
+                      </div>
+
+                      {canEditEvaluation ? (
+                        <textarea
+                          id={`crit-obs-${crit.criterionId}`}
+                          rows={2}
+                          value={crit.notes || ''}
+                          onChange={(e) => handleUpdateNotes(crit.criterionId, e.target.value)}
+                          placeholder="Registre observações específicas do avaliador sobre este critério (ex: pontos fortes, desvios identificados ou orientações)..."
+                          className="w-full text-xs px-3 py-2 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 text-slate-800 placeholder-slate-400 leading-relaxed resize-y"
+                        />
+                      ) : crit.notes?.trim() ? (
+                        <div
+                          className={`text-xs px-3 py-2 rounded-lg border leading-relaxed ${
+                            crit.checked
+                              ? 'bg-emerald-50/70 border-emerald-200 text-emerald-950'
+                              : 'bg-amber-50/80 border-amber-200 text-amber-950'
+                          }`}
+                        >
+                          {crit.notes.trim()}
+                        </div>
+                      ) : (
+                        <div className="text-[11px] italic text-slate-400 px-1 py-0.5">
+                          Sem observação registrada para este critério.
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>

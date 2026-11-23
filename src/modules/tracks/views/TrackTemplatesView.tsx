@@ -18,15 +18,18 @@ import {
   CheckCircle2,
   Lock,
   Layers,
+  Globe,
 } from 'lucide-react';
 import { usePortalStore } from '../../../context/PortalStoreContext';
 import { useToast } from '../../../context/ToastContext';
 import {
   CLEAN_CELL_NAMES,
-  OfficialCell,
+  ChecklistCell,
   TrackTemplate,
   TrackTemplateStep,
   getCellName,
+  isGeneralCell,
+  normalizeChecklistCell,
   normalizeTemplateStageName,
 } from '../../../types/portal';
 
@@ -91,7 +94,7 @@ export const TrackTemplatesView: React.FC = () => {
   // Biblioteca interna do Construtor
   const [libraryTab, setLibraryTab] = useState<'checklists' | 'surveys'>('checklists');
   const [librarySearch, setLibrarySearch] = useState('');
-  const [libraryCellFilter, setLibraryCellFilter] = useState<'all' | OfficialCell>('all');
+  const [libraryCellFilter, setLibraryCellFilter] = useState<'all' | ChecklistCell>('all');
 
   // Modal de Confirmação de Exclusão
   const [deleteTarget, setDeleteTarget] = useState<TrackTemplate | null>(null);
@@ -119,15 +122,31 @@ export const TrackTemplatesView: React.FC = () => {
 
   const filteredLibraryChecklists = useMemo(() => {
     const q = librarySearch.trim().toLowerCase();
-    return checklists.filter((chk) => {
-      if (libraryCellFilter !== 'all' && chk.cell !== libraryCellFilter) return false;
-      if (!q) return true;
-      return (
-        chk.title.toLowerCase().includes(q) ||
-        (chk.categoryName && chk.categoryName.toLowerCase().includes(q)) ||
-        chk.description.toLowerCase().includes(q)
-      );
-    });
+    return checklists
+      .filter((chk) => {
+        const chkCell = normalizeChecklistCell(chk.cell);
+        if (libraryCellFilter === 'GERAL') {
+          if (!isGeneralCell(chkCell)) return false;
+        } else if (libraryCellFilter !== 'all') {
+          // Ao filtrar por uma célula específica, exibe checklists da célula + checklists marcados como Geral
+          if (chkCell !== libraryCellFilter && !isGeneralCell(chkCell)) return false;
+        }
+        if (!q) return true;
+        return (
+          chk.title.toLowerCase().includes(q) ||
+          (chk.categoryName && chk.categoryName.toLowerCase().includes(q)) ||
+          chk.description.toLowerCase().includes(q) ||
+          getCellName(chkCell).toLowerCase().includes(q)
+        );
+      })
+      .sort((a, b) => {
+        if (libraryCellFilter !== 'all' && libraryCellFilter !== 'GERAL') {
+          const aExact = normalizeChecklistCell(a.cell) === libraryCellFilter ? 0 : 1;
+          const bExact = normalizeChecklistCell(b.cell) === libraryCellFilter ? 0 : 1;
+          if (aExact !== bExact) return aExact - bExact;
+        }
+        return a.title.localeCompare(b.title, 'pt-BR');
+      });
   }, [checklists, librarySearch, libraryCellFilter]);
 
   const filteredLibrarySurveys = useMemo(() => {
@@ -789,30 +808,43 @@ export const TrackTemplatesView: React.FC = () => {
                       </div>
 
                       {libraryTab === 'checklists' && (
-                        <div className="flex items-center gap-1 flex-wrap text-[10px]">
-                          {[
-                            { key: 'all', label: 'Todas' },
-                            { key: 'LAB', label: 'Lab' },
-                            { key: 'IMG', label: 'Imagem' },
-                            { key: 'CONSULTA', label: 'Consultas' },
-                            { key: 'TERAPIA', label: 'Terapias' },
-                            { key: 'OPERADORA', label: 'Operadora' },
-                          ].map((cellOpt) => (
-                            <button
-                              key={cellOpt.key}
-                              type="button"
-                              onClick={() =>
-                                setLibraryCellFilter(cellOpt.key as 'all' | OfficialCell)
-                              }
-                              className={`px-2 py-0.5 rounded font-semibold cursor-pointer border ${
-                                libraryCellFilter === cellOpt.key
-                                  ? 'bg-[#0f3e2e] text-white border-[#0f3e2e]'
-                                  : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'
-                              }`}
-                            >
-                              {cellOpt.label}
-                            </button>
-                          ))}
+                        <div className="space-y-1.5">
+                          <div className="flex items-center gap-1 flex-wrap text-[10px]">
+                            {[
+                              { key: 'all', label: 'Todas' },
+                              { key: 'GERAL', label: 'Geral' },
+                              { key: 'LAB', label: 'Lab' },
+                              { key: 'IMG', label: 'Imagem' },
+                              { key: 'CONSULTA', label: 'Consultas' },
+                              { key: 'TERAPIA', label: 'Terapias' },
+                              { key: 'OPERADORA', label: 'Operadora' },
+                            ].map((cellOpt) => (
+                              <button
+                                key={cellOpt.key}
+                                type="button"
+                                onClick={() =>
+                                  setLibraryCellFilter(cellOpt.key as 'all' | ChecklistCell)
+                                }
+                                className={`px-2 py-0.5 rounded font-semibold cursor-pointer border ${
+                                  libraryCellFilter === cellOpt.key
+                                    ? 'bg-[#0f3e2e] text-white border-[#0f3e2e]'
+                                    : cellOpt.key === 'GERAL'
+                                    ? 'bg-teal-50 text-teal-800 border-teal-200 hover:bg-teal-100'
+                                    : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'
+                                }`}
+                              >
+                                {cellOpt.label}
+                              </button>
+                            ))}
+                          </div>
+                          {libraryCellFilter !== 'all' && libraryCellFilter !== 'GERAL' && (
+                            <p className="text-[10px] text-teal-800 font-medium flex items-center gap-1">
+                              <Globe className="w-3 h-3 shrink-0" />
+                              <span>
+                                Exibindo checklists de <strong>{getCellName(libraryCellFilter)}</strong> + checklists <strong>Geral</strong>
+                              </span>
+                            </p>
+                          )}
                         </div>
                       )}
                     </div>
@@ -843,9 +875,16 @@ export const TrackTemplatesView: React.FC = () => {
                               >
                                 <div className="min-w-0">
                                   <div className="flex items-center gap-1.5 flex-wrap">
-                                    <span className="text-[10px] font-bold text-slate-500">
-                                      {getCellName(chk.cell)}
-                                    </span>
+                                    {isGeneralCell(chk.cell) ? (
+                                      <span className="inline-flex items-center gap-0.5 text-[9px] font-bold text-teal-800 bg-teal-50 border border-teal-200 px-1.5 py-0.5 rounded">
+                                        <Globe className="w-2.5 h-2.5" />
+                                        Geral
+                                      </span>
+                                    ) : (
+                                      <span className="text-[10px] font-bold text-slate-500">
+                                        {getCellName(chk.cell)}
+                                      </span>
+                                    )}
                                     {chk.visibility === 'restrito' && (
                                       <span className="inline-flex items-center gap-0.5 text-[9px] font-bold text-amber-800 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded">
                                         <Lock className="w-2.5 h-2.5" />

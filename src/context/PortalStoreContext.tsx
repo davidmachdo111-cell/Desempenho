@@ -29,6 +29,7 @@ import {
   Cell,
   Character,
   Checklist,
+  ChecklistCell,
   ChecklistCriterion,
   Collaborator,
   CollaboratorTrackStep,
@@ -61,6 +62,7 @@ import {
   ExerciseDifficulty,
   generateCorporateUsername,
   isGuardianHostUser,
+  normalizeChecklistCell,
   normalizeStageName,
   normalizeTemplateStageName,
 } from '../types/portal';
@@ -193,7 +195,7 @@ interface PortalStoreContextValue {
   saveChecklist: (payload: {
     id?: string;
     title: string;
-    cell: OfficialCell; // Célula do Checklist
+    cell: ChecklistCell; // Célula do Checklist (GERAL ou célula específica)
     description: string;
     categoryId?: string;
     categoryName?: string;
@@ -617,7 +619,7 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
         if (Array.isArray(parsed)) {
           return parsed.map((chk) => ({
             ...chk,
-            cell: chk.cell || 'LAB',
+            cell: normalizeChecklistCell(chk.cell || 'LAB'),
             visibility: chk.visibility || 'padrao',
           }));
         }
@@ -927,7 +929,7 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
           checklistsRes.data.map((chk: any) => ({
             id: chk.id,
             title: chk.title || '',
-            cell: (chk.cell as OfficialCell) || 'OPERADORA',
+            cell: normalizeChecklistCell(chk.cell || 'OPERADORA'),
             description: chk.description || '',
             categoryId: chk.category_id || undefined,
             categoryName: chk.category_name || '',
@@ -2634,7 +2636,7 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
     async (payload: {
       id?: string;
       title: string;
-      cell: OfficialCell;
+      cell: ChecklistCell;
       description: string;
       categoryId?: string;
       categoryName?: string;
@@ -2663,13 +2665,14 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
       }));
 
       const hasExercisesReal = payload.hasExercises && payload.exerciseIds.length > 0;
+      const normalizedCell = normalizeChecklistCell(payload.cell);
 
       if (payload.id) {
         const existingChk = checklists.find((c) => c.id === payload.id);
         const updatedChk: Checklist = {
           id: payload.id,
           title: payload.title.trim(),
-          cell: payload.cell || 'OPERADORA',
+          cell: normalizedCell,
           description: payload.description.trim(),
           categoryId: payload.categoryId,
           categoryName: payload.categoryName || 'Geral',
@@ -2736,7 +2739,7 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
         const newChk: Checklist = {
           id: newChkId,
           title: payload.title.trim(),
-          cell: payload.cell || 'OPERADORA',
+          cell: normalizedCell,
           description: payload.description.trim(),
           categoryId: payload.categoryId,
           categoryName: payload.categoryName || 'Geral',
@@ -4332,7 +4335,11 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
   );
 
   const buildEvaluationFrozenSnapshot = useCallback(
-    (checklistId: string, frozenAt: string): EvaluationFrozenSnapshot | undefined => {
+    (
+      checklistId: string,
+      frozenAt: string,
+      criteriaAnswers?: CriteriaAnswerSnapshot[]
+    ): EvaluationFrozenSnapshot | undefined => {
       const targetChecklist = checklists.find((c) => c.id === checklistId);
       if (!targetChecklist) return undefined;
 
@@ -4387,11 +4394,24 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
           };
         });
 
+      const frozenCriteriaAnswers: CriteriaAnswerSnapshot[] | undefined = Array.isArray(
+        criteriaAnswers
+      )
+        ? criteriaAnswers.map((ca) => ({
+            criterionId: ca.criterionId,
+            name: ca.name,
+            weight: ca.weight,
+            checked: Boolean(ca.checked),
+            notes: ca.notes?.trim() || '',
+          }))
+        : undefined;
+
       return {
         frozenAt,
         checklistTitle: targetChecklist.title,
         checklistCategoryName: targetChecklist.categoryName,
         checklistDescription: targetChecklist.description,
+        criteriaAnswers: frozenCriteriaAnswers,
         exercises: frozenExercises,
       };
     },
@@ -4481,7 +4501,11 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
       const nowIso = new Date().toISOString();
       const computedScore = calculateWeightedScore(payload.criteriaAnswers);
       const trimmedObs = payload.generalObservations?.trim() || null;
-      const frozenSnapshot = buildEvaluationFrozenSnapshot(payload.checklistId, nowIso);
+      const frozenSnapshot = buildEvaluationFrozenSnapshot(
+        payload.checklistId,
+        nowIso,
+        payload.criteriaAnswers
+      );
 
       const existingAssignment = targetStep.collaboratorChecklistId
         ? collaboratorChecklists.find((a) => a.id === targetStep.collaboratorChecklistId)
@@ -4889,7 +4913,11 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
       }
 
       const nowIso = new Date().toISOString();
-      const frozenSnapshot = buildEvaluationFrozenSnapshot(targetAssignment.checklistId, nowIso);
+      const frozenSnapshot = buildEvaluationFrozenSnapshot(
+        targetAssignment.checklistId,
+        nowIso,
+        payload.criteriaAnswers
+      );
 
       setCollaboratorChecklists((prev) =>
         prev.map((c) =>

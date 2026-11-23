@@ -551,7 +551,7 @@ export function downloadReportPdf(reportData: {
   evaluatedAt: string;
   evaluatorName: string;
   notes?: string;
-  items: Array<{ name: string; weight: number; checked: boolean }>;
+  items: Array<{ name: string; weight: number; checked: boolean; notes?: string }>;
   generatedBy?: PdfGeneratedBy;
 }): void {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
@@ -702,38 +702,70 @@ export function downloadReportPdf(reportData: {
   currentY += 6;
 
   reportData.items.forEach((item, idx) => {
-    if (currentY > 268) {
+    const trimmedNote = item.notes?.trim() || '';
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7);
+    const nameLines = doc.splitTextToSize(item.name, 126);
+    const baseRowHeight = Math.max(6.5, nameLines.length * 3.4 + 2.8);
+
+    let noteLines: string[] = [];
+    let noteBoxHeight = 0;
+    if (trimmedNote) {
+      doc.setFont('helvetica', 'italic');
+      doc.setFontSize(6.4);
+      noteLines = doc.splitTextToSize(`Observação do Avaliador: ${trimmedNote}`, contentWidth - 18);
+      noteBoxHeight = Math.max(5.5, noteLines.length * 3.2 + 2.4);
+    }
+
+    const totalItemHeight = baseRowHeight + (trimmedNote ? noteBoxHeight + 1.2 : 0);
+    if (currentY + totalItemHeight > 270) {
       doc.addPage();
       currentY = 14;
     }
+
     const isEven = idx % 2 === 0;
     doc.setFillColor(isEven ? 255 : 248, isEven ? 255 : 250, isEven ? 255 : 252);
-    doc.rect(leftMargin, currentY, contentWidth, 6.5, 'F');
+    doc.rect(leftMargin, currentY, contentWidth, baseRowHeight, 'F');
     doc.setDrawColor(...slateBorder);
     doc.setLineWidth(0.15);
-    doc.line(leftMargin, currentY + 6.5, leftMargin + contentWidth, currentY + 6.5);
+    doc.line(leftMargin, currentY + baseRowHeight, leftMargin + contentWidth, currentY + baseRowHeight);
 
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(7);
     doc.setTextColor(...slateDark);
-    doc.text(String(idx + 1).padStart(2, '0'), leftMargin + 3, currentY + 4.5);
+    doc.text(String(idx + 1).padStart(2, '0'), leftMargin + 3, currentY + 4.3);
 
     doc.setFont('helvetica', 'normal');
-    const nameShort = item.name.length > 80 ? item.name.slice(0, 77) + '...' : item.name;
-    doc.text(nameShort, leftMargin + 14, currentY + 4.5);
+    doc.text(nameLines, leftMargin + 14, currentY + 4.3);
 
     doc.setFont('helvetica', 'bold');
-    doc.text(`${item.weight} pt${item.weight > 1 ? 's' : ''}`, leftMargin + 145, currentY + 4.5);
+    doc.text(`${item.weight} pt${item.weight > 1 ? 's' : ''}`, leftMargin + 145, currentY + 4.3);
 
     if (item.checked) {
       doc.setTextColor(4, 120, 87);
-      doc.text('CONFORME', leftMargin + 162, currentY + 4.5);
+      doc.text('CONFORME', leftMargin + 162, currentY + 4.3);
     } else {
       doc.setTextColor(220, 38, 38);
-      doc.text('NÃO CONFORME', leftMargin + 162, currentY + 4.5);
+      doc.text('NÃO CONFORME', leftMargin + 162, currentY + 4.3);
     }
 
-    currentY += 6.5;
+    currentY += baseRowHeight;
+
+    if (trimmedNote) {
+      const noteFill: [number, number, number] = item.checked ? [240, 253, 244] : [255, 251, 235];
+      const noteAccent: [number, number, number] = item.checked ? [6, 78, 59] : [180, 83, 9];
+      doc.setFillColor(...noteFill);
+      doc.setDrawColor(...slateBorder);
+      doc.rect(leftMargin + 12, currentY + 0.5, contentWidth - 12, noteBoxHeight, 'FD');
+      doc.setFillColor(...noteAccent);
+      doc.rect(leftMargin + 12, currentY + 0.5, 1.3, noteBoxHeight, 'F');
+
+      doc.setFont('helvetica', 'italic');
+      doc.setFontSize(6.4);
+      doc.setTextColor(51, 65, 85);
+      doc.text(noteLines, leftMargin + 15.5, currentY + 4.0);
+      currentY += noteBoxHeight + 1.2;
+    }
   });
 
   applyPdfTraceabilityFooter(doc, reportData.generatedBy);
@@ -772,7 +804,7 @@ export function downloadReportTxt(reportData: {
   evaluatedAt: string;
   evaluatorName: string;
   notes?: string;
-  items: Array<{ name: string; weight: number; checked: boolean }>;
+  items: Array<{ name: string; weight: number; checked: boolean; notes?: string }>;
   generatedBy?: PdfGeneratedBy;
 }): void {
   downloadReportPdf(reportData);
@@ -1068,66 +1100,101 @@ function drawDetailedEvaluationBlock(
 
   currentY += cardHeight + 1.5;
 
-  // Tabela detalhada de critérios avaliados (marcados/não marcados, pesos e apontamentos)
+  // Tabela detalhada de critérios avaliados (marcados/não marcados, pesos e observações individuais)
   if (evalItem.criteriaAnswers && evalItem.criteriaAnswers.length > 0) {
-    if (currentY + 12 > 272) {
+    if (currentY + 14 > 272) {
       doc.addPage();
       currentY = 15;
     }
 
     doc.setFillColor(241, 245, 249);
     doc.setDrawColor(...slateBorder);
-    doc.roundedRect(leftMargin + 2, currentY, contentWidth - 4, 5.2, 0.8, 0.8, 'FD');
+    doc.roundedRect(leftMargin + 2, currentY, contentWidth - 4, 5.4, 0.8, 0.8, 'FD');
 
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(5.8);
+    doc.setFontSize(5.9);
     doc.setTextColor(...slateDark);
-    doc.text('CRITÉRIO AVALIADO', leftMargin + 4.5, currentY + 3.6);
-    doc.text('PESO', leftMargin + 104, currentY + 3.6);
-    doc.text('RESULTADO', leftMargin + 121, currentY + 3.6);
-    doc.text('APONTAMENTO', leftMargin + 146, currentY + 3.6);
-    currentY += 5.5;
+    doc.text('CRITÉRIO AVALIADO', leftMargin + 4.5, currentY + 3.7);
+    doc.text('PESO', leftMargin + 135, currentY + 3.7);
+    doc.text('RESULTADO', leftMargin + 152, currentY + 3.7);
+    currentY += 5.8;
 
     evalItem.criteriaAnswers.forEach((crit, cIdx) => {
       doc.setFont('helvetica', 'normal');
-      doc.setFontSize(5.8);
-      const critNameLines = doc.splitTextToSize(`${cIdx + 1}. ${crit.name}`, 96);
-      const noteText = crit.notes?.trim() ? crit.notes.trim() : '—';
-      const noteLines = doc.splitTextToSize(noteText, contentWidth - 150);
-      const rowLines = Math.max(critNameLines.length, noteLines.length, 1);
-      const rowHeight = Math.max(5.5, rowLines * 3.1 + 2.4);
+      doc.setFontSize(6.1);
+      const critNameLines = doc.splitTextToSize(`${cIdx + 1}. ${crit.name}`, 126);
+      const baseRowHeight = Math.max(5.8, critNameLines.length * 3.2 + 2.4);
 
-      if (currentY + rowHeight > 272) {
+      const trimmedNote = crit.notes?.trim() || '';
+      let noteLines: string[] = [];
+      let noteHeight = 0;
+
+      if (trimmedNote) {
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(6.0);
+        noteLines = doc.splitTextToSize(trimmedNote, contentWidth - 15);
+        noteHeight = Math.max(6.8, noteLines.length * 3.1 + 4.4);
+      }
+
+      const blockTotalHeight = baseRowHeight + (trimmedNote ? noteHeight + 1.0 : 0);
+
+      if (currentY + blockTotalHeight > 272) {
         doc.addPage();
         currentY = 15;
       }
 
+      // Linha principal do critério
       doc.setFillColor(cIdx % 2 === 0 ? 255 : 250, cIdx % 2 === 0 ? 255 : 252, cIdx % 2 === 0 ? 255 : 254);
       doc.setDrawColor(226, 232, 240);
-      doc.roundedRect(leftMargin + 2, currentY, contentWidth - 4, rowHeight, 0.5, 0.5, 'FD');
+      doc.roundedRect(leftMargin + 2, currentY, contentWidth - 4, baseRowHeight, 0.6, 0.6, 'FD');
 
       doc.setFont('helvetica', 'normal');
-      doc.setFontSize(5.8);
+      doc.setFontSize(6.1);
       doc.setTextColor(...slateDark);
-      doc.text(critNameLines, leftMargin + 4.5, currentY + 3.6);
+      doc.text(critNameLines, leftMargin + 4.5, currentY + 3.7);
 
       doc.setFont('helvetica', 'bold');
+      doc.setFontSize(5.9);
       doc.setTextColor(...slateMuted);
-      doc.text(`Peso ${crit.weight}`, leftMargin + 104, currentY + 3.6);
+      doc.text(`Peso ${crit.weight}`, leftMargin + 135, currentY + 3.7);
 
       if (crit.checked) {
         doc.setTextColor(4, 120, 87);
-        doc.text('Atendido', leftMargin + 121, currentY + 3.6);
+        doc.text('Atendido', leftMargin + 152, currentY + 3.7);
       } else {
         doc.setTextColor(185, 28, 28);
-        doc.text('Não Atendido', leftMargin + 121, currentY + 3.6);
+        doc.text('Não Atendido', leftMargin + 152, currentY + 3.7);
       }
 
-      doc.setFont('helvetica', 'italic');
-      doc.setTextColor(71, 85, 105);
-      doc.text(noteLines, leftMargin + 146, currentY + 3.6);
+      currentY += baseRowHeight;
 
-      currentY += rowHeight + 0.5;
+      // Sub-bloco dedicado para Observação do Avaliador diretamente abaixo do critério
+      if (trimmedNote) {
+        const noteBg: [number, number, number] = crit.checked ? [240, 253, 244] : [255, 251, 235];
+        const noteBorder: [number, number, number] = crit.checked ? [167, 243, 208] : [253, 230, 138];
+        const noteAccent: [number, number, number] = crit.checked ? [6, 78, 59] : [180, 83, 9];
+
+        doc.setFillColor(noteBg[0], noteBg[1], noteBg[2]);
+        doc.setDrawColor(noteBorder[0], noteBorder[1], noteBorder[2]);
+        doc.roundedRect(leftMargin + 5, currentY + 0.4, contentWidth - 7, noteHeight, 0.6, 0.6, 'FD');
+
+        doc.setFillColor(noteAccent[0], noteAccent[1], noteAccent[2]);
+        doc.rect(leftMargin + 5, currentY + 0.4, 1.3, noteHeight, 'F');
+
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(5.6);
+        doc.setTextColor(noteAccent[0], noteAccent[1], noteAccent[2]);
+        doc.text('OBSERVAÇÃO DO AVALIADOR:', leftMargin + 8.5, currentY + 3.3);
+
+        doc.setFont('helvetica', 'italic');
+        doc.setFontSize(6.0);
+        doc.setTextColor(30, 41, 59);
+        doc.text(noteLines, leftMargin + 8.5, currentY + 6.4);
+
+        currentY += noteHeight + 1.0;
+      }
+
+      currentY += 0.6;
     });
   }
 

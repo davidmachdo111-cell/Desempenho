@@ -12,16 +12,67 @@ import {
   Filter,
   Building2,
   Lock,
+  Check,
+  ListPlus,
+  Globe,
 } from 'lucide-react';
 import { usePortalStore } from '../../../context/PortalStoreContext';
 import { useToast } from '../../../context/ToastContext';
 import {
   Checklist,
+  ChecklistCell,
   OfficialCell,
   OFFICIAL_CELLS,
   OFFICIAL_CELL_LIST,
   VisibilityLevel,
+  getChecklistCellMeta,
+  isGeneralCell,
+  normalizeChecklistCell,
 } from '../../../types/portal';
+
+interface ParsedBatchCriterion {
+  name: string;
+  weight: number;
+  weightSource: 'prefix' | 'default';
+}
+
+function parseBatchCriteriaLines(
+  rawText: string,
+  defaultWeight: number
+): ParsedBatchCriterion[] {
+  const safeDefaultWeight = Math.max(1, Math.floor(Number(defaultWeight) || 1));
+
+  return rawText
+    .split(/\r?\n/)
+    .map((rawLine): ParsedBatchCriterion | null => {
+      const trimmed = rawLine.trim();
+      if (!trimmed) return null;
+
+      // 1. Formato numérico no início da linha: "2. Texto", "2) Texto" ou "2 Texto"
+      const numericMatch = trimmed.match(/^(\d+)(?:\s*[.)]\s*|\s+)(.+)$/);
+      if (numericMatch) {
+        const parsedWeight = parseInt(numericMatch[1], 10);
+        const weight = Number.isFinite(parsedWeight) && parsedWeight >= 1 ? parsedWeight : 1;
+        const cleanedName = numericMatch[2].replace(/^[-*•–—]+\s+/, '').trim();
+        if (!cleanedName) return null;
+        return {
+          name: cleanedName,
+          weight,
+          weightSource: 'prefix',
+        };
+      }
+
+      // 2. Linha sem número (ou iniciando com marcador -, *, •) -> usa Peso padrão
+      const cleanedName = trimmed.replace(/^[-*•–—]+\s+/, '').trim();
+      if (!cleanedName) return null;
+      return {
+        name: cleanedName,
+        weight: safeDefaultWeight,
+        weightSource: 'default',
+      };
+    })
+    .filter((item): item is ParsedBatchCriterion => item !== null);
+}
 
 export const ChecklistsManagementView: React.FC = () => {
   const {
@@ -55,23 +106,25 @@ export const ChecklistsManagementView: React.FC = () => {
   const filteredChecklists = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     return checklists.filter((chk) => {
-      const chkCell = chk.cell || 'OPERADORA';
+      const chkCell = normalizeChecklistCell(chk.cell || 'OPERADORA');
       if (selectedCellFilter !== 'all' && chkCell !== selectedCellFilter) return false;
       const categoryName = chk.categoryName || 'Geral';
       if (selectedCategoryFilter !== 'all' && categoryName !== selectedCategoryFilter) return false;
       if (!q) return true;
+      const cellMeta = getChecklistCellMeta(chkCell);
       return (
         chk.title.toLowerCase().includes(q) ||
         chk.description.toLowerCase().includes(q) ||
         categoryName.toLowerCase().includes(q) ||
-        chkCell.toLowerCase().includes(q)
+        chkCell.toLowerCase().includes(q) ||
+        cellMeta.name.toLowerCase().includes(q)
       );
     });
   }, [checklists, searchQuery, selectedCategoryFilter, selectedCellFilter]);
 
   // Estados do Modal Criador Visual de Checklists
   const [formTitle, setFormTitle] = useState('');
-  const [formCell, setFormCell] = useState<OfficialCell>('OPERADORA');
+  const [formCell, setFormCell] = useState<ChecklistCell>('GERAL');
   const [formDescription, setFormDescription] = useState('');
   const [formCategoryId, setFormCategoryId] = useState(checklistCategories[0]?.id || '');
   const [formCategoryName, setFormCategoryName] = useState(checklistCategories[0]?.name || '');
@@ -87,14 +140,44 @@ export const ChecklistsManagementView: React.FC = () => {
   const [quickCriterionName, setQuickCriterionName] = useState('');
   const [quickCriterionWeight, setQuickCriterionWeight] = useState(1);
 
+  // Edição inline de critério existente
+  const [editingCriterionIndex, setEditingCriterionIndex] = useState<number | null>(null);
+  const [editingCriterionName, setEditingCriterionName] = useState('');
+  const [editingCriterionWeight, setEditingCriterionWeight] = useState(1);
+
+  // Adição em lote de critérios
+  const [isBatchCriteriaOpen, setIsBatchCriteriaOpen] = useState(false);
+  const [batchCriteriaText, setBatchCriteriaText] = useState('');
+  const [batchCriteriaWeight, setBatchCriteriaWeight] = useState(1);
+
+  const detectedBatchItems = useMemo(
+    () => parseBatchCriteriaLines(batchCriteriaText, batchCriteriaWeight),
+    [batchCriteriaText, batchCriteriaWeight]
+  );
+
+  const detectedBatchTotalWeight = useMemo(
+    () => detectedBatchItems.reduce((sum, item) => sum + item.weight, 0),
+    [detectedBatchItems]
+  );
+
   // Exercícios vinculados por checkbox
   const [selectedExerciseIds, setSelectedExerciseIds] = useState<string[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const openCreator = (chk?: Checklist) => {
+    setEditingCriterionIndex(null);
+    setEditingCriterionName('');
+    setEditingCriterionWeight(1);
+    setIsBatchCriteriaOpen(false);
+    setBatchCriteriaText('');
+    setBatchCriteriaWeight(1);
+    setQuickCriterionName('');
+    setQuickCriterionWeight(1);
+
     if (chk) {
+      const normalizedCell = normalizeChecklistCell(chk.cell || 'OPERADORA');
       setFormTitle(chk.title);
-      setFormCell(chk.cell || 'OPERADORA');
+      setFormCell(normalizedCell);
       setFormDescription(chk.description || '');
       const matchedCat =
         checklistCategories.find((c) => c.id === chk.categoryId || c.name === chk.categoryName) ||
@@ -111,10 +194,11 @@ export const ChecklistsManagementView: React.FC = () => {
         }))
       );
       setSelectedExerciseIds(chk.exerciseIds || []);
+      setLinkExerciseCellFilter(normalizedCell === 'GERAL' ? 'all' : normalizedCell);
       setModalState({ open: true, checklist: chk });
     } else {
       setFormTitle('');
-      setFormCell('OPERADORA');
+      setFormCell('GERAL');
       setFormDescription('');
       setFormCategoryId(checklistCategories[0]?.id || '');
       setFormCategoryName(checklistCategories[0]?.name || '');
@@ -127,18 +211,19 @@ export const ChecklistsManagementView: React.FC = () => {
         { id: `crit-${Date.now()}-4`, name: 'Clareza na explicação da solução e resolução assertiva', weight: 3 },
       ]);
       setSelectedExerciseIds([]);
+      setLinkExerciseCellFilter('all');
       setModalState({ open: true });
     }
   };
 
-  const handleAddQuickCriterion = (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleAddQuickCriterion = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
     if (!quickCriterionName.trim()) return;
 
     const newItem = {
-      id: `crit-custom-${Date.now()}`,
+      id: `crit-custom-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
       name: quickCriterionName.trim(),
-      weight: Number(quickCriterionWeight) || 1,
+      weight: Math.max(1, Number(quickCriterionWeight) || 1),
     };
 
     setActiveCriteriaItems((prev) => [...prev, newItem]);
@@ -146,7 +231,65 @@ export const ChecklistsManagementView: React.FC = () => {
     setQuickCriterionWeight(1);
   };
 
+  const handleStartEditCriterion = (index: number) => {
+    const target = activeCriteriaItems[index];
+    if (!target) return;
+    setEditingCriterionIndex(index);
+    setEditingCriterionName(target.name);
+    setEditingCriterionWeight(target.weight || 1);
+  };
+
+  const handleCancelEditCriterion = () => {
+    setEditingCriterionIndex(null);
+    setEditingCriterionName('');
+    setEditingCriterionWeight(1);
+  };
+
+  const handleSaveEditCriterion = (index: number) => {
+    const trimmed = editingCriterionName.trim();
+    if (!trimmed) {
+      showToast('O texto do critério não pode ficar vazio.', 'error');
+      return;
+    }
+    const sanitizedWeight = Math.min(10, Math.max(1, Number(editingCriterionWeight) || 1));
+    setActiveCriteriaItems((prev) =>
+      prev.map((item, idx) =>
+        idx === index ? { ...item, name: trimmed, weight: sanitizedWeight } : item
+      )
+    );
+    handleCancelEditCriterion();
+    showToast('Critério atualizado!', 'success');
+  };
+
+  const handleImportBatchCriteria = () => {
+    const parsedItems = parseBatchCriteriaLines(batchCriteriaText, batchCriteriaWeight);
+    if (parsedItems.length === 0) {
+      showToast('Cole ao menos uma linha válida para importar critérios.', 'error');
+      return;
+    }
+    const baseTs = Date.now();
+    const newItems = parsedItems.map((item, idx) => ({
+      id: `crit-batch-${baseTs}-${idx}-${Math.floor(Math.random() * 1000)}`,
+      name: item.name,
+      weight: Math.max(1, item.weight),
+    }));
+
+    setActiveCriteriaItems((prev) => [...prev, ...newItems]);
+    setBatchCriteriaText('');
+    setBatchCriteriaWeight(1);
+    setIsBatchCriteriaOpen(false);
+    showToast(
+      `${newItems.length} ${newItems.length === 1 ? 'critério importado' : 'critérios importados'} com sucesso!`,
+      'success'
+    );
+  };
+
   const handleRemoveCriterion = (indexToRemove: number) => {
+    if (editingCriterionIndex === indexToRemove) {
+      handleCancelEditCriterion();
+    } else if (editingCriterionIndex !== null && editingCriterionIndex > indexToRemove) {
+      setEditingCriterionIndex(editingCriterionIndex - 1);
+    }
     setActiveCriteriaItems((prev) => prev.filter((_, idx) => idx !== indexToRemove));
   };
 
@@ -168,7 +311,21 @@ export const ChecklistsManagementView: React.FC = () => {
       showToast('Informe o título do checklist.', 'error');
       return;
     }
-    if (activeCriteriaItems.length === 0) {
+
+    // Se houver uma edição inline aberta com texto válido, aplica automaticamente antes de salvar
+    let finalCriteria = activeCriteriaItems;
+    if (editingCriterionIndex !== null && editingCriterionName.trim()) {
+      const sanitizedWeight = Math.min(10, Math.max(1, Number(editingCriterionWeight) || 1));
+      finalCriteria = activeCriteriaItems.map((item, idx) =>
+        idx === editingCriterionIndex
+          ? { ...item, name: editingCriterionName.trim(), weight: sanitizedWeight }
+          : item
+      );
+      setActiveCriteriaItems(finalCriteria);
+      handleCancelEditCriterion();
+    }
+
+    if (finalCriteria.length === 0) {
       showToast('Adicione ao menos um critério de avaliação.', 'error');
       return;
     }
@@ -184,7 +341,7 @@ export const ChecklistsManagementView: React.FC = () => {
       visibility: formVisibility,
       hasExercises: formHasExercises && selectedExerciseIds.length > 0,
       exerciseIds: formHasExercises ? selectedExerciseIds : [],
-      criteria: activeCriteriaItems,
+      criteria: finalCriteria,
     });
     setIsSubmitting(false);
 
@@ -204,7 +361,7 @@ export const ChecklistsManagementView: React.FC = () => {
   const handleDuplicateChecklist = async (chk: Checklist) => {
     const res = await saveChecklist({
       title: `${chk.title} (Cópia)`,
-      cell: chk.cell || 'OPERADORA',
+      cell: normalizeChecklistCell(chk.cell || 'OPERADORA'),
       description: chk.description || '',
       categoryId: chk.categoryId,
       categoryName: chk.categoryName,
@@ -287,6 +444,18 @@ export const ChecklistsManagementView: React.FC = () => {
             >
               Todas
             </button>
+            <button
+              type="button"
+              onClick={() => setSelectedCellFilter('GERAL')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer border inline-flex items-center gap-1 ${
+                selectedCellFilter === 'GERAL'
+                  ? 'bg-[#0f3e2e] text-white border-[#0f3e2e] shadow-xs'
+                  : 'bg-teal-50/70 border-teal-200 text-teal-800 hover:bg-teal-100/70'
+              }`}
+            >
+              <Globe className="w-3.5 h-3.5" />
+              <span>Geral</span>
+            </button>
             {OFFICIAL_CELL_LIST.map((cellKey) => {
               const meta = OFFICIAL_CELLS[cellKey];
               const isSelected = selectedCellFilter === cellKey;
@@ -365,8 +534,8 @@ export const ChecklistsManagementView: React.FC = () => {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
           {filteredChecklists.map((chk) => {
-            const cellKey = (chk.cell || 'OPERADORA') as OfficialCell;
-            const cellMeta = OFFICIAL_CELLS[cellKey] || OFFICIAL_CELLS['OPERADORA'];
+            const cellMeta = getChecklistCellMeta(chk.cell);
+            const isGeral = isGeneralCell(chk.cell);
 
             return (
               <div
@@ -378,9 +547,17 @@ export const ChecklistsManagementView: React.FC = () => {
                     <div className="space-y-1.5">
                       <div className="flex items-center gap-1.5 flex-wrap">
                         <span
-                          className="text-[10px] font-bold px-2 py-0.5 rounded-md border border-slate-200 bg-slate-50 text-slate-700 inline-flex items-center gap-1"
+                          className={`text-[10px] font-bold px-2 py-0.5 rounded-md border inline-flex items-center gap-1 ${
+                            isGeral
+                              ? 'border-teal-200 bg-teal-50 text-teal-800'
+                              : 'border-slate-200 bg-slate-50 text-slate-700'
+                          }`}
                         >
-                          <Building2 className="w-3 h-3 text-slate-500" />
+                          {isGeral ? (
+                            <Globe className="w-3 h-3 text-teal-600" />
+                          ) : (
+                            <Building2 className="w-3 h-3 text-slate-500" />
+                          )}
                           <span>{cellMeta.name}</span>
                         </span>
                         <span className="text-[10px] font-bold text-emerald-800 bg-emerald-50 border border-emerald-200/60 px-2 py-0.5 rounded-full uppercase tracking-wider">
@@ -527,9 +704,18 @@ export const ChecklistsManagementView: React.FC = () => {
                     </label>
                     <select
                       value={formCell}
-                      onChange={(e) => setFormCell(e.target.value as OfficialCell)}
+                      onChange={(e) => {
+                        const nextCell = e.target.value as ChecklistCell;
+                        setFormCell(nextCell);
+                        if (nextCell === 'GERAL') {
+                          setLinkExerciseCellFilter('all');
+                        } else {
+                          setLinkExerciseCellFilter(nextCell);
+                        }
+                      }}
                       className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 font-bold text-slate-900"
                     >
+                      <option value="GERAL">Geral (Todas as Células)</option>
                       {OFFICIAL_CELL_LIST.map((cellKey) => (
                         <option key={cellKey} value={cellKey}>
                           {OFFICIAL_CELLS[cellKey].name}
@@ -537,7 +723,7 @@ export const ChecklistsManagementView: React.FC = () => {
                       ))}
                     </select>
                     <p className="text-[11px] text-slate-500">
-                      {OFFICIAL_CELLS[formCell]?.description}
+                      {getChecklistCellMeta(formCell).description}
                     </p>
                   </div>
 
@@ -631,26 +817,183 @@ export const ChecklistsManagementView: React.FC = () => {
 
               {/* BLOCO 2: Critérios de Avaliação (Checklist Real) */}
               <div className="bg-slate-50 border border-slate-200 rounded-xl p-4.5 space-y-4">
-                <div className="flex items-center justify-between">
+                <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="text-xs font-bold uppercase tracking-wider text-emerald-800 flex items-center gap-1.5">
                     <CheckSquare className="w-3.5 h-3.5" />
                     <span>2. Critérios de Avaliação ({activeCriteriaItems.length} itens)</span>
                   </div>
-                  <span className="text-[11px] text-slate-500">
-                    Itens que serão checados na simulação
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setIsBatchCriteriaOpen((prev) => !prev)}
+                      className={`px-3 py-1.5 rounded-lg text-[11px] font-bold inline-flex items-center gap-1.5 border transition-colors cursor-pointer ${
+                        isBatchCriteriaOpen
+                          ? 'bg-[#0f3e2e] text-white border-[#0f3e2e]'
+                          : 'bg-white hover:bg-emerald-50 text-[#0f3e2e] border-emerald-300'
+                      }`}
+                    >
+                      <ListPlus className="w-3.5 h-3.5" />
+                      <span>+ Adicionar em Lote</span>
+                    </button>
+                  </div>
                 </div>
+
+                {/* Painel Expansível: Adicionar Critérios em Lote */}
+                {isBatchCriteriaOpen && (
+                  <div className="bg-emerald-50/60 border border-emerald-200 rounded-xl p-3.5 space-y-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <div>
+                        <div className="text-xs font-bold text-emerald-950 flex items-center gap-1.5">
+                          <ListPlus className="w-3.5 h-3.5 text-emerald-700" />
+                          <span>Importar Critérios em Lote</span>
+                        </div>
+                        <p className="text-[11px] text-emerald-900/85 mt-0.5 leading-relaxed">
+                          Cole um critério por linha. O número no início define o <strong>peso</strong> automaticamente (ex.:{' '}
+                          <code className="px-1 py-0.5 bg-white/90 border border-emerald-200 rounded font-mono text-[10px]">3. Texto</code>,{' '}
+                          <code className="px-1 py-0.5 bg-white/90 border border-emerald-200 rounded font-mono text-[10px]">2) Texto</code> ou{' '}
+                          <code className="px-1 py-0.5 bg-white/90 border border-emerald-200 rounded font-mono text-[10px]">2 Texto</code>). Linhas sem número ou com <strong>-</strong>, <strong>*</strong>, <strong>•</strong> recebem o <strong>Peso padrão</strong>.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setIsBatchCriteriaOpen(false)}
+                        className="p-1 text-emerald-700 hover:bg-emerald-100 rounded-lg cursor-pointer shrink-0"
+                        title="Fechar painel em lote"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+
+                    <textarea
+                      rows={5}
+                      value={batchCriteriaText}
+                      onChange={(e) => setBatchCriteriaText(e.target.value)}
+                      placeholder={
+                        '1. Realizou a saudação ao paciente\n3. Realizou o cadastro e o agendamento corretamente\n2. Encaminhou todas as orientações de preparo'
+                      }
+                      className="w-full px-3 py-2 bg-white border border-emerald-200 rounded-lg text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500 leading-relaxed"
+                    />
+
+                    {/* Pré-visualização dinâmica dos critérios e pesos identificados */}
+                    {detectedBatchItems.length > 0 && (
+                      <div className="bg-white border border-emerald-200/90 rounded-lg overflow-hidden shadow-2xs">
+                        <div className="px-3 py-2 bg-emerald-100/60 border-b border-emerald-200/80 flex flex-wrap items-center justify-between gap-2">
+                          <span className="text-[11px] font-bold text-emerald-950">
+                            Pré-visualização ({detectedBatchItems.length}{' '}
+                            {detectedBatchItems.length === 1
+                              ? 'critério será importado'
+                              : 'critérios serão importados'}
+                            )
+                          </span>
+                          <span className="text-[10px] font-mono font-bold text-emerald-900 bg-white/90 border border-emerald-200 px-2 py-0.5 rounded-md">
+                            Soma: {detectedBatchTotalWeight} pt{detectedBatchTotalWeight > 1 ? 's' : ''}
+                          </span>
+                        </div>
+                        <div className="max-h-40 overflow-y-auto divide-y divide-slate-100">
+                          {detectedBatchItems.map((item, idx) => (
+                            <div
+                              key={`${idx}-${item.name.slice(0, 16)}`}
+                              className="px-3 py-2 flex items-center justify-between gap-2.5 text-xs"
+                            >
+                              <div className="flex items-center gap-2 min-w-0">
+                                <span className="w-5 h-5 rounded-full bg-emerald-50 text-emerald-800 font-mono font-bold flex items-center justify-center text-[10px] shrink-0">
+                                  {idx + 1}
+                                </span>
+                                <span className="text-slate-800 font-medium break-words">
+                                  {item.name}
+                                </span>
+                              </div>
+                              <span
+                                title={
+                                  item.weightSource === 'prefix'
+                                    ? 'Peso identificado pelo número no início da linha'
+                                    : 'Peso padrão aplicado automaticamente'
+                                }
+                                className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded-md border shrink-0 ${
+                                  item.weight >= 3
+                                    ? 'bg-[#0f3e2e] text-white border-[#0f3e2e]'
+                                    : item.weight === 2
+                                    ? 'bg-emerald-100 text-emerald-900 border-emerald-300'
+                                    : 'bg-slate-100 text-slate-700 border-slate-200'
+                                }`}
+                              >
+                                Peso {item.weight}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div className="flex items-center gap-3 flex-wrap">
+                        <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-700">
+                          <span>Peso padrão (sem prefixo):</span>
+                          <select
+                            value={batchCriteriaWeight}
+                            onChange={(e) =>
+                              setBatchCriteriaWeight(Math.max(1, Number(e.target.value) || 1))
+                            }
+                            className="px-2.5 py-1 font-mono font-bold bg-white border border-emerald-300 rounded-lg text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer"
+                          >
+                            {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((w) => (
+                              <option key={w} value={w}>
+                                Peso {w}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        {detectedBatchItems.length === 0 && (
+                          <span className="text-[11px] font-medium text-slate-500">
+                            Cole as linhas acima para ver a pré-visualização
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setBatchCriteriaText('');
+                            setIsBatchCriteriaOpen(false);
+                          }}
+                          className="px-3 py-1.5 text-[11px] font-semibold text-slate-600 hover:bg-white/80 rounded-lg cursor-pointer"
+                        >
+                          Cancelar
+                        </button>
+                        <button
+                          type="button"
+                          disabled={detectedBatchItems.length === 0}
+                          onClick={handleImportBatchCriteria}
+                          className="px-3.5 py-1.5 bg-[#0f3e2e] hover:bg-emerald-900 text-white font-bold rounded-lg text-xs inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-45 transition-colors shadow-xs"
+                        >
+                          <ListPlus className="w-3.5 h-3.5" />
+                          <span>
+                            Importar Critérios
+                            {detectedBatchItems.length > 0 ? ` (${detectedBatchItems.length})` : ''}
+                          </span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 {/* Adicionar critério na hora */}
                 <div className="bg-white border border-slate-200 rounded-lg p-3 space-y-2">
                   <div className="text-[11px] font-bold text-slate-700">
-                    + Adicionar Critério Rápido
+                    + Adicionar Critério Individual
                   </div>
                   <div className="flex flex-col sm:flex-row gap-2">
                     <input
                       type="text"
                       value={quickCriterionName}
                       onChange={(e) => setQuickCriterionName(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          handleAddQuickCriterion();
+                        }
+                      }}
                       placeholder="Nome do critério (ex: Clareza na explicação do cálculo)"
                       className="flex-1 px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                     />
@@ -677,53 +1020,130 @@ export const ChecklistsManagementView: React.FC = () => {
                   </div>
                 </div>
 
-                {/* Lista de Critérios Ativos */}
-                <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                {/* Lista de Critérios Ativos (com edição inline e remoção) */}
+                <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
                   {activeCriteriaItems.length === 0 ? (
                     <div className="p-4 bg-white border border-dashed border-slate-200 rounded-lg text-center text-slate-500">
-                      Nenhum critério adicionado ainda. Adicione pelo menos um no campo acima.
+                      Nenhum critério adicionado ainda. Adicione individualmente ou importe em lote acima.
                     </div>
                   ) : (
-                    activeCriteriaItems.map((item, idx) => (
-                      <div
-                        key={item.id || idx}
-                        className="p-3 bg-white border border-slate-200 rounded-lg flex items-center justify-between gap-3 shadow-2xs"
-                      >
-                        <div className="flex items-center gap-2.5 flex-1 min-w-0">
-                          <span className="w-5 h-5 rounded-full bg-emerald-50 text-emerald-800 font-mono font-bold flex items-center justify-center text-[10px] shrink-0">
-                            {idx + 1}
-                          </span>
-                          <span className="font-medium text-slate-800 text-xs truncate">
-                            {item.name}
-                          </span>
-                        </div>
+                    activeCriteriaItems.map((item, idx) => {
+                      const isEditingThis = editingCriterionIndex === idx;
+                      return (
+                        <div
+                          key={item.id || idx}
+                          className={`p-3 rounded-lg border shadow-2xs transition-colors ${
+                            isEditingThis
+                              ? 'bg-emerald-50/70 border-emerald-400'
+                              : 'bg-white border-slate-200'
+                          }`}
+                        >
+                          {isEditingThis ? (
+                            <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                              <span className="w-5 h-5 rounded-full bg-emerald-700 text-white font-mono font-bold flex items-center justify-center text-[10px] shrink-0">
+                                {idx + 1}
+                              </span>
+                              <input
+                                type="text"
+                                autoFocus
+                                value={editingCriterionName}
+                                onChange={(e) => setEditingCriterionName(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    e.preventDefault();
+                                    handleSaveEditCriterion(idx);
+                                  } else if (e.key === 'Escape') {
+                                    e.preventDefault();
+                                    handleCancelEditCriterion();
+                                  }
+                                }}
+                                placeholder="Texto do critério..."
+                                className="flex-1 px-2.5 py-1.5 bg-white border border-emerald-400 rounded-lg text-xs font-medium text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                              />
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                <label className="flex items-center gap-1 text-[11px] font-semibold text-slate-600">
+                                  <span>Peso:</span>
+                                  <input
+                                    type="number"
+                                    min="1"
+                                    max="10"
+                                    value={editingCriterionWeight}
+                                    onChange={(e) =>
+                                      setEditingCriterionWeight(
+                                        Math.min(10, Math.max(1, Number(e.target.value) || 1))
+                                      )
+                                    }
+                                    className="w-12 px-1.5 py-1 text-center font-mono font-bold text-slate-900 border border-emerald-300 rounded-md bg-white text-xs"
+                                  />
+                                </label>
+                                <button
+                                  type="button"
+                                  onClick={() => handleSaveEditCriterion(idx)}
+                                  className="px-2.5 py-1 bg-[#0f3e2e] hover:bg-emerald-900 text-white font-bold rounded-md text-[11px] inline-flex items-center gap-1 cursor-pointer transition-colors"
+                                  title="Salvar alteração do critério"
+                                >
+                                  <Check className="w-3 h-3" />
+                                  <span>Salvar</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={handleCancelEditCriterion}
+                                  className="p-1 text-slate-500 hover:text-slate-800 hover:bg-white rounded-md transition-colors cursor-pointer"
+                                  title="Cancelar edição"
+                                >
+                                  <X className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="flex items-center gap-2.5 flex-1 min-w-0">
+                                <span className="w-5 h-5 rounded-full bg-emerald-50 text-emerald-800 font-mono font-bold flex items-center justify-center text-[10px] shrink-0">
+                                  {idx + 1}
+                                </span>
+                                <span className="font-medium text-slate-800 text-xs break-words">
+                                  {item.name}
+                                </span>
+                              </div>
 
-                        <div className="flex items-center gap-2 shrink-0">
-                          <label className="flex items-center gap-1 text-[11px] text-slate-500">
-                            <span>Peso:</span>
-                            <input
-                              type="number"
-                              min="1"
-                              max="10"
-                              value={item.weight}
-                              onChange={(e) =>
-                                handleUpdateCriterionWeight(idx, Number(e.target.value) || 1)
-                              }
-                              className="w-10 px-1 py-0.5 text-center font-mono font-bold text-slate-900 border border-slate-200 rounded bg-slate-50"
-                            />
-                          </label>
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                <label className="flex items-center gap-1 text-[11px] text-slate-500">
+                                  <span>Peso:</span>
+                                  <input
+                                    type="number"
+                                    min="1"
+                                    max="10"
+                                    value={item.weight}
+                                    onChange={(e) =>
+                                      handleUpdateCriterionWeight(idx, Number(e.target.value) || 1)
+                                    }
+                                    className="w-10 px-1 py-0.5 text-center font-mono font-bold text-slate-900 border border-slate-200 rounded bg-slate-50"
+                                  />
+                                </label>
 
-                          <button
-                            type="button"
-                            onClick={() => handleRemoveCriterion(idx)}
-                            className="p-1 text-slate-400 hover:text-red-600 rounded transition-colors cursor-pointer"
-                            title="Remover critério"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleStartEditCriterion(idx)}
+                                  className="p-1 text-slate-400 hover:text-emerald-700 hover:bg-emerald-50 rounded transition-colors cursor-pointer"
+                                  title="Editar critério"
+                                >
+                                  <Edit3 className="w-3.5 h-3.5" />
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={() => handleRemoveCriterion(idx)}
+                                  className="p-1 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors cursor-pointer"
+                                  title="Remover critério"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            </div>
+                          )}
                         </div>
-                      </div>
-                    ))
+                      );
+                    })
                   )}
                 </div>
               </div>
@@ -731,12 +1151,14 @@ export const ChecklistsManagementView: React.FC = () => {
               {/* BLOCO 3: Exercícios Vinculados (Opcional se formHasExercises for verdadeiro) */}
               {formHasExercises && (
                 <div className="bg-slate-50 border border-slate-200 rounded-xl p-4.5 space-y-3">
-                  <div className="flex items-center justify-between">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
                     <div className="text-xs font-bold uppercase tracking-wider text-emerald-800">
                       3. Exercícios Vinculados ({selectedExerciseIds.length} selecionados)
                     </div>
                     <span className="text-[11px] text-slate-500">
-                      Marque os casos práticos a serem simulados
+                      {formCell === 'GERAL'
+                        ? 'Checklist Geral: você pode vincular exercícios de qualquer célula'
+                        : 'Marque os casos práticos a serem simulados'}
                     </span>
                   </div>
 

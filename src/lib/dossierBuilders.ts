@@ -222,9 +222,14 @@ function buildChaptersInternal(ctx: BuildDossierContext): {
             ? users.find((u) => u.id === assignment.instructorAuxiliarId)
             : undefined;
 
+          const sourceCriteriaAnswers =
+            frozenSnapshot?.criteriaAnswers && frozenSnapshot.criteriaAnswers.length > 0
+              ? frozenSnapshot.criteriaAnswers
+              : assignment?.criteriaAnswers;
+
           const criteriaAnswers =
-            assignment?.criteriaAnswers && assignment.criteriaAnswers.length > 0
-              ? assignment.criteriaAnswers.map((ca) => ({
+            sourceCriteriaAnswers && sourceCriteriaAnswers.length > 0
+              ? sourceCriteriaAnswers.map((ca) => ({
                   name: ca.name,
                   checked: ca.checked,
                   weight: ca.weight,
@@ -401,7 +406,11 @@ function buildChaptersInternal(ctx: BuildDossierContext): {
         : 'Data não informada',
       observations: a.generalObservations || undefined,
       isRestricted: chk?.visibility === 'restrito',
-      criteriaAnswers: (a.criteriaAnswers || []).map((ca) => ({
+      criteriaAnswers: (
+        snap?.criteriaAnswers && snap.criteriaAnswers.length > 0
+          ? snap.criteriaAnswers
+          : a.criteriaAnswers || []
+      ).map((ca) => ({
         name: ca.name,
         checked: ca.checked,
         weight: ca.weight,
