@@ -12,6 +12,9 @@ import {
   UserCheck,
   CheckSquare,
   Square,
+  Lightbulb,
+  Save,
+  RotateCcw,
 } from 'lucide-react';
 import { usePortalStore } from '../../../context/PortalStoreContext';
 import { useToast } from '../../../context/ToastContext';
@@ -38,12 +41,18 @@ export const CollaboratorPortalView: React.FC<CollaboratorPortalViewProps> = () 
     collaboratorChecklists,
     learningTracks,
     checklists,
+    exercises,
     surveys,
     submitSurveyResponse,
     submitCollaboratorChecklistSelfAssessment,
+    saveCollaboratorExerciseReflection,
   } = usePortalStore();
   const { showToast } = useToast();
   const canSeeVerdict = canSeeFinalVerdict(currentUser);
+
+  // Estado local do Diário de Aprendizado ("O que você aprendeu?")
+  const [reflectionDrafts, setReflectionDrafts] = useState<Record<string, string>>({});
+  const [savingReflectionKey, setSavingReflectionKey] = useState<string | null>(null);
 
   // Modal para Responder Pesquisa
   const [activeSurveyToAnswer, setActiveSurveyToAnswer] = useState<Survey | null>(null);
@@ -111,8 +120,58 @@ export const CollaboratorPortalView: React.FC<CollaboratorPortalViewProps> = () 
       : myAssignments.filter((a) => a.status === 'concluido').length;
   const progressPct = totalStages > 0 ? Math.round((completedStages / totalStages) * 100) : 0;
 
+  const isTrackFinalized = Boolean(currentCollaborator?.isTrackFinalized);
+
+  const handleSaveExerciseReflection = async (params: {
+    stepId: string;
+    checklistId?: string;
+    exerciseId: string;
+    exerciseTitle: string;
+    learningObjective?: string;
+    fallbackSavedNote?: string;
+  }) => {
+    if (!currentCollaborator) return;
+    if (currentCollaborator.isTrackFinalized) {
+      showToast(
+        'Trilha finalizada pela liderança: suas anotações estão em modo somente leitura.',
+        'error'
+      );
+      return;
+    }
+    const key = `${params.stepId}::${params.exerciseId}`;
+    const savedNote =
+      currentCollaborator.exerciseReflections?.[key]?.note ??
+      params.fallbackSavedNote ??
+      '';
+    const noteToSave = reflectionDrafts[key] !== undefined ? reflectionDrafts[key] : savedNote;
+
+    setSavingReflectionKey(key);
+    const res = await saveCollaboratorExerciseReflection(currentCollaborator.id, {
+      stepId: params.stepId,
+      checklistId: params.checklistId,
+      exerciseId: params.exerciseId,
+      exerciseTitle: params.exerciseTitle,
+      learningObjective: params.learningObjective,
+      note: noteToSave,
+    });
+    setSavingReflectionKey(null);
+
+    if (res.success) {
+      showToast(res.message, 'success');
+    } else {
+      showToast(res.message, 'error');
+    }
+  };
+
   // Iniciar Resposta de Pesquisa
   const handleStartSurvey = (survey: Survey) => {
+    if (currentCollaborator?.isTrackFinalized) {
+      showToast(
+        'Trilha finalizada pela liderança: não é possível responder pesquisas pendentes.',
+        'error'
+      );
+      return;
+    }
     setActiveSurveyToAnswer(survey);
     const initial: Record<string, SurveyAnswerItem> = {};
     survey.questions.forEach((q) => {
@@ -144,6 +203,14 @@ export const CollaboratorPortalView: React.FC<CollaboratorPortalViewProps> = () 
   const handleSubmitSurveyForm = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!activeSurveyToAnswer || !currentCollaborator) return;
+    if (currentCollaborator.isTrackFinalized) {
+      showToast(
+        'Trilha finalizada pela liderança: envio de pesquisas bloqueado.',
+        'error'
+      );
+      setActiveSurveyToAnswer(null);
+      return;
+    }
 
     // Validação de perguntas obrigatórias
     for (const q of activeSurveyToAnswer.questions) {
@@ -184,6 +251,13 @@ export const CollaboratorPortalView: React.FC<CollaboratorPortalViewProps> = () 
 
   // Iniciar Preenchimento de Checklist pelo Colaborador
   const handleStartChecklist = (step: CollaboratorTrackStep, checklist: Checklist) => {
+    if (currentCollaborator?.isTrackFinalized) {
+      showToast(
+        'Trilha finalizada pela liderança: visualização em modo somente leitura.',
+        'error'
+      );
+      return;
+    }
     setActiveChecklistModal({ step, checklist });
     setChecklistCriteriaAnswers(
       checklist.criteria.map((c) => ({
@@ -268,6 +342,23 @@ export const CollaboratorPortalView: React.FC<CollaboratorPortalViewProps> = () 
 
   return (
     <div className="space-y-6">
+      {/* Banner de Modo Somente Leitura após Finalização pela Liderança */}
+      {isTrackFinalized && (
+        <div className="bg-amber-50 border border-amber-300 rounded-2xl px-5 py-3.5 shadow-2xs flex items-center gap-3 text-amber-950">
+          <div className="w-9 h-9 rounded-xl bg-amber-100 border border-amber-300 flex items-center justify-center shrink-0">
+            <Lock className="w-4 h-4 text-amber-800" />
+          </div>
+          <div className="min-w-0">
+            <div className="text-xs sm:text-sm font-bold text-amber-950">
+              Trilha Finalizada pela Liderança — Visualização em Modo Somente Leitura
+            </div>
+            <p className="text-[11px] text-amber-900/85 leading-relaxed mt-0.5">
+              Suas etapas, anotações do diário de aprendizado e pesquisas registradas permanecem disponíveis apenas para consulta.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* ========================================================= */}
       {/* 1. CABEÇALHO DE BOAS-VINDAS E EVOLUÇÃO INDIVIDUAL */}
       {/* ========================================================= */}
@@ -317,15 +408,15 @@ export const CollaboratorPortalView: React.FC<CollaboratorPortalViewProps> = () 
                   canSeeVerdict ? (
                     currentCollaborator.guardianVerdict === 'necessita_reforco' ? (
                       <span
-                        title="Verificar a continuidade com a liderança do colaborador"
+                        title="Colaborador em plano de acompanhamento junto à liderança"
                         className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-100 text-amber-900 border border-amber-300"
                       >
-                        <span>Validação da liderança</span>
+                        <span>Necessita Acompanhamento</span>
                       </span>
                     ) : (
                       <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-900 border border-emerald-300">
                         <CheckCircle2 className="w-3.5 h-3.5 text-emerald-700" />
-                        <span>Aprovado</span>
+                        <span>Apto para Operação</span>
                       </span>
                     )
                   ) : (
@@ -428,10 +519,72 @@ export const CollaboratorPortalView: React.FC<CollaboratorPortalViewProps> = () 
 
                 const isFilledByCollaborator = step.filledBy === 'collaborator';
 
+                // Extração SEGURA do objetivo de aprendizado (SOMENTE título e orientação — NUNCA roteiro, cliente ou persona)
+                const linkedAssignment = isChecklist
+                  ? (step.collaboratorChecklistId
+                      ? myAssignments.find((a) => a.id === step.collaboratorChecklistId)
+                      : undefined) ||
+                    myAssignments.find((a) => a.checklistId === step.refId)
+                  : undefined;
+
+                const frozenSnap =
+                  isCompleted && linkedAssignment?.status === 'concluido'
+                    ? linkedAssignment.frozenSnapshot
+                    : undefined;
+
+                const checklistDiaryTitle =
+                  frozenSnap?.checklistTitle ||
+                  step.title ||
+                  targetChecklist?.title ||
+                  'Checklist de Avaliação';
+
+                // Prioridade: 1) learningObjective do Checklist (congelado ou ativo) -> 2) learningObjective do 1º exercício vinculado -> 3) fallback padrão
+                const fallbackExerciseObjective = (() => {
+                  if (frozenSnap?.exercises && frozenSnap.exercises.length > 0) {
+                    for (const ex of frozenSnap.exercises) {
+                      const liveEx = exercises.find((item) => item.id === ex.id);
+                      const obj = ex.learningObjective?.trim() || liveEx?.learningObjective?.trim();
+                      if (obj) return obj;
+                    }
+                  }
+                  if (targetChecklist && targetChecklist.exerciseIds.length > 0) {
+                    for (const exId of targetChecklist.exerciseIds) {
+                      const liveEx = exercises.find((item) => item.id === exId);
+                      if (liveEx?.learningObjective?.trim()) {
+                        return liveEx.learningObjective.trim();
+                      }
+                    }
+                  }
+                  return undefined;
+                })();
+
+                const resolvedChecklistObjective =
+                  frozenSnap?.checklistLearningObjective?.trim() ||
+                  targetChecklist?.learningObjective?.trim() ||
+                  fallbackExerciseObjective;
+
+                const showLearningDiary = isChecklist && (isCompleted || isAvailable);
+                const primaryReflectionKey = `${step.id}::${step.refId}`;
+                const directSavedReflection =
+                  currentCollaborator?.exerciseReflections?.[primaryReflectionKey];
+                const legacyStepReflection = !directSavedReflection
+                  ? Object.values(currentCollaborator?.exerciseReflections || {}).find(
+                      (r) => r.stepId === step.id && Boolean(r.note?.trim())
+                    )
+                  : undefined;
+                const savedReflection = directSavedReflection || legacyStepReflection;
+                const currentNoteValue =
+                  reflectionDrafts[primaryReflectionKey] !== undefined
+                    ? reflectionDrafts[primaryReflectionKey]
+                    : savedReflection?.note || '';
+                const isSavingThisDiary = savingReflectionKey === primaryReflectionKey;
+                const isDiaryDirty =
+                  currentNoteValue.trim() !== (savedReflection?.note || '').trim();
+
                 return (
                   <div
                     key={step.id}
-                    className={`bg-white border rounded-2xl p-5 transition-all shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4 ${
+                    className={`bg-white border rounded-2xl p-5 transition-all shadow-xs space-y-4 ${
                       isCompleted
                         ? 'border-emerald-200 bg-emerald-50/15'
                         : isAvailable
@@ -439,141 +592,264 @@ export const CollaboratorPortalView: React.FC<CollaboratorPortalViewProps> = () 
                         : 'border-slate-200 bg-slate-50/60 opacity-80'
                     }`}
                   >
-                    <div className="space-y-2 flex-1">
-                      <div className="flex items-center gap-2.5 flex-wrap">
-                        <span
-                          className={`w-7 h-7 rounded-full font-bold text-xs flex items-center justify-center shrink-0 ${
-                            isCompleted
-                              ? 'bg-emerald-700 text-white'
-                              : isAvailable
-                              ? 'bg-[#0f3e2e] text-white'
-                              : 'bg-slate-200 text-slate-500'
-                          }`}
-                        >
-                          {index + 1}
-                        </span>
+                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                      <div className="space-y-2 flex-1">
+                        <div className="flex items-center gap-2.5 flex-wrap">
+                          <span
+                            className={`w-7 h-7 rounded-full font-bold text-xs flex items-center justify-center shrink-0 ${
+                              isCompleted
+                                ? 'bg-emerald-700 text-white'
+                                : isAvailable
+                                ? 'bg-[#0f3e2e] text-white'
+                                : 'bg-slate-200 text-slate-500'
+                            }`}
+                          >
+                            {index + 1}
+                          </span>
 
-                        <h3 className="font-bold text-sm text-slate-900">{step.title}</h3>
+                          <h3 className="font-bold text-sm text-slate-900">{step.title}</h3>
 
-                        {/* Badge da Etapa / Semana */}
-                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-200">
-                          {normalizeStageName(step.stageName)}
-                        </span>
+                          {/* Badge da Etapa / Semana */}
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-200">
+                            {normalizeStageName(step.stageName)}
+                          </span>
 
-                        {/* Badge do Tipo de Atividade */}
-                        <span
-                          className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full border ${
-                            isChecklist
-                              ? 'bg-emerald-50 text-emerald-900 border-emerald-200'
-                              : 'bg-purple-50 text-purple-900 border-purple-200'
-                          }`}
-                        >
-                          {isChecklist ? 'Checklist' : 'Pesquisa de Satisfação'}
-                        </span>
-
-                        {/* Badge de Responsável */}
-                        <span className="text-[10px] text-slate-500 bg-slate-100 px-2 py-0.5 rounded border border-slate-200 flex items-center gap-1">
-                          {isFilledByCollaborator ? (
-                            <>
-                              <User className="w-3 h-3 text-slate-500" />
-                              <span>Preenchido por Você</span>
-                            </>
-                          ) : (
-                            <>
-                              <UserCheck className="w-3 h-3 text-emerald-700" />
-                              <span>Preenchido pelo Instrutor/Avaliador</span>
-                            </>
+                          {/* Badge de Reciclagem */}
+                          {step.isRecycle && (
+                            <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-300">
+                              <RotateCcw className="w-2.5 h-2.5" />
+                              <span>Reciclagem</span>
+                            </span>
                           )}
-                        </span>
 
-                        {/* Badge de Status */}
-                        <span
-                          className={`inline-flex items-center gap-1 text-[10px] font-bold px-2.5 py-0.5 rounded-full border ${
-                            isCompleted
-                              ? 'bg-emerald-100 text-emerald-900 border-emerald-300'
-                              : isAvailable
-                              ? 'bg-blue-50 text-blue-900 border-blue-200'
-                              : 'bg-slate-100 text-slate-500 border-slate-200'
-                          }`}
-                        >
-                          {isCompleted ? (
-                            <>
-                              <CheckCircle2 className="w-3 h-3 text-emerald-700" />
-                              <span>Concluído</span>
-                            </>
-                          ) : isAvailable ? (
-                            <>
-                              <Clock className="w-3 h-3 text-blue-700" />
-                              <span>Disponível para Realização</span>
-                            </>
-                          ) : (
-                            <>
-                              <Lock className="w-3 h-3 text-slate-400" />
-                              <span>Bloqueado (Conclua a etapa anterior)</span>
-                            </>
-                          )}
-                        </span>
+                          {/* Badge do Tipo de Atividade */}
+                          <span
+                            className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full border ${
+                              isChecklist
+                                ? 'bg-emerald-50 text-emerald-900 border-emerald-200'
+                                : 'bg-purple-50 text-purple-900 border-purple-200'
+                            }`}
+                          >
+                            {isChecklist ? 'Checklist' : 'Pesquisa de Satisfação'}
+                          </span>
+
+                          {/* Badge de Responsável */}
+                          <span className="text-[10px] text-slate-500 bg-slate-100 px-2 py-0.5 rounded border border-slate-200 flex items-center gap-1">
+                            {isFilledByCollaborator ? (
+                              <>
+                                <User className="w-3 h-3 text-slate-500" />
+                                <span>Preenchido por Você</span>
+                              </>
+                            ) : (
+                              <>
+                                <UserCheck className="w-3 h-3 text-emerald-700" />
+                                <span>Preenchido pelo Instrutor/Avaliador</span>
+                              </>
+                            )}
+                          </span>
+
+                          {/* Badge de Status */}
+                          <span
+                            className={`inline-flex items-center gap-1 text-[10px] font-bold px-2.5 py-0.5 rounded-full border ${
+                              isCompleted
+                                ? 'bg-emerald-100 text-emerald-900 border-emerald-300'
+                                : isAvailable
+                                ? 'bg-blue-50 text-blue-900 border-blue-200'
+                                : 'bg-slate-100 text-slate-500 border-slate-200'
+                            }`}
+                          >
+                            {isCompleted ? (
+                              <>
+                                <CheckCircle2 className="w-3 h-3 text-emerald-700" />
+                                <span>Concluído</span>
+                              </>
+                            ) : isAvailable ? (
+                              <>
+                                <Clock className="w-3 h-3 text-blue-700" />
+                                <span>Disponível para Realização</span>
+                              </>
+                            ) : (
+                              <>
+                                <Lock className="w-3 h-3 text-slate-400" />
+                                <span>Bloqueado (Conclua a etapa anterior)</span>
+                              </>
+                            )}
+                          </span>
+                        </div>
+
+                        {/* Descrição */}
+                        <p className="text-xs text-slate-500 line-clamp-2 leading-relaxed">
+                          {isChecklist
+                            ? targetChecklist?.description || 'Avaliação operacional com critérios práticos de atendimento.'
+                            : targetSurvey?.description || 'Pesquisa de satisfação e percepção sobre o treinamento.'}
+                        </p>
                       </div>
 
-                      {/* Descrição */}
-                      <p className="text-xs text-slate-500 line-clamp-2 leading-relaxed">
-                        {isChecklist
-                          ? targetChecklist?.description || 'Avaliação operacional com critérios práticos de atendimento.'
-                          : targetSurvey?.description || 'Pesquisa de satisfação e percepção sobre o treinamento.'}
-                      </p>
-
-                    </div>
-
-                    {/* Lado Direito: Ações */}
-                    <div className="flex items-center gap-3 shrink-0 self-end md:self-center">
-                      {isCompleted && (
-                        <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-200 font-bold text-xs">
-                          <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                          <span>Concluído</span>
-                        </div>
-                      )}
-
-                      {/* Botão de Ação: Se for Pesquisa e estiver disponível, colaborador pode responder */}
-                      {isAvailable && isSurvey && targetSurvey && (
-                        <button
-                          type="button"
-                          onClick={() => handleStartSurvey(targetSurvey)}
-                          className="px-4 py-2 text-xs font-bold text-white bg-purple-700 hover:bg-purple-800 rounded-xl transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
-                        >
-                          <ClipboardCheck className="w-3.5 h-3.5" />
-                          <span>Responder Pesquisa de Satisfação</span>
-                        </button>
-                      )}
-
-                      {/* Etapa de Checklist Disponível: preenchimento pelo colaborador OU simulação com instrutor */}
-                      {isAvailable &&
-                        isChecklist &&
-                        (isFilledByCollaborator &&
-                        targetChecklist &&
-                        !currentCollaborator?.isTrackFinalized ? (
-                          <button
-                            type="button"
-                            onClick={() => handleStartChecklist(step, targetChecklist)}
-                            className="px-4 py-2 text-xs font-bold text-white bg-[#0f3e2e] hover:bg-emerald-900 rounded-xl transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
-                          >
-                            <ClipboardCheck className="w-3.5 h-3.5" />
-                            <span>Preencher Checklist</span>
-                          </button>
-                        ) : (
-                          <div className="text-xs text-emerald-800 font-semibold bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-xl flex items-center gap-1.5">
-                            <Clock className="w-3.5 h-3.5 text-emerald-600" />
-                            <span>Liberada para Simulação / Avaliação com Instrutor</span>
+                      {/* Lado Direito: Ações */}
+                      <div className="flex items-center gap-3 shrink-0 self-end md:self-center">
+                        {isCompleted && (
+                          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-200 font-bold text-xs">
+                            <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                            <span>Concluído</span>
                           </div>
-                        ))}
+                        )}
 
-                      {/* Etapa Bloqueada */}
-                      {isLocked && (
-                        <div className="text-xs text-slate-400 font-medium italic flex items-center gap-1.5 bg-slate-100 px-3 py-1.5 rounded-xl border border-slate-200">
-                          <Lock className="w-3.5 h-3.5 text-slate-400" />
-                          <span>Bloqueada (Etapa Anterior Pendente)</span>
-                        </div>
-                      )}
+                        {/* Botão de Ação: Se for Pesquisa e estiver disponível, colaborador pode responder (bloqueado após finalização) */}
+                        {isAvailable && isSurvey && targetSurvey && (
+                          isTrackFinalized ? (
+                            <div className="text-xs text-slate-500 font-semibold bg-slate-100 border border-slate-200 px-3 py-1.5 rounded-xl flex items-center gap-1.5">
+                              <Lock className="w-3.5 h-3.5 text-slate-400" />
+                              <span>Pesquisa encerrada (Trilha Finalizada)</span>
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => handleStartSurvey(targetSurvey)}
+                              className="px-4 py-2 text-xs font-bold text-white bg-purple-700 hover:bg-purple-800 rounded-xl transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
+                            >
+                              <ClipboardCheck className="w-3.5 h-3.5" />
+                              <span>Responder Pesquisa de Satisfação</span>
+                            </button>
+                          )
+                        )}
+
+                        {/* Etapa de Checklist Disponível: preenchimento pelo colaborador OU simulação com instrutor */}
+                        {isAvailable &&
+                          isChecklist &&
+                          (isTrackFinalized ? (
+                            <div className="text-xs text-slate-500 font-semibold bg-slate-100 border border-slate-200 px-3 py-1.5 rounded-xl flex items-center gap-1.5">
+                              <Lock className="w-3.5 h-3.5 text-slate-400" />
+                              <span>Trilha finalizada (Somente leitura)</span>
+                            </div>
+                          ) : isFilledByCollaborator && targetChecklist ? (
+                            <button
+                              type="button"
+                              onClick={() => handleStartChecklist(step, targetChecklist)}
+                              className="px-4 py-2 text-xs font-bold text-white bg-[#0f3e2e] hover:bg-emerald-900 rounded-xl transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
+                            >
+                              <ClipboardCheck className="w-3.5 h-3.5" />
+                              <span>Preencher Checklist</span>
+                            </button>
+                          ) : (
+                            <div className="text-xs text-emerald-800 font-semibold bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-xl flex items-center gap-1.5">
+                              <Clock className="w-3.5 h-3.5 text-emerald-600" />
+                              <span>Liberada para Simulação / Avaliação com Instrutor</span>
+                            </div>
+                          ))}
+
+                        {/* Etapa Bloqueada */}
+                        {isLocked && (
+                          <div className="text-xs text-slate-400 font-medium italic flex items-center gap-1.5 bg-slate-100 px-3 py-1.5 rounded-xl border border-slate-200">
+                            <Lock className="w-3.5 h-3.5 text-slate-400" />
+                            <span>Bloqueada (Etapa Anterior Pendente)</span>
+                          </div>
+                        )}
+                      </div>
                     </div>
+
+                    {/* Diário de Aprendizado do Colaborador (Exibido em toda etapa de Checklist disponível ou concluída) */}
+                    {showLearningDiary && (
+                      <div className="pt-3.5 border-t border-slate-200/80 space-y-3">
+                        <div className="flex items-center justify-between gap-2 flex-wrap">
+                          <div className="flex items-center gap-2 text-xs font-bold text-[#0f3e2e]">
+                            <Lightbulb className="w-4 h-4 text-emerald-700 shrink-0" />
+                            <span>Diário de Aprendizado</span>
+                          </div>
+                          {savedReflection?.updatedAt && (
+                            <span className="text-[10px] font-semibold text-emerald-800 bg-white border border-emerald-200 px-2 py-0.5 rounded-full">
+                              Salvo em{' '}
+                              {new Date(savedReflection.updatedAt).toLocaleString('pt-BR', {
+                                dateStyle: 'short',
+                                timeStyle: 'short',
+                              })}
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="rounded-xl border border-emerald-200/80 bg-emerald-50/40 p-4 space-y-3">
+                          <div className="space-y-1.5">
+                            <h4 className="text-xs font-bold text-slate-900">
+                              {checklistDiaryTitle}
+                            </h4>
+                            {resolvedChecklistObjective ? (
+                              <p className="text-xs text-emerald-950 bg-white/90 border border-emerald-200/70 rounded-lg px-3 py-2 leading-relaxed">
+                                <strong className="text-[#0f3e2e]">Objetivo de Aprendizado: </strong>
+                                {resolvedChecklistObjective}
+                              </p>
+                            ) : (
+                              <p className="text-[11px] text-slate-600 italic">
+                                Registre abaixo os principais aprendizados, procedimentos e pontos de atenção desenvolvidos nesta etapa.
+                              </p>
+                            )}
+                          </div>
+
+                          <div className="space-y-1.5">
+                            <label
+                              htmlFor={`diary-${primaryReflectionKey}`}
+                              className="block text-[11px] font-bold text-slate-700"
+                            >
+                              O que você aprendeu nesta etapa?
+                            </label>
+                            <textarea
+                              id={`diary-${primaryReflectionKey}`}
+                              rows={3}
+                              disabled={isTrackFinalized}
+                              readOnly={isTrackFinalized}
+                              value={currentNoteValue}
+                              onChange={(e) => {
+                                if (isTrackFinalized) return;
+                                setReflectionDrafts((prev) => ({
+                                  ...prev,
+                                  [primaryReflectionKey]: e.target.value,
+                                }));
+                              }}
+                              placeholder={
+                                isTrackFinalized
+                                  ? 'Nenhuma anotação registrada nesta etapa antes da finalização.'
+                                  : 'Escreva com suas palavras os procedimentos aprendidos, dicas importantes ou cuidados que vai aplicar no dia a dia...'
+                              }
+                              className={`w-full px-3 py-2 border rounded-lg text-xs leading-relaxed resize-y ${
+                                isTrackFinalized
+                                  ? 'bg-slate-100/90 border-slate-200 text-slate-600 cursor-not-allowed'
+                                  : 'bg-white border-slate-300 text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500'
+                              }`}
+                            />
+                            <div className="flex items-center justify-between gap-2 flex-wrap pt-0.5">
+                              <span className="text-[10px] text-slate-500">
+                                {isTrackFinalized
+                                  ? 'Modo somente leitura — edição bloqueada após a finalização da trilha pela liderança.'
+                                  : 'Você pode editar e consultar suas anotações sempre que precisar.'}
+                              </span>
+                              {!isTrackFinalized && (
+                                <button
+                                  type="button"
+                                  disabled={
+                                    isSavingThisDiary ||
+                                    (!isDiaryDirty && !currentNoteValue.trim())
+                                  }
+                                  onClick={() =>
+                                    handleSaveExerciseReflection({
+                                      stepId: step.id,
+                                      checklistId: step.refId,
+                                      exerciseId: step.refId,
+                                      exerciseTitle: checklistDiaryTitle,
+                                      learningObjective: resolvedChecklistObjective,
+                                      fallbackSavedNote: savedReflection?.note,
+                                    })
+                                  }
+                                  className="px-3.5 py-1.5 text-xs font-bold text-white bg-[#0f3e2e] hover:bg-emerald-900 rounded-lg transition-colors inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shadow-2xs"
+                                >
+                                  <Save className="w-3.5 h-3.5" />
+                                  <span>
+                                    {isSavingThisDiary ? 'Salvando...' : 'Salvar Anotação'}
+                                  </span>
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 );
               })}

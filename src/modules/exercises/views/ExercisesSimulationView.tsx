@@ -179,6 +179,7 @@ export const ExercisesSimulationView: React.FC = () => {
   const [formCategoryId, setFormCategoryId] = useState('');
   const [formCategoryName, setFormCategoryName] = useState('');
   const [formInstructions, setFormInstructions] = useState('');
+  const [formLearningObjective, setFormLearningObjective] = useState('');
   const [formSelectedCharacterIds, setFormSelectedCharacterIds] = useState<string[]>([]);
   const [modalCharCellFilter, setModalCharCellFilter] = useState<string>('all');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -196,6 +197,7 @@ export const ExercisesSimulationView: React.FC = () => {
       setFormCategoryId(exercise.categoryId || matchedCat?.id || '');
       setFormCategoryName(exercise.categoryName || matchedCat?.name || '');
       setFormInstructions(exercise.scenarioInstructions);
+      setFormLearningObjective(exercise.learningObjective || '');
       setFormSelectedCharacterIds(exercise.characterIds || []);
       setEditorModalExercise({ open: true, exercise });
     } else {
@@ -205,6 +207,7 @@ export const ExercisesSimulationView: React.FC = () => {
       setFormCategoryId(exerciseCategories[0]?.id || '');
       setFormCategoryName(exerciseCategories[0]?.name || '');
       setFormInstructions('');
+      setFormLearningObjective('');
       // Seleciona o primeiro cliente por padrão se houver
       setFormSelectedCharacterIds(characters.slice(0, 1).map((c) => c.id));
       setEditorModalExercise({ open: true });
@@ -247,6 +250,7 @@ export const ExercisesSimulationView: React.FC = () => {
       categoryId: formCategoryId || undefined,
       categoryName: formCategoryName || undefined,
       scenarioInstructions: formInstructions.trim(),
+      learningObjective: formLearningObjective.trim() || undefined,
       characterIds: formSelectedCharacterIds.slice(0, 4),
     });
     setIsSubmitting(false);
@@ -259,6 +263,7 @@ export const ExercisesSimulationView: React.FC = () => {
         );
         setFormTitle('');
         setFormInstructions('');
+        setFormLearningObjective('');
         setFormSelectedCharacterIds([]);
         setModalCharCellFilter('all');
         setTimeout(() => titleInputRef.current?.focus(), 50);
@@ -289,6 +294,7 @@ export const ExercisesSimulationView: React.FC = () => {
       categoryId: exercise.categoryId,
       categoryName: exercise.categoryName,
       scenarioInstructions: exercise.scenarioInstructions,
+      learningObjective: exercise.learningObjective,
       characterIds: [...exercise.characterIds],
       attachments: exercise.attachments ? [...exercise.attachments] : undefined,
       attachmentUrl: exercise.attachmentUrl ?? null,
@@ -1056,19 +1062,41 @@ export const ExercisesSimulationView: React.FC = () => {
                 )}
               </div>
 
-              {/* Instruções do Caso */}
+              {/* Instruções do Caso (Uso Interno — Avaliador / Ator) */}
               <div>
                 <label className="block text-xs font-bold text-slate-800 mb-1">
-                  Instruções e Roteiro Geral do Caso *
+                  Instruções e Roteiro Geral do Caso (Uso Interno — Avaliador/Ator) *
                 </label>
                 <textarea
                   rows={3}
                   required
                   value={formInstructions}
                   onChange={(e) => setFormInstructions(e.target.value)}
-                  placeholder="Orientações para o avaliador e atendente durante a condução deste exercício..."
+                  placeholder="Orientações internas para o avaliador e ator durante a condução deste exercício (não exibido ao colaborador)..."
                   className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500"
                 />
+              </div>
+
+              {/* Objetivo de Aprendizado — Visível ao Colaborador */}
+              <div className="bg-emerald-50/60 border border-emerald-200 rounded-xl p-3.5 space-y-1.5">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <label className="block text-xs font-bold text-emerald-950">
+                    Objetivo de Aprendizado — Visível ao Colaborador
+                  </label>
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-white text-emerald-800 border border-emerald-200">
+                    Exibido no Diário de Aprendizado
+                  </span>
+                </div>
+                <textarea
+                  rows={2}
+                  value={formLearningObjective}
+                  onChange={(e) => setFormLearningObjective(e.target.value)}
+                  placeholder="Ex: Neste exercício, você vai aprender como realizar um agendamento 0242 particular"
+                  className="w-full px-3 py-2 bg-white border border-emerald-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 text-slate-800 placeholder-slate-400"
+                />
+                <p className="text-[11px] text-emerald-900/80 leading-relaxed">
+                  Apenas o título do exercício e este objetivo ficam visíveis ao colaborador na trilha para ele registrar o que aprendeu — dados do cliente e roteiro do ator permanecem sigilosos.
+                </p>
               </div>
 
               {/* Seleção de Clientes (Até 4) com Filtro por Célula */}

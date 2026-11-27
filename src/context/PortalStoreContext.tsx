@@ -39,6 +39,7 @@ import {
   Criterion,
   EvaluationFrozenSnapshot,
   Exercise,
+  ExerciseReflectionItem,
   FrozenSnapshotCharacter,
   FrozenSnapshotExercise,
   LearningTrack,
@@ -57,6 +58,7 @@ import {
   normalizePhrases,
   getCellName,
   getCharacterGuides,
+  getCriterionAnswerStatus,
   getExerciseAttachments,
   CustomerTier,
   ExerciseDifficulty,
@@ -181,6 +183,7 @@ interface PortalStoreContextValue {
     categoryId?: string;
     categoryName?: string;
     scenarioInstructions: string;
+    learningObjective?: string;
     characterIds: string[];
     attachments?: AttachedGuideItem[];
     attachmentUrl?: string | null;
@@ -197,6 +200,7 @@ interface PortalStoreContextValue {
     title: string;
     cell: ChecklistCell; // Célula do Checklist (GERAL ou célula específica)
     description: string;
+    learningObjective?: string;
     categoryId?: string;
     categoryName?: string;
     visibility?: VisibilityLevel;
@@ -281,6 +285,22 @@ interface PortalStoreContextValue {
     criteriaAnswers: CriteriaAnswerSnapshot[];
     generalObservations?: string;
   }) => Promise<MutationResult>;
+  saveCollaboratorExerciseReflection: (
+    collaboratorId: string,
+    payload: {
+      stepId: string;
+      checklistId?: string;
+      exerciseId: string;
+      exerciseTitle: string;
+      learningObjective?: string;
+      note: string;
+    }
+  ) => Promise<MutationResult>;
+  recycleChecklistStep: (
+    collaboratorId: string,
+    stepId: string,
+    reason?: string
+  ) => Promise<MutationResult & { newStepId?: string; assignmentId?: string }>;
   finalizeCollaboratorTrack: (
     collaboratorId: string,
     payload: {
@@ -385,21 +405,48 @@ interface PortalStoreContextValue {
 
 const PortalStoreContext = createContext<PortalStoreContextValue | null>(null);
 
-export function calculateWeightedScore(criteriaAnswers: CriteriaAnswerSnapshot[]): number {
+export function getApplicableCriteriaStats(criteriaAnswers: CriteriaAnswerSnapshot[]) {
   let totalScoreWeight = 0;
   let totalPossibleWeight = 0;
+  let attendedCount = 0;
+  let notAttendedCount = 0;
+  let naCount = 0;
 
   for (const item of criteriaAnswers) {
+    const status = getCriterionAnswerStatus(item);
+    if (status === 'na') {
+      naCount += 1;
+      continue;
+    }
     const weight = Number(item.weight) || 1;
     totalPossibleWeight += weight;
-    if (item.checked) {
+    if (status === 'atendido') {
       totalScoreWeight += weight;
+      attendedCount += 1;
+    } else {
+      notAttendedCount += 1;
     }
   }
 
-  if (totalPossibleWeight === 0) return 0;
-  const scoreOnTen = (totalScoreWeight / totalPossibleWeight) * 10;
-  return Number(scoreOnTen.toFixed(1));
+  const applicableCount = attendedCount + notAttendedCount;
+  const score =
+    totalPossibleWeight === 0
+      ? 0
+      : Number(((totalScoreWeight / totalPossibleWeight) * 10).toFixed(1));
+
+  return {
+    applicableCount,
+    attendedCount,
+    notAttendedCount,
+    naCount,
+    applicableWeight: totalPossibleWeight,
+    earnedWeight: totalScoreWeight,
+    score,
+  };
+}
+
+export function calculateWeightedScore(criteriaAnswers: CriteriaAnswerSnapshot[]): number {
+  return getApplicableCriteriaStats(criteriaAnswers).score;
 }
 
 function mapUserProfileToDbRow(u: UserProfile) {
@@ -858,8 +905,48 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
         supabase
           .from('portal_settings')
           .select('*')
-          .in('key', ['roleDefaultPermissions', 'track_templates', 'evaluation_frozen_snapshots']),
+          .in('key', [
+            'roleDefaultPermissions',
+            'track_templates',
+            'evaluation_frozen_snapshots',
+            'exercise_learning_objectives',
+            'checklist_learning_objectives',
+            'collaborator_exercise_reflections',
+          ]),
       ]);
+
+      const settingsRows = !settingsRes.error && Array.isArray(settingsRes.data) ? settingsRes.data : [];
+      const exerciseObjectivesRow = settingsRows.find(
+        (row: any) => row.key === 'exercise_learning_objectives'
+      );
+      const exerciseObjectivesMap: Record<string, string> =
+        exerciseObjectivesRow?.value && typeof exerciseObjectivesRow.value === 'object'
+          ? (exerciseObjectivesRow.value as Record<string, string>)
+          : {};
+
+      const checklistObjectivesRow = settingsRows.find(
+        (row: any) => row.key === 'checklist_learning_objectives'
+      );
+      const checklistObjectivesMap: Record<string, string> =
+        checklistObjectivesRow?.value && typeof checklistObjectivesRow.value === 'object'
+          ? (checklistObjectivesRow.value as Record<string, string>)
+          : {};
+
+      const collabReflectionsRow = settingsRows.find(
+        (row: any) => row.key === 'collaborator_exercise_reflections'
+      );
+      const collabReflectionsMap: Record<string, Record<string, ExerciseReflectionItem>> =
+        collabReflectionsRow?.value && typeof collabReflectionsRow.value === 'object'
+          ? (collabReflectionsRow.value as Record<string, Record<string, ExerciseReflectionItem>>)
+          : {};
+
+      const frozenSnapshotsRow = settingsRows.find(
+        (row: any) => row.key === 'evaluation_frozen_snapshots'
+      );
+      const frozenSnapshotsMap: Record<string, EvaluationFrozenSnapshot> =
+        frozenSnapshotsRow?.value && typeof frozenSnapshotsRow.value === 'object'
+          ? (frozenSnapshotsRow.value as Record<string, EvaluationFrozenSnapshot>)
+          : {};
 
       // 0. Usuários do Portal
       if (!usersRes.error && usersRes.data) {
@@ -911,6 +998,10 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
             categoryId: e.category_id || undefined,
             categoryName: e.category_name || '',
             scenarioInstructions: e.scenario_instructions || '',
+            learningObjective:
+              (typeof e.learning_objective === 'string' && e.learning_objective.trim()) ||
+              exerciseObjectivesMap[e.id] ||
+              undefined,
             characterIds: (e.exercise_characters || [])
               .sort((a: any, b: any) => (a.order_index || 0) - (b.order_index || 0))
               .map((ec: any) => ec.character_id),
@@ -931,6 +1022,10 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
             title: chk.title || '',
             cell: normalizeChecklistCell(chk.cell || 'OPERADORA'),
             description: chk.description || '',
+            learningObjective:
+              (typeof chk.learning_objective === 'string' && chk.learning_objective.trim()) ||
+              checklistObjectivesMap[chk.id] ||
+              undefined,
             categoryId: chk.category_id || undefined,
             categoryName: chk.category_name || '',
             visibility: (chk.visibility as VisibilityLevel) || 'padrao',
@@ -948,7 +1043,7 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
         );
       }
 
-      // 4. Colaboradores (incluindo trilha individual, finalização e parecer)
+      // 4. Colaboradores (incluindo trilha individual, diário de aprendizado, finalização e parecer)
       if (!collabsRes.error && collabsRes.data) {
         setCollaborators(
           collabsRes.data.map((col: any) => ({
@@ -960,6 +1055,12 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
             registrationCode: col.registration_code || undefined,
             learningTrackId: col.learning_track_id || undefined,
             track: Array.isArray(col.track) ? col.track : [],
+            exerciseReflections:
+              (col.exercise_reflections && typeof col.exercise_reflections === 'object'
+                ? (col.exercise_reflections as Record<string, ExerciseReflectionItem>)
+                : undefined) ||
+              collabReflectionsMap[col.id] ||
+              undefined,
             isTrackFinalized: Boolean(col.is_track_finalized),
             guardianVerdict: col.guardian_verdict || undefined,
             guardianOpinion: col.guardian_opinion || undefined,
@@ -971,15 +1072,6 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
           }))
         );
       }
-
-      const frozenSnapshotsRow =
-        !settingsRes.error && Array.isArray(settingsRes.data)
-          ? settingsRes.data.find((row: any) => row.key === 'evaluation_frozen_snapshots')
-          : undefined;
-      const frozenSnapshotsMap: Record<string, EvaluationFrozenSnapshot> =
-        frozenSnapshotsRow?.value && typeof frozenSnapshotsRow.value === 'object'
-          ? (frozenSnapshotsRow.value as Record<string, EvaluationFrozenSnapshot>)
-          : {};
 
       // 5. Atribuições de Checklists
       if (!asgsRes.error && asgsRes.data) {
@@ -2365,6 +2457,7 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
       categoryId?: string;
       categoryName?: string;
       scenarioInstructions: string;
+      learningObjective?: string;
       characterIds: string[];
       attachments?: AttachedGuideItem[];
       attachmentUrl?: string | null;
@@ -2381,6 +2474,7 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
       // Limita até 4 clientes conforme regra de negócio
       const safeCharacterIds = payload.characterIds.slice(0, 4);
       const nowIso = new Date().toISOString();
+      const trimmedLearningObjective = payload.learningObjective?.trim() || undefined;
       const normalizedAttachments: AttachedGuideItem[] = Array.isArray(payload.attachments)
         ? payload.attachments.filter((a) => a && a.url)
         : payload.attachmentUrl
@@ -2396,6 +2490,36 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
       const primaryAttachmentUrl = normalizedAttachments[0]?.url ?? null;
       const primaryAttachmentName = normalizedAttachments[0]?.name ?? null;
 
+      const persistExerciseLearningObjective = async (exerciseId: string, objective?: string) => {
+        if (!isSupabaseConfigured) return;
+        try {
+          const { data: existingSetting } = await supabase
+            .from('portal_settings')
+            .select('value')
+            .eq('key', 'exercise_learning_objectives')
+            .maybeSingle();
+
+          const prevMap =
+            existingSetting?.value && typeof existingSetting.value === 'object'
+              ? { ...(existingSetting.value as Record<string, string>) }
+              : {};
+
+          if (objective) {
+            prevMap[exerciseId] = objective;
+          } else {
+            delete prevMap[exerciseId];
+          }
+
+          await supabase.from('portal_settings').upsert({
+            key: 'exercise_learning_objectives',
+            value: prevMap,
+            updated_at: new Date().toISOString(),
+          });
+        } catch (err) {
+          console.warn('Erro ao sincronizar objetivo de aprendizado do exercício no Supabase:', err);
+        }
+      };
+
       if (payload.id) {
         const updatedEx: Exercise = {
           id: payload.id,
@@ -2405,6 +2529,7 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
           categoryId: payload.categoryId,
           categoryName: payload.categoryName || 'Geral',
           scenarioInstructions: payload.scenarioInstructions.trim(),
+          learningObjective: trimmedLearningObjective,
           characterIds: safeCharacterIds,
           attachments: normalizedAttachments,
           attachmentUrl: primaryAttachmentUrl,
@@ -2442,6 +2567,8 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
             }));
             await supabase.from('exercise_characters').insert(links);
           }
+
+          await persistExerciseLearningObjective(updatedEx.id, trimmedLearningObjective);
         }
 
         setExercises((prev) => {
@@ -2463,6 +2590,7 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
           categoryId: payload.categoryId,
           categoryName: payload.categoryName || 'Geral',
           scenarioInstructions: payload.scenarioInstructions.trim(),
+          learningObjective: trimmedLearningObjective,
           characterIds: safeCharacterIds,
           attachments: normalizedAttachments,
           attachmentUrl: primaryAttachmentUrl,
@@ -2498,6 +2626,10 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
               order_index: idx + 1,
             }));
             await supabase.from('exercise_characters').insert(links);
+          }
+
+          if (trimmedLearningObjective) {
+            await persistExerciseLearningObjective(newEx.id, trimmedLearningObjective);
           }
         }
 
@@ -2638,6 +2770,7 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
       title: string;
       cell: ChecklistCell;
       description: string;
+      learningObjective?: string;
       categoryId?: string;
       categoryName?: string;
       visibility?: VisibilityLevel;
@@ -2666,6 +2799,40 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
 
       const hasExercisesReal = payload.hasExercises && payload.exerciseIds.length > 0;
       const normalizedCell = normalizeChecklistCell(payload.cell);
+      const trimmedLearningObjective = payload.learningObjective?.trim() || undefined;
+
+      const syncChecklistLearningObjectiveSetting = async (
+        targetId: string,
+        objective?: string
+      ) => {
+        if (!isSupabaseConfigured) return;
+        try {
+          const { data: existingSetting } = await supabase
+            .from('portal_settings')
+            .select('value')
+            .eq('key', 'checklist_learning_objectives')
+            .maybeSingle();
+
+          const prevMap =
+            existingSetting?.value && typeof existingSetting.value === 'object'
+              ? { ...(existingSetting.value as Record<string, string>) }
+              : {};
+
+          if (objective) {
+            prevMap[targetId] = objective;
+          } else {
+            delete prevMap[targetId];
+          }
+
+          await supabase.from('portal_settings').upsert({
+            key: 'checklist_learning_objectives',
+            value: prevMap,
+            updated_at: nowIso,
+          });
+        } catch (err) {
+          console.warn('Erro ao sincronizar orientação de aprendizado do checklist:', err);
+        }
+      };
 
       if (payload.id) {
         const existingChk = checklists.find((c) => c.id === payload.id);
@@ -2674,6 +2841,7 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
           title: payload.title.trim(),
           cell: normalizedCell,
           description: payload.description.trim(),
+          learningObjective: trimmedLearningObjective,
           categoryId: payload.categoryId,
           categoryName: payload.categoryName || 'Geral',
           visibility: payload.visibility || existingChk?.visibility || 'padrao',
@@ -2723,6 +2891,8 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
             }));
             await supabase.from('checklist_criteria').insert(critLinks);
           }
+
+          await syncChecklistLearningObjectiveSetting(updatedChk.id, trimmedLearningObjective);
         }
 
         setChecklists((prev) => {
@@ -2741,6 +2911,7 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
           title: payload.title.trim(),
           cell: normalizedCell,
           description: payload.description.trim(),
+          learningObjective: trimmedLearningObjective,
           categoryId: payload.categoryId,
           categoryName: payload.categoryName || 'Geral',
           visibility: payload.visibility || 'padrao',
@@ -2788,6 +2959,8 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
             }));
             await supabase.from('checklist_criteria').insert(critLinks);
           }
+
+          await syncChecklistLearningObjectiveSetting(newChk.id, trimmedLearningObjective);
         }
 
         setChecklists((prev) => {
@@ -3526,6 +3699,13 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
       }
 
       const collab = collaborators.find((c) => c.id === payload.collaboratorId);
+      if (collab?.isTrackFinalized) {
+        return {
+          success: false,
+          message:
+            'Trilha finalizada pela liderança: não é possível enviar respostas de pesquisa em modo somente leitura.',
+        };
+      }
       const nowIso = new Date().toISOString();
       const responseId = `resp-${Date.now()}`;
       const newResponse: SurveyResponse = {
@@ -4290,6 +4470,13 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
         return { success: false, message: 'Etapa não encontrada na trilha do colaborador.' };
       }
 
+      const hasOtherAvailableStep = currentTrack.some(
+        (s, idx) => idx !== stepIndex && s.status === 'disponivel'
+      );
+      const nextBlockedIdx = hasOtherAvailableStep
+        ? -1
+        : currentTrack.findIndex((s, idx) => idx > stepIndex && s.status === 'bloqueado');
+
       const updatedTrack = currentTrack.map((step, idx) => {
         if (idx === stepIndex) {
           return {
@@ -4301,8 +4488,8 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
             surveyResponseId: resultData?.surveyResponseId || step.surveyResponseId,
           };
         }
-        // Desbloqueia automaticamente a próxima etapa imediata se estiver bloqueada
-        if (idx === stepIndex + 1 && step.status === 'bloqueado') {
+        // Desbloqueia automaticamente a próxima etapa pendente/bloqueada (compatível com reciclagem no meio da trilha)
+        if (idx === nextBlockedIdx) {
           return {
             ...step,
             status: 'disponivel' as const,
@@ -4389,6 +4576,7 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
             difficulty: ex.difficulty,
             categoryName: ex.categoryName,
             scenarioInstructions: ex.scenarioInstructions,
+            learningObjective: ex.learningObjective,
             attachments: exAttachments,
             characters: frozenCharacters,
           };
@@ -4397,13 +4585,17 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
       const frozenCriteriaAnswers: CriteriaAnswerSnapshot[] | undefined = Array.isArray(
         criteriaAnswers
       )
-        ? criteriaAnswers.map((ca) => ({
-            criterionId: ca.criterionId,
-            name: ca.name,
-            weight: ca.weight,
-            checked: Boolean(ca.checked),
-            notes: ca.notes?.trim() || '',
-          }))
+        ? criteriaAnswers.map((ca) => {
+            const st = getCriterionAnswerStatus(ca);
+            return {
+              criterionId: ca.criterionId,
+              name: ca.name,
+              weight: ca.weight,
+              checked: st === 'atendido',
+              status: st,
+              notes: ca.notes?.trim() || '',
+            };
+          })
         : undefined;
 
       return {
@@ -4411,6 +4603,7 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
         checklistTitle: targetChecklist.title,
         checklistCategoryName: targetChecklist.categoryName,
         checklistDescription: targetChecklist.description,
+        checklistLearningObjective: targetChecklist.learningObjective,
         criteriaAnswers: frozenCriteriaAnswers,
         exercises: frozenExercises,
       };
@@ -4604,6 +4797,282 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
     ]
   );
 
+  const saveCollaboratorExerciseReflection = useCallback(
+    async (
+      collaboratorId: string,
+      payload: {
+        stepId: string;
+        checklistId?: string;
+        exerciseId: string;
+        exerciseTitle: string;
+        learningObjective?: string;
+        note: string;
+      }
+    ): Promise<MutationResult> => {
+      if (!currentUser) {
+        return { success: false, message: 'Sessão expirada. Faça login novamente.' };
+      }
+
+      const isSelf = currentUser.collaboratorId === collaboratorId;
+      const canManage = checkUserPermission(currentUser, 'can_manage_collaborators');
+      if (!isSelf && !canManage) {
+        return {
+          success: false,
+          message: 'Acesso negado para registrar anotações de aprendizado.',
+        };
+      }
+
+      const targetCollab = collaborators.find((c) => c.id === collaboratorId);
+      if (!targetCollab) {
+        return { success: false, message: 'Colaborador não encontrado.' };
+      }
+
+      if (targetCollab.isTrackFinalized) {
+        return {
+          success: false,
+          message:
+            'Trilha finalizada pela liderança: não é possível editar anotações em modo somente leitura.',
+        };
+      }
+
+      const reflectionKey = `${payload.stepId}::${payload.exerciseId}`;
+      const trimmedNote = payload.note.trim();
+      const nowIso = new Date().toISOString();
+
+      const nextReflections: Record<string, ExerciseReflectionItem> = {
+        ...(targetCollab.exerciseReflections || {}),
+      };
+
+      if (trimmedNote) {
+        nextReflections[reflectionKey] = {
+          stepId: payload.stepId,
+          checklistId: payload.checklistId,
+          exerciseId: payload.exerciseId,
+          exerciseTitle: payload.exerciseTitle,
+          learningObjective: payload.learningObjective?.trim() || undefined,
+          note: trimmedNote,
+          updatedAt: nowIso,
+        };
+      } else {
+        delete nextReflections[reflectionKey];
+      }
+
+      setCollaborators((prev) => {
+        const next = prev.map((col) =>
+          col.id === collaboratorId
+            ? { ...col, exerciseReflections: nextReflections, updatedAt: nowIso }
+            : col
+        );
+        try {
+          localStorage.setItem('portal_collaborators_store', JSON.stringify(next));
+        } catch {}
+        return next;
+      });
+
+      if (isSupabaseConfigured) {
+        try {
+          const { data: existingSetting } = await supabase
+            .from('portal_settings')
+            .select('value')
+            .eq('key', 'collaborator_exercise_reflections')
+            .maybeSingle();
+
+          const prevMap =
+            existingSetting?.value && typeof existingSetting.value === 'object'
+              ? {
+                  ...(existingSetting.value as Record<
+                    string,
+                    Record<string, ExerciseReflectionItem>
+                  >),
+                }
+              : {};
+
+          prevMap[collaboratorId] = nextReflections;
+
+          await supabase.from('portal_settings').upsert({
+            key: 'collaborator_exercise_reflections',
+            value: prevMap,
+            updated_at: nowIso,
+          });
+        } catch (err) {
+          console.warn('Erro ao sincronizar diário de aprendizado no Supabase:', err);
+        }
+      }
+
+      appendAudit(
+        'Anotação no Diário de Aprendizado',
+        'Trilhas',
+        `${targetCollab.fullName} — Exercício: ${payload.exerciseTitle}`,
+        'Sucesso'
+      );
+
+      return {
+        success: true,
+        message: trimmedNote
+          ? 'Anotação de aprendizado salva com sucesso!'
+          : 'Anotação de aprendizado removida.',
+      };
+    },
+    [currentUser, collaborators, appendAudit]
+  );
+
+  const recycleChecklistStep = useCallback(
+    async (
+      collaboratorId: string,
+      stepId: string,
+      reason?: string
+    ): Promise<MutationResult & { newStepId?: string; assignmentId?: string }> => {
+      const canRecycle =
+        checkUserPermission(currentUser, 'can_manage_collaborators') ||
+        checkUserPermission(currentUser, 'can_apply_evaluations');
+      if (!canRecycle) {
+        return {
+          success: false,
+          message: 'Acesso negado: permissão para gerenciar trilhas ou aplicar avaliações exigida.',
+        };
+      }
+
+      const targetCollab = collaborators.find((c) => c.id === collaboratorId);
+      if (!targetCollab) {
+        return { success: false, message: 'Colaborador não encontrado.' };
+      }
+
+      const currentTrack = [...(targetCollab.track || [])];
+      const originalIndex = currentTrack.findIndex((s) => s.id === stepId);
+      if (originalIndex === -1) {
+        return { success: false, message: 'Etapa não encontrada na trilha do colaborador.' };
+      }
+
+      const originalStep = currentTrack[originalIndex];
+      if (originalStep.type !== 'checklist' || originalStep.status !== 'concluido') {
+        return {
+          success: false,
+          message: 'A reciclagem direta só pode ser solicitada em checklists já concluídos.',
+        };
+      }
+
+      const linkedChecklist = checklists.find((c) => c.id === originalStep.refId);
+      const baseTitle = (linkedChecklist?.title || originalStep.title)
+        .replace(/\s*\(Reciclagem\)\s*$/i, '')
+        .trim();
+      const recycleTitle = `${baseTitle} (Reciclagem)`;
+      const trimmedReason = reason?.trim() || undefined;
+      const nowIso = new Date().toISOString();
+      const stamp = `${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+      const newStepId = `step-recycle-${stamp}`;
+      const newAssignmentId = `asg-recycle-${stamp}`;
+
+      const newStep: CollaboratorTrackStep = {
+        id: newStepId,
+        stageName: normalizeStageName(originalStep.stageName),
+        type: 'checklist',
+        title: recycleTitle,
+        refId: originalStep.refId,
+        filledBy: originalStep.filledBy || 'evaluator',
+        order: originalIndex + 2,
+        status: 'disponivel',
+        completedAt: null,
+        finalScore: null,
+        collaboratorChecklistId: newAssignmentId,
+        isRecycle: true,
+        recycleReason: trimmedReason,
+        recycledFromStepId: originalStep.id,
+      };
+
+      // Prioridade imediata da reciclagem na fila:
+      // qualquer etapa posterior que estava como 'disponivel' é bloqueada temporariamente
+      // até que o colaborador conclua a reciclagem obrigatória.
+      const prioritizedTrack = currentTrack.map((step, idx) =>
+        idx > originalIndex && step.status === 'disponivel'
+          ? { ...step, status: 'bloqueado' as const }
+          : step
+      );
+      const nextTrack = [...prioritizedTrack];
+      nextTrack.splice(originalIndex + 1, 0, newStep);
+      const renumberedTrack = nextTrack.map((s, idx) => ({ ...s, order: idx + 1 }));
+
+      const newAssignment: CollaboratorChecklist = {
+        id: newAssignmentId,
+        collaboratorId,
+        checklistId: originalStep.refId,
+        status: 'pendente',
+        finalScore: null,
+        criteriaAnswers: [],
+        generalObservations: '',
+        instructorAuxiliarId: null,
+        actorAuxiliarId: null,
+        completedAt: null,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+      };
+
+      const wasFinalized = Boolean(targetCollab.isTrackFinalized);
+      const updatedCollab: Collaborator = {
+        ...targetCollab,
+        track: renumberedTrack,
+        isTrackFinalized: false,
+        status: wasFinalized ? 'em_treinamento' : targetCollab.status,
+        updatedAt: nowIso,
+      };
+
+      setCollaboratorChecklists((prev) => {
+        const next = [newAssignment, ...prev];
+        try {
+          localStorage.setItem('portal_collaborator_checklists_store', JSON.stringify(next));
+        } catch {}
+        return next;
+      });
+
+      setCollaborators((prev) => {
+        const next = prev.map((col) => (col.id === collaboratorId ? updatedCollab : col));
+        try {
+          localStorage.setItem('portal_collaborators_store', JSON.stringify(next));
+        } catch {}
+        return next;
+      });
+
+      if (isSupabaseConfigured) {
+        try {
+          await supabase.from('collaborator_checklists').upsert({
+            id: newAssignment.id,
+            collaborator_id: newAssignment.collaboratorId,
+            checklist_id: newAssignment.checklistId,
+            status: newAssignment.status,
+            final_score: null,
+            criteria_answers: [],
+            general_observations: '',
+            instructor_auxiliar_id: null,
+            actor_auxiliar_id: null,
+            completed_at: null,
+            created_at: nowIso,
+            updated_at: nowIso,
+          });
+
+          await supabase.from('collaborators').upsert(mapCollaboratorToDbRow(updatedCollab));
+        } catch (err) {
+          console.error('Erro ao registrar reciclagem no Supabase:', err);
+        }
+      }
+
+      appendAudit(
+        'Solicitação de Reciclagem',
+        'Trilhas',
+        `${targetCollab.fullName} — ${recycleTitle}${trimmedReason ? ` (Motivo: ${trimmedReason})` : ''}`,
+        'Sucesso'
+      );
+
+      return {
+        success: true,
+        message: wasFinalized
+          ? `Reciclagem "${recycleTitle}" adicionada e trilha reaberta com sucesso!`
+          : `Reciclagem "${recycleTitle}" adicionada logo abaixo da etapa original!`,
+        newStepId,
+        assignmentId: newAssignmentId,
+      };
+    },
+    [currentUser, collaborators, checklists, appendAudit]
+  );
+
   const finalizeCollaboratorTrack = useCallback(
     async (
       collaboratorId: string,
@@ -4653,7 +5122,7 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
       appendAudit(
         'Finalização de Trilha',
         'Trilhas',
-        `${targetCollab.fullName} — Parecer: ${payload.verdict === 'aprovado' ? 'Aprovado' : 'Validação da liderança'} por ${finalizedByLabel}`,
+        `${targetCollab.fullName} — Parecer: ${payload.verdict === 'aprovado' ? 'Apto para Operação' : 'Necessita Acompanhamento'} por ${finalizedByLabel}`,
         'Sucesso'
       );
       return {
@@ -4962,18 +5431,29 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
             ? { ...targetCollabForDb, status: payload.updateCollaboratorStatus, updatedAt: nowIso }
             : targetCollabForDb;
         } else {
+          const hasOtherAvailableDb = currentTrack.some(
+            (s, idx) => idx !== stepIndex && s.status === 'disponivel'
+          );
+          const nextBlockedIdxDb = hasOtherAvailableDb
+            ? -1
+            : currentTrack.findIndex((s, idx) => idx > stepIndex && s.status === 'bloqueado');
+
           const updatedTrack = currentTrack.map((step, idx) => {
             if (idx === stepIndex) {
+              const baseFrozenTitle = frozenSnapshot?.checklistTitle || step.title;
+              const resolvedTitle = step.isRecycle
+                ? `${baseFrozenTitle.replace(/\s*\(Reciclagem\)\s*$/i, '')} (Reciclagem)`
+                : baseFrozenTitle;
               return {
                 ...step,
-                title: frozenSnapshot?.checklistTitle || step.title,
+                title: resolvedTitle,
                 status: 'concluido' as const,
                 completedAt: nowIso,
                 finalScore: payload.finalScore,
                 collaboratorChecklistId: targetAssignment.id,
               };
             }
-            if (idx === stepIndex + 1 && step.status === 'bloqueado') {
+            if (idx === nextBlockedIdxDb) {
               return { ...step, status: 'disponivel' as const };
             }
             return step;
@@ -4998,18 +5478,29 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
               : col;
           }
 
+          const hasOtherAvailable = currentTrack.some(
+            (s, idx) => idx !== stepIndex && s.status === 'disponivel'
+          );
+          const nextBlockedIdx = hasOtherAvailable
+            ? -1
+            : currentTrack.findIndex((s, idx) => idx > stepIndex && s.status === 'bloqueado');
+
           const updatedTrack = currentTrack.map((step, idx) => {
             if (idx === stepIndex) {
+              const baseFrozenTitle = frozenSnapshot?.checklistTitle || step.title;
+              const resolvedTitle = step.isRecycle
+                ? `${baseFrozenTitle.replace(/\s*\(Reciclagem\)\s*$/i, '')} (Reciclagem)`
+                : baseFrozenTitle;
               return {
                 ...step,
-                title: frozenSnapshot?.checklistTitle || step.title,
+                title: resolvedTitle,
                 status: 'concluido' as const,
                 completedAt: nowIso,
                 finalScore: payload.finalScore,
                 collaboratorChecklistId: targetAssignment.id,
               };
             }
-            if (idx === stepIndex + 1 && step.status === 'bloqueado') {
+            if (idx === nextBlockedIdx) {
               return { ...step, status: 'disponivel' as const };
             }
             return step;
@@ -5328,6 +5819,8 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
       removeStepFromCollaboratorTrack,
       completeCollaboratorTrackStep,
       submitCollaboratorChecklistSelfAssessment,
+      saveCollaboratorExerciseReflection,
+      recycleChecklistStep,
       finalizeCollaboratorTrack,
       reopenCollaboratorTrack,
       saveTrackTemplate,
@@ -5405,6 +5898,8 @@ export const PortalStoreProvider: React.FC<{ children: React.ReactNode }> = ({
       removeStepFromCollaboratorTrack,
       completeCollaboratorTrackStep,
       submitCollaboratorChecklistSelfAssessment,
+      saveCollaboratorExerciseReflection,
+      recycleChecklistStep,
       finalizeCollaboratorTrack,
       reopenCollaboratorTrack,
       saveTrackTemplate,

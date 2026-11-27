@@ -15,6 +15,7 @@ import {
   Check,
   ListPlus,
   Globe,
+  Lightbulb,
 } from 'lucide-react';
 import { usePortalStore } from '../../../context/PortalStoreContext';
 import { useToast } from '../../../context/ToastContext';
@@ -126,6 +127,7 @@ export const ChecklistsManagementView: React.FC = () => {
   const [formTitle, setFormTitle] = useState('');
   const [formCell, setFormCell] = useState<ChecklistCell>('GERAL');
   const [formDescription, setFormDescription] = useState('');
+  const [formLearningObjective, setFormLearningObjective] = useState('');
   const [formCategoryId, setFormCategoryId] = useState(checklistCategories[0]?.id || '');
   const [formCategoryName, setFormCategoryName] = useState(checklistCategories[0]?.name || '');
   const [formVisibility, setFormVisibility] = useState<VisibilityLevel>('padrao');
@@ -179,6 +181,7 @@ export const ChecklistsManagementView: React.FC = () => {
       setFormTitle(chk.title);
       setFormCell(normalizedCell);
       setFormDescription(chk.description || '');
+      setFormLearningObjective(chk.learningObjective || '');
       const matchedCat =
         checklistCategories.find((c) => c.id === chk.categoryId || c.name === chk.categoryName) ||
         checklistCategories[0];
@@ -200,6 +203,7 @@ export const ChecklistsManagementView: React.FC = () => {
       setFormTitle('');
       setFormCell('GERAL');
       setFormDescription('');
+      setFormLearningObjective('');
       setFormCategoryId(checklistCategories[0]?.id || '');
       setFormCategoryName(checklistCategories[0]?.name || '');
       setFormVisibility('padrao');
@@ -336,6 +340,7 @@ export const ChecklistsManagementView: React.FC = () => {
       title: formTitle.trim(),
       cell: formCell,
       description: formDescription.trim(),
+      learningObjective: formLearningObjective.trim() || undefined,
       categoryId: formCategoryId || undefined,
       categoryName: formCategoryName,
       visibility: formVisibility,
@@ -363,6 +368,7 @@ export const ChecklistsManagementView: React.FC = () => {
       title: `${chk.title} (Cópia)`,
       cell: normalizeChecklistCell(chk.cell || 'OPERADORA'),
       description: chk.description || '',
+      learningObjective: chk.learningObjective,
       categoryId: chk.categoryId,
       categoryName: chk.categoryName,
       visibility: chk.visibility || 'padrao',
@@ -590,6 +596,16 @@ export const ChecklistsManagementView: React.FC = () => {
                   {chk.description || 'Modelo de avaliação operacional de atendimento.'}
                 </p>
 
+                {chk.learningObjective && (
+                  <div className="bg-emerald-50/70 border border-emerald-200/80 rounded-lg px-2.5 py-2 text-[11px] text-emerald-950 flex items-start gap-1.5">
+                    <Lightbulb className="w-3.5 h-3.5 text-emerald-700 shrink-0 mt-0.5" />
+                    <span className="line-clamp-2 leading-snug">
+                      <strong className="text-[#0f3e2e]">Objetivo: </strong>
+                      {chk.learningObjective}
+                    </span>
+                  </div>
+                )}
+
                 {/* Métricas do Checklist */}
                 <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-100 text-xs">
                   <div className="bg-slate-50 rounded-lg p-2.5">
@@ -802,7 +818,7 @@ export const ChecklistsManagementView: React.FC = () => {
 
                   <div className="space-y-1 md:col-span-2">
                     <label className="block text-xs font-bold text-slate-800">
-                      Instruções / Descrição
+                      Instruções / Descrição (Uso Interno do Avaliador)
                     </label>
                     <textarea
                       rows={2}
@@ -811,6 +827,23 @@ export const ChecklistsManagementView: React.FC = () => {
                       placeholder="Orientações aos avaliadores sobre como aplicar esta avaliação..."
                       className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 text-slate-900 resize-none"
                     />
+                  </div>
+
+                  <div className="space-y-1.5 md:col-span-2 bg-emerald-50/60 border border-emerald-200 rounded-xl p-3.5">
+                    <label className="flex items-center gap-1.5 text-xs font-bold text-[#0f3e2e]">
+                      <Lightbulb className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
+                      <span>Orientação / Objetivo de Aprendizado (Visível ao Colaborador)</span>
+                    </label>
+                    <textarea
+                      rows={2}
+                      value={formLearningObjective}
+                      onChange={(e) => setFormLearningObjective(e.target.value)}
+                      placeholder="Ex: Neste exercício, você vai aprender como realizar um agendamento 0242 particular"
+                      className="w-full px-3 py-2 bg-white border border-emerald-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 text-slate-900 placeholder-slate-400 resize-y"
+                    />
+                    <p className="text-[11px] text-emerald-900/80 leading-relaxed">
+                      Este texto é exibido com segurança no Diário de Aprendizado do Portal do Colaborador, sem expor roteiros, personas ou dados internos de clientes.
+                    </p>
                   </div>
                 </div>
               </div>

@@ -9,6 +9,13 @@ import {
   Layers,
   ListPlus,
   Lock,
+  MessageSquareText,
+  BarChart3,
+  Search,
+  User,
+  Calendar,
+  Building2,
+  Filter,
 } from 'lucide-react';
 import { usePortalStore } from '../../../context/PortalStoreContext';
 import { useToast } from '../../../context/ToastContext';
@@ -18,6 +25,7 @@ import {
   SurveyQuestionType,
   CLEAN_CELL_NAMES,
   VisibilityLevel,
+  getCellName,
 } from '../../../types/portal';
 
 export const SurveysManagementView: React.FC = () => {
@@ -25,6 +33,8 @@ export const SurveysManagementView: React.FC = () => {
     currentUser,
     hasPermission,
     surveys,
+    surveyResponses,
+    collaborators,
     createSurvey,
     updateSurvey,
     deleteSurvey,
@@ -33,6 +43,13 @@ export const SurveysManagementView: React.FC = () => {
 
   const canManageSurveys =
     currentUser?.role === 'admin' || hasPermission('can_manage_checklists');
+  const canViewSurveyResponses =
+    currentUser?.role === 'admin' || hasPermission('can_act_as_guardian_host');
+
+  const [activeTab, setActiveTab] = useState<'models' | 'responses'>('models');
+  const [responseSurveyFilter, setResponseSurveyFilter] = useState<string>('all');
+  const [responseCellFilter, setResponseCellFilter] = useState<string>('all');
+  const [responseSearchQuery, setResponseSearchQuery] = useState<string>('');
 
   // Estados do Modal Construtor de Pesquisa
   const [showBuilderModal, setShowBuilderModal] = useState(false);
@@ -60,6 +77,102 @@ export const SurveysManagementView: React.FC = () => {
     () => surveys.reduce((acc, s) => acc + s.questions.length, 0),
     [surveys]
   );
+
+  // Células presentes nas respostas ou cadastro padrão
+  const availableResponseCells = useMemo(() => {
+    const set = new Set<string>(CLEAN_CELL_NAMES);
+    surveyResponses.forEach((resp) => {
+      const collab = collaborators.find((c) => c.id === resp.collaboratorId);
+      const cellLabel = getCellName(collab?.cellTeam || resp.cellTeam || '');
+      if (cellLabel) set.add(cellLabel);
+    });
+    return Array.from(set);
+  }, [surveyResponses, collaborators]);
+
+  // Respostas filtradas (apenas quando canViewSurveyResponses)
+  const filteredResponses = useMemo(() => {
+    if (!canViewSurveyResponses) return [];
+    const q = responseSearchQuery.trim().toLowerCase();
+    return surveyResponses.filter((resp) => {
+      if (responseSurveyFilter !== 'all' && resp.surveyId !== responseSurveyFilter) {
+        return false;
+      }
+      const collab = collaborators.find((c) => c.id === resp.collaboratorId);
+      const resolvedCell = getCellName(collab?.cellTeam || resp.cellTeam || '');
+      if (
+        responseCellFilter !== 'all' &&
+        resolvedCell.toLowerCase() !== responseCellFilter.toLowerCase()
+      ) {
+        return false;
+      }
+      if (!q) return true;
+      const surveyObj = surveys.find((s) => s.id === resp.surveyId);
+      return (
+        resp.collaboratorName.toLowerCase().includes(q) ||
+        (resp.collaboratorUsername || '').toLowerCase().includes(q) ||
+        resolvedCell.toLowerCase().includes(q) ||
+        (surveyObj?.title || '').toLowerCase().includes(q)
+      );
+    });
+  }, [
+    canViewSurveyResponses,
+    surveyResponses,
+    collaborators,
+    surveys,
+    responseSurveyFilter,
+    responseCellFilter,
+    responseSearchQuery,
+  ]);
+
+  // Resumo percentual por pesquisa e pergunta de múltipla escolha
+  const multipleChoiceSummaryBySurvey = useMemo(() => {
+    if (!canViewSurveyResponses || filteredResponses.length === 0) return [];
+    const groupedIds = Array.from(new Set(filteredResponses.map((r) => r.surveyId)));
+    return groupedIds
+      .map((sId) => {
+        const surveyObj = surveys.find((s) => s.id === sId);
+        if (!surveyObj) return null;
+        const responsesForSurvey = filteredResponses.filter((r) => r.surveyId === sId);
+        const mcQuestions = surveyObj.questions
+          .filter((q) => q.type !== 'apenas_observacao')
+          .map((q) => {
+            const counts: Record<string, number> = {};
+            q.options.forEach((opt) => {
+              counts[opt] = 0;
+            });
+            let totalAnswered = 0;
+            responsesForSurvey.forEach((r) => {
+              const selected = r.answers?.[q.id]?.selectedOption?.trim();
+              if (selected) {
+                counts[selected] = (counts[selected] || 0) + 1;
+                totalAnswered += 1;
+              }
+            });
+            const optionKeys = Array.from(new Set([...q.options, ...Object.keys(counts)]));
+            const breakdown = optionKeys.map((opt) => {
+              const count = counts[opt] || 0;
+              const pct = totalAnswered > 0 ? Math.round((count / totalAnswered) * 100) : 0;
+              return { option: opt, count, pct };
+            });
+            return {
+              questionId: q.id,
+              questionText: q.text,
+              totalAnswered,
+              breakdown,
+            };
+          });
+        if (mcQuestions.length === 0) return null;
+        return {
+          surveyId: surveyObj.id,
+          surveyTitle: surveyObj.title,
+          totalResponses: responsesForSurvey.length,
+          questions: mcQuestions,
+        };
+      })
+      .filter((item): item is NonNullable<typeof item> => item !== null);
+  }, [canViewSurveyResponses, filteredResponses, surveys]);
+
+  const effectiveTab = canViewSurveyResponses ? activeTab : 'models';
 
   const handleOpenCreate = () => {
     setEditingSurveyId(null);
@@ -282,134 +395,514 @@ export const SurveysManagementView: React.FC = () => {
         )}
       </div>
 
-      {/* Cards de Métricas */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs flex items-center justify-between">
-          <div>
-            <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
-              Pesquisas Ativas
-            </div>
-            <div className="text-2xl font-bold font-mono text-slate-900 mt-1">
-              {surveys.length}
-            </div>
-          </div>
-          <div className="w-10 h-10 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-center text-slate-700">
-            <Layers className="w-5 h-5 text-emerald-700" />
-          </div>
-        </div>
-
-        <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs flex items-center justify-between">
-          <div>
-            <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
-              Perguntas Cadastradas
-            </div>
-            <div className="text-2xl font-bold font-mono text-slate-900 mt-1">
-              {totalQuestions}
-            </div>
-          </div>
-          <div className="w-10 h-10 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-center text-slate-700">
-            <HelpCircle className="w-5 h-5 text-emerald-700" />
-          </div>
-        </div>
-      </div>
-
-      {/* Lista de Pesquisas Cadastradas */}
-      <div className="bg-white border border-slate-200 rounded-2xl shadow-xs overflow-hidden">
-        <div className="px-6 py-4 border-b border-slate-200 bg-slate-50/60 flex items-center justify-between">
-          <div>
-            <h2 className="font-bold text-sm text-slate-900">Pesquisas Disponíveis</h2>
-            <p className="text-[11px] text-slate-500">
-              Gerencie os questionários, perguntas e alternativas disponíveis para as trilhas
-            </p>
-          </div>
-          <span className="text-xs font-semibold text-slate-500 bg-white px-2.5 py-1 rounded-lg border border-slate-200">
-            {surveys.length} registro(s)
+      {/* Abas de Navegação: Modelos de Pesquisa vs Respostas Recebidas (Restrito) */}
+      <div className="flex items-center gap-2 border-b border-slate-200 pb-0">
+        <button
+          type="button"
+          onClick={() => setActiveTab('models')}
+          className={`px-4 py-2.5 text-xs font-bold border-b-2 transition-all inline-flex items-center gap-2 cursor-pointer -mb-px ${
+            effectiveTab === 'models'
+              ? 'border-[#0f3e2e] text-[#0f3e2e] bg-emerald-50/50 rounded-t-xl'
+              : 'border-transparent text-slate-500 hover:text-slate-800 hover:bg-slate-50 rounded-t-xl'
+          }`}
+        >
+          <Layers className="w-4 h-4" />
+          <span>Modelos de Pesquisa</span>
+          <span
+            className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded-full ${
+              effectiveTab === 'models'
+                ? 'bg-[#0f3e2e] text-white'
+                : 'bg-slate-100 text-slate-600'
+            }`}
+          >
+            {surveys.length}
           </span>
-        </div>
+        </button>
 
-        {surveys.length === 0 ? (
-          <div className="text-center py-16 px-4 space-y-3">
-            <div className="w-12 h-12 rounded-full bg-slate-100 text-slate-400 flex items-center justify-center mx-auto">
-              <ClipboardCheck className="w-6 h-6" />
-            </div>
-            <h3 className="font-bold text-sm text-slate-700">Nenhuma pesquisa criada ainda</h3>
-            <p className="text-xs text-slate-500 max-w-sm mx-auto">
-              Crie questionários para coletar avaliações dos colaboradores sobre os casos clínicos, guias e roteiros.
-            </p>
-            <button
-              type="button"
-              onClick={handleOpenCreate}
-              className="px-4 py-2 bg-[#0f3e2e] hover:bg-emerald-900 text-white rounded-xl text-xs font-bold transition-all shadow-xs inline-flex items-center gap-1.5 cursor-pointer"
+        {canViewSurveyResponses && (
+          <button
+            type="button"
+            onClick={() => setActiveTab('responses')}
+            className={`px-4 py-2.5 text-xs font-bold border-b-2 transition-all inline-flex items-center gap-2 cursor-pointer -mb-px ${
+              effectiveTab === 'responses'
+                ? 'border-[#0f3e2e] text-[#0f3e2e] bg-emerald-50/50 rounded-t-xl'
+                : 'border-transparent text-slate-500 hover:text-slate-800 hover:bg-slate-50 rounded-t-xl'
+            }`}
+          >
+            <MessageSquareText className="w-4 h-4" />
+            <span>Respostas Recebidas</span>
+            <span
+              className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded-full ${
+                effectiveTab === 'responses'
+                  ? 'bg-[#0f3e2e] text-white'
+                  : 'bg-emerald-100 text-emerald-900'
+              }`}
             >
-              <Plus className="w-4 h-4" />
-              <span>Criar Primeira Pesquisa</span>
-            </button>
-          </div>
-        ) : (
-          <div className="divide-y divide-slate-100">
-            {surveys.map((survey) => {
-              return (
-                <div
-                  key={survey.id}
-                  className="p-6 hover:bg-slate-50/70 transition-colors flex flex-col lg:flex-row lg:items-center justify-between gap-4"
-                >
-                  <div className="space-y-1.5 flex-1">
-                    <div className="flex items-center gap-2.5 flex-wrap">
-                      <h3 className="font-bold text-sm text-slate-900">{survey.title}</h3>
-                      <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-800 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
-                        {survey.targetCell || 'Todas as Células'}
-                      </span>
-                      {survey.visibility === 'restrito' && (
-                        <span
-                          title="Acesso restrito ao Guardião Anfitrião / Admin"
-                          className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-900 bg-amber-50 border border-amber-300 px-2 py-0.5 rounded-full"
-                        >
-                          <Lock className="w-2.5 h-2.5 text-amber-700" />
-                          <span>Restrito</span>
-                        </span>
-                      )}
-                    </div>
-
-                    <p className="text-xs text-slate-500 line-clamp-2 max-w-2xl leading-relaxed">
-                      {survey.description || 'Sem descrição cadastrada.'}
-                    </p>
-
-                    <div className="flex items-center gap-4 text-xs text-slate-500 pt-1">
-                      <span className="flex items-center gap-1">
-                        <HelpCircle className="w-3.5 h-3.5 text-slate-400" />
-                        <span>{survey.questions.length} pergunta(s)</span>
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Ações */}
-                  {canManageSurveys && (
-                    <div className="flex items-center gap-2 shrink-0">
-                      <button
-                        type="button"
-                        onClick={() => handleOpenEdit(survey)}
-                        className="p-1.5 text-slate-600 hover:text-emerald-900 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
-                        title="Editar Pesquisa"
-                      >
-                        <Edit3 className="w-4 h-4" />
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => setDeleteConfirmSurvey(survey)}
-                        className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
-                        title="Excluir Pesquisa"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
+              {surveyResponses.length}
+            </span>
+          </button>
         )}
       </div>
+
+      {effectiveTab === 'models' ? (
+        <>
+          {/* Cards de Métricas */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs flex items-center justify-between">
+              <div>
+                <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                  Pesquisas Ativas
+                </div>
+                <div className="text-2xl font-bold font-mono text-slate-900 mt-1">
+                  {surveys.length}
+                </div>
+              </div>
+              <div className="w-10 h-10 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-center text-slate-700">
+                <Layers className="w-5 h-5 text-emerald-700" />
+              </div>
+            </div>
+
+            <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs flex items-center justify-between">
+              <div>
+                <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                  Perguntas Cadastradas
+                </div>
+                <div className="text-2xl font-bold font-mono text-slate-900 mt-1">
+                  {totalQuestions}
+                </div>
+              </div>
+              <div className="w-10 h-10 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-center text-slate-700">
+                <HelpCircle className="w-5 h-5 text-emerald-700" />
+              </div>
+            </div>
+          </div>
+
+          {/* Lista de Pesquisas Cadastradas */}
+          <div className="bg-white border border-slate-200 rounded-2xl shadow-xs overflow-hidden">
+            <div className="px-6 py-4 border-b border-slate-200 bg-slate-50/60 flex items-center justify-between">
+              <div>
+                <h2 className="font-bold text-sm text-slate-900">Pesquisas Disponíveis</h2>
+                <p className="text-[11px] text-slate-500">
+                  Gerencie os questionários, perguntas e alternativas disponíveis para as trilhas
+                </p>
+              </div>
+              <span className="text-xs font-semibold text-slate-500 bg-white px-2.5 py-1 rounded-lg border border-slate-200">
+                {surveys.length} registro(s)
+              </span>
+            </div>
+
+            {surveys.length === 0 ? (
+              <div className="text-center py-16 px-4 space-y-3">
+                <div className="w-12 h-12 rounded-full bg-slate-100 text-slate-400 flex items-center justify-center mx-auto">
+                  <ClipboardCheck className="w-6 h-6" />
+                </div>
+                <h3 className="font-bold text-sm text-slate-700">Nenhuma pesquisa criada ainda</h3>
+                <p className="text-xs text-slate-500 max-w-sm mx-auto">
+                  Crie questionários para coletar avaliações dos colaboradores sobre os casos clínicos, guias e roteiros.
+                </p>
+                {canManageSurveys && (
+                  <button
+                    type="button"
+                    onClick={handleOpenCreate}
+                    className="px-4 py-2 bg-[#0f3e2e] hover:bg-emerald-900 text-white rounded-xl text-xs font-bold transition-all shadow-xs inline-flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>Criar Primeira Pesquisa</span>
+                  </button>
+                )}
+              </div>
+            ) : (
+              <div className="divide-y divide-slate-100">
+                {surveys.map((survey) => {
+                  const responsesCount = canViewSurveyResponses
+                    ? surveyResponses.filter((r) => r.surveyId === survey.id).length
+                    : 0;
+
+                  return (
+                    <div
+                      key={survey.id}
+                      className="p-6 hover:bg-slate-50/70 transition-colors flex flex-col lg:flex-row lg:items-center justify-between gap-4"
+                    >
+                      <div className="space-y-1.5 flex-1">
+                        <div className="flex items-center gap-2.5 flex-wrap">
+                          <h3 className="font-bold text-sm text-slate-900">{survey.title}</h3>
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-800 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
+                            {survey.targetCell || 'Todas as Células'}
+                          </span>
+                          {survey.visibility === 'restrito' && (
+                            <span
+                              title="Acesso restrito ao Guardião Anfitrião / Admin"
+                              className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-900 bg-amber-50 border border-amber-300 px-2 py-0.5 rounded-full"
+                            >
+                              <Lock className="w-2.5 h-2.5 text-amber-700" />
+                              <span>Restrito</span>
+                            </span>
+                          )}
+                        </div>
+
+                        <p className="text-xs text-slate-500 line-clamp-2 max-w-2xl leading-relaxed">
+                          {survey.description || 'Sem descrição cadastrada.'}
+                        </p>
+
+                        <div className="flex items-center gap-4 text-xs text-slate-500 pt-1 flex-wrap">
+                          <span className="flex items-center gap-1">
+                            <HelpCircle className="w-3.5 h-3.5 text-slate-400" />
+                            <span>{survey.questions.length} pergunta(s)</span>
+                          </span>
+                          {canViewSurveyResponses && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setResponseSurveyFilter(survey.id);
+                                setActiveTab('responses');
+                              }}
+                              className="inline-flex items-center gap-1 text-emerald-800 hover:text-emerald-950 font-semibold cursor-pointer"
+                            >
+                              <MessageSquareText className="w-3.5 h-3.5 text-emerald-600" />
+                              <span>{responsesCount} resposta(s) recebida(s)</span>
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Ações */}
+                      {canManageSurveys && (
+                        <div className="flex items-center gap-2 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => handleOpenEdit(survey)}
+                            className="p-1.5 text-slate-600 hover:text-emerald-900 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
+                            title="Editar Pesquisa"
+                          >
+                            <Edit3 className="w-4 h-4" />
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => setDeleteConfirmSurvey(survey)}
+                            className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
+                            title="Excluir Pesquisa"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </>
+      ) : (
+        /* ========================================================= */
+        /* ABA 2: RESPOSTAS RECEBIDAS (ADMIN / GUARDIÃO ANFITRIÃO) */
+        /* ========================================================= */
+        <div className="space-y-6">
+          {/* Aviso de Sigilo + Filtros */}
+          <div className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-100">
+              <div className="flex items-center gap-2 text-xs font-bold text-[#0f3e2e]">
+                <Lock className="w-4 h-4 text-emerald-700" />
+                <span>Visão Sigilosa — Acesso Restrito à Gestão / Guardião Anfitrião</span>
+              </div>
+              <span className="text-xs font-semibold text-emerald-900 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-lg">
+                {filteredResponses.length} de {surveyResponses.length} resposta(s)
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              {/* Filtro por Pesquisa */}
+              <div className="space-y-1">
+                <label className="flex items-center gap-1 text-[11px] font-bold text-slate-700">
+                  <Filter className="w-3.5 h-3.5 text-slate-500" />
+                  <span>Filtrar por Pesquisa</span>
+                </label>
+                <select
+                  value={responseSurveyFilter}
+                  onChange={(e) => setResponseSurveyFilter(e.target.value)}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-medium text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                >
+                  <option value="all">Todas as Pesquisas ({surveys.length})</option>
+                  {surveys.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.title}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Filtro por Célula */}
+              <div className="space-y-1">
+                <label className="flex items-center gap-1 text-[11px] font-bold text-slate-700">
+                  <Building2 className="w-3.5 h-3.5 text-slate-500" />
+                  <span>Filtrar por Célula</span>
+                </label>
+                <select
+                  value={responseCellFilter}
+                  onChange={(e) => setResponseCellFilter(e.target.value)}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-medium text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                >
+                  <option value="all">Todas as Células</option>
+                  {availableResponseCells.map((cell) => (
+                    <option key={cell} value={cell}>
+                      {cell}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Busca por Colaborador / Célula */}
+              <div className="space-y-1">
+                <label className="flex items-center gap-1 text-[11px] font-bold text-slate-700">
+                  <Search className="w-3.5 h-3.5 text-slate-500" />
+                  <span>Buscar Colaborador ou Célula</span>
+                </label>
+                <div className="relative">
+                  <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
+                  <input
+                    type="text"
+                    value={responseSearchQuery}
+                    onChange={(e) => setResponseSearchQuery(e.target.value)}
+                    placeholder="Nome, @login ou célula..."
+                    className="w-full pl-8 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-medium text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Resumo Percentual das Respostas de Múltipla Escolha */}
+          {multipleChoiceSummaryBySurvey.length > 0 && (
+            <div className="bg-white border border-slate-200 rounded-2xl shadow-xs overflow-hidden">
+              <div className="px-6 py-4 border-b border-slate-200 bg-slate-50/70 flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <BarChart3 className="w-4 h-4 text-[#0f3e2e]" />
+                  <div>
+                    <h2 className="font-bold text-sm text-slate-900">
+                      Resumo Percentual — Perguntas de Múltipla Escolha
+                    </h2>
+                    <p className="text-[11px] text-slate-500">
+                      Distribuição consolidada das escolhas com base nos filtros aplicados
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="p-5 sm:p-6 space-y-6">
+                {multipleChoiceSummaryBySurvey.map((surveySummary) => (
+                  <div key={surveySummary.surveyId} className="space-y-4">
+                    <div className="flex items-center justify-between gap-2 flex-wrap border-b border-slate-100 pb-2">
+                      <h3 className="text-xs font-bold text-[#0f3e2e] uppercase tracking-wide">
+                        {surveySummary.surveyTitle}
+                      </h3>
+                      <span className="text-[11px] font-semibold text-slate-600 bg-slate-100 px-2.5 py-0.5 rounded-full">
+                        {surveySummary.totalResponses}{' '}
+                        {surveySummary.totalResponses === 1 ? 'respondente' : 'respondentes'}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                      {surveySummary.questions.map((qSummary, qIdx) => (
+                        <div
+                          key={qSummary.questionId}
+                          className="rounded-xl border border-slate-200 bg-slate-50/50 p-4 space-y-3"
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <p className="text-xs font-bold text-slate-900 leading-snug">
+                              {qIdx + 1}. {qSummary.questionText}
+                            </p>
+                            <span className="text-[10px] font-mono font-bold text-slate-500 shrink-0">
+                              {qSummary.totalAnswered} resp.
+                            </span>
+                          </div>
+
+                          <div className="space-y-2">
+                            {qSummary.breakdown.map((opt) => (
+                              <div key={opt.option} className="space-y-1">
+                                <div className="flex items-center justify-between gap-2 text-[11px]">
+                                  <span className="text-slate-700 font-medium truncate" title={opt.option}>
+                                    {opt.option}
+                                  </span>
+                                  <span className="font-mono font-bold text-[#0f3e2e] shrink-0">
+                                    {opt.pct}% ({opt.count})
+                                  </span>
+                                </div>
+                                <div className="w-full h-2 rounded-full bg-slate-200/80 overflow-hidden">
+                                  <div
+                                    className="h-full rounded-full bg-[#0f3e2e] transition-all duration-500"
+                                    style={{ width: `${opt.pct}%` }}
+                                  />
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Cards Detalhados das Respostas Enviadas */}
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-sm font-bold text-slate-900">
+                Respostas Individuais Detalhadas ({filteredResponses.length})
+              </h2>
+            </div>
+
+            {filteredResponses.length === 0 ? (
+              <div className="bg-white border border-slate-200 rounded-2xl p-12 text-center space-y-3 shadow-xs">
+                <div className="w-12 h-12 rounded-full bg-slate-100 text-slate-400 flex items-center justify-center mx-auto">
+                  <MessageSquareText className="w-6 h-6" />
+                </div>
+                <h3 className="font-bold text-sm text-slate-700">
+                  Nenhuma resposta encontrada para os filtros selecionados
+                </h3>
+                <p className="text-xs text-slate-500 max-w-sm mx-auto">
+                  Assim que os colaboradores responderem às pesquisas em suas trilhas, os registros e sugestões aparecerão aqui.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {filteredResponses.map((resp) => {
+                  const surveyObj = surveys.find((s) => s.id === resp.surveyId);
+                  const collabObj = collaborators.find((c) => c.id === resp.collaboratorId);
+                  const cellDisplay = getCellName(collabObj?.cellTeam || resp.cellTeam || '');
+                  const questionsList = surveyObj?.questions || [];
+                  const answerKeys = Object.keys(resp.answers || {});
+
+                  return (
+                    <div
+                      key={resp.id}
+                      className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs space-y-4"
+                    >
+                      {/* Cabeçalho do Card de Resposta */}
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+                        <div className="flex items-start gap-3">
+                          <div className="w-9 h-9 rounded-xl bg-emerald-50 border border-emerald-200 text-[#0f3e2e] flex items-center justify-center shrink-0">
+                            <User className="w-4 h-4 text-emerald-700" />
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <h3 className="text-sm font-bold text-slate-900">
+                                {resp.collaboratorName}
+                              </h3>
+                              {(resp.collaboratorUsername || collabObj?.username) && (
+                                <span className="text-[11px] font-mono text-slate-500">
+                                  @{resp.collaboratorUsername || collabObj?.username}
+                                </span>
+                              )}
+                              {cellDisplay && (
+                                <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-900 border border-emerald-200">
+                                  {cellDisplay}
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-xs font-semibold text-[#0f3e2e] mt-0.5">
+                              {surveyObj?.title || 'Pesquisa removida / arquivada'}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-1.5 text-[11px] text-slate-500 bg-slate-50 border border-slate-200 px-2.5 py-1 rounded-lg self-start sm:self-center shrink-0">
+                          <Calendar className="w-3.5 h-3.5 text-slate-400" />
+                          <span>
+                            {resp.completedAt
+                              ? new Date(resp.completedAt).toLocaleString('pt-BR', {
+                                  dateStyle: 'short',
+                                  timeStyle: 'short',
+                                })
+                              : 'Data não informada'}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Respostas por Pergunta */}
+                      <div className="space-y-2.5">
+                        {questionsList.length > 0 ? (
+                          questionsList.map((q, qIdx) => {
+                            const ans = resp.answers?.[q.id];
+                            const hasSelected = Boolean(ans?.selectedOption?.trim());
+                            const hasObs = Boolean(ans?.observation?.trim());
+
+                            return (
+                              <div
+                                key={q.id}
+                                className="rounded-xl border border-slate-200/80 bg-slate-50/60 p-3.5 space-y-2"
+                              >
+                                <div className="text-xs font-bold text-slate-800">
+                                  {qIdx + 1}. {q.text}
+                                </div>
+
+                                {q.type !== 'apenas_observacao' && (
+                                  <div>
+                                    <span
+                                      className={`inline-flex items-center text-[11px] font-bold px-2.5 py-1 rounded-lg border ${
+                                        hasSelected
+                                          ? 'bg-emerald-50 text-emerald-950 border-emerald-200'
+                                          : 'bg-slate-100 text-slate-500 border-slate-200 italic'
+                                      }`}
+                                    >
+                                      {hasSelected ? ans?.selectedOption : 'Sem alternativa selecionada'}
+                                    </span>
+                                  </div>
+                                )}
+
+                                {(q.type === 'apenas_observacao' || hasObs) && (
+                                  <div className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-slate-700 leading-relaxed">
+                                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block mb-0.5">
+                                      {q.type === 'apenas_observacao'
+                                        ? 'Resposta / Sugestão do Colaborador'
+                                        : 'Justificativa / Comentário'}
+                                    </span>
+                                    <p className={hasObs ? 'text-slate-800 whitespace-pre-wrap' : 'text-slate-400 italic'}>
+                                      {hasObs ? ans?.observation : 'Sem comentário registrado.'}
+                                    </p>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })
+                        ) : answerKeys.length > 0 ? (
+                          answerKeys.map((k, idx) => {
+                            const ans = resp.answers[k];
+                            return (
+                              <div
+                                key={k}
+                                className="rounded-xl border border-slate-200 bg-slate-50/60 p-3 space-y-1 text-xs"
+                              >
+                                <div className="font-bold text-slate-700">Pergunta {idx + 1}</div>
+                                {ans?.selectedOption && (
+                                  <div className="font-semibold text-emerald-900">
+                                    Resposta: {ans.selectedOption}
+                                  </div>
+                                )}
+                                {ans?.observation && (
+                                  <p className="text-slate-700 whitespace-pre-wrap">
+                                    Comentário: {ans.observation}
+                                  </p>
+                                )}
+                              </div>
+                            );
+                          })
+                        ) : (
+                          <p className="text-xs text-slate-400 italic">
+                            Nenhum detalhe de resposta armazenado.
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* ========================================================= */}
       {/* MODAL 1: CONSTRUTOR DINÂMICO DE PESQUISAS */}

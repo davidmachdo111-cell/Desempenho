@@ -26,6 +26,8 @@ import {
   MessageSquareText,
   ChevronDown,
   ChevronUp,
+  RotateCcw,
+  Lightbulb,
 } from 'lucide-react';
 import { usePortalStore } from '../../../context/PortalStoreContext';
 import { useToast } from '../../../context/ToastContext';
@@ -34,8 +36,10 @@ import {
   ChecklistCell,
   Collaborator,
   CollaboratorTrackStep,
+  ExerciseReflectionItem,
   TrackTemplate,
   getCellName,
+  getCriterionAnswerStatus,
   getScorePerformanceMeta,
   isGeneralCell,
   normalizeChecklistCell,
@@ -77,10 +81,13 @@ export const CollaboratorTrackBuilder: React.FC<CollaboratorTrackBuilderProps> =
     removeStepFromCollaboratorTrack,
     ensureCollaboratorChecklistAssignment,
     applyTrackTemplateToCollaborator,
+    recycleChecklistStep,
   } = usePortalStore();
   const { showToast } = useToast();
 
   const canManageTracks = hasPermission('can_manage_collaborators');
+  const canRecycleSteps =
+    canManageTracks || hasPermission('can_apply_evaluations');
   const isReadOnly = readOnly !== undefined ? readOnly : !canManageTracks;
   const isFinalized = Boolean(collaborator.isTrackFinalized);
   const canEditStructure = !isReadOnly && !isFinalized;
@@ -113,6 +120,12 @@ export const CollaboratorTrackBuilder: React.FC<CollaboratorTrackBuilderProps> =
   );
   const [isAddingSingleStep, setIsAddingSingleStep] = useState(false);
   const [expandedNotesStepIds, setExpandedNotesStepIds] = useState<Record<string, boolean>>({});
+  const [expandedDiaryStepIds, setExpandedDiaryStepIds] = useState<Record<string, boolean>>({});
+
+  // Modal 3: Solicitar Reciclagem Direta
+  const [recycleModalStep, setRecycleModalStep] = useState<CollaboratorTrackStep | null>(null);
+  const [recycleReasonInput, setRecycleReasonInput] = useState('');
+  const [isRecyclingStep, setIsRecyclingStep] = useState(false);
 
   const currentTrack: CollaboratorTrackStep[] = useMemo(() => {
     return collaborator.track || [];
@@ -419,6 +432,32 @@ export const CollaboratorTrackBuilder: React.FC<CollaboratorTrackBuilderProps> =
     showToast(`Dossiê da etapa "${stageName}" gerado em PDF!`, 'success');
   };
 
+  const handleOpenRecycleModal = (step: CollaboratorTrackStep) => {
+    setRecycleModalStep(step);
+    setRecycleReasonInput('');
+  };
+
+  const handleConfirmRecycleStep = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!recycleModalStep || isRecyclingStep) return;
+
+    setIsRecyclingStep(true);
+    const res = await recycleChecklistStep(
+      collaborator.id,
+      recycleModalStep.id,
+      recycleReasonInput
+    );
+    setIsRecyclingStep(false);
+
+    if (res.success) {
+      showToast(res.message, 'success');
+      setRecycleModalStep(null);
+      setRecycleReasonInput('');
+    } else {
+      showToast(res.message, 'error');
+    }
+  };
+
   return (
     <div className="space-y-4 w-full">
       {/* Header Resumo da Trilha */}
@@ -691,9 +730,12 @@ export const CollaboratorTrackBuilder: React.FC<CollaboratorTrackBuilderProps> =
                         isCompleted && linkedAssignment?.status === 'concluido'
                           ? linkedAssignment.frozenSnapshot
                           : undefined;
-                      const displayStepTitle = isCompleted
+                      const rawDisplayTitle = isCompleted
                         ? frozenSnapshot?.checklistTitle || step.title
                         : linkedItem?.title || step.title;
+                      const displayStepTitle = step.isRecycle
+                        ? `${rawDisplayTitle.replace(/\s*\(Reciclagem\)\s*$/i, '')} (Reciclagem)`
+                        : rawDisplayTitle;
                       const hasNumericScore = typeof step.finalScore === 'number';
                       const scoreMeta = getScorePerformanceMeta(
                         hasNumericScore ? step.finalScore : undefined
@@ -714,6 +756,12 @@ export const CollaboratorTrackBuilder: React.FC<CollaboratorTrackBuilderProps> =
                         canViewThisStep &&
                         (criteriaWithEvaluatorNotes.length > 0 || Boolean(generalObsPreview));
                       const isNotesExpanded = Boolean(expandedNotesStepIds[step.id]);
+                      const stepReflections: ExerciseReflectionItem[] = isChecklist
+                        ? Object.values(collaborator.exerciseReflections || {}).filter(
+                            (r) => r.stepId === step.id && Boolean(r.note?.trim())
+                          )
+                        : [];
+                      const isDiaryExpanded = Boolean(expandedDiaryStepIds[step.id]);
                       const isGeneralChecklistStep =
                         isChecklist &&
                         linkedItem &&
@@ -799,6 +847,20 @@ export const CollaboratorTrackBuilder: React.FC<CollaboratorTrackBuilderProps> =
                                   >
                                     {isChecklist ? 'Checklist' : 'Pesquisa de Satisfação'}
                                   </span>
+
+                                  {step.isRecycle && (
+                                    <span
+                                      title={
+                                        step.recycleReason
+                                          ? `Motivo da Reciclagem: ${step.recycleReason}`
+                                          : 'Etapa gerada via reciclagem direta'
+                                      }
+                                      className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-amber-900 bg-amber-100 border border-amber-300 px-2 py-0.5 rounded-full"
+                                    >
+                                      <RotateCcw className="w-2.5 h-2.5 text-amber-700" />
+                                      <span>Reciclagem</span>
+                                    </span>
+                                  )}
 
                                   {isGeneralChecklistStep && (
                                     <span
@@ -897,6 +959,15 @@ export const CollaboratorTrackBuilder: React.FC<CollaboratorTrackBuilderProps> =
                                   </div>
                                 )}
                               </div>
+
+                              {step.isRecycle && step.recycleReason && (
+                                <div className="text-[11px] text-amber-900 bg-amber-50/80 border border-amber-200 rounded-lg px-2.5 py-1.5 flex items-start gap-1.5">
+                                  <RotateCcw className="w-3.5 h-3.5 text-amber-700 shrink-0 mt-0.5" />
+                                  <span>
+                                    <strong>Motivo da Reciclagem:</strong> {step.recycleReason}
+                                  </span>
+                                </div>
+                              )}
 
                               {/* Linha de Responsabilidade e Avaliação */}
                               <div className="pt-2 border-t border-slate-100 flex flex-wrap items-center justify-between gap-3 text-xs">
@@ -1016,7 +1087,18 @@ export const CollaboratorTrackBuilder: React.FC<CollaboratorTrackBuilderProps> =
                                           }}
                                           className="text-[11px] font-bold text-emerald-700 hover:text-emerald-900 underline cursor-pointer"
                                         >
-                                          Reavaliar
+                                          <span>Reavaliar</span>
+                                        </button>
+                                      )}
+                                      {canRecycleSteps && (
+                                        <button
+                                          type="button"
+                                          onClick={() => handleOpenRecycleModal(step)}
+                                          className="px-2.5 py-1 text-[11px] font-bold text-amber-900 bg-amber-50 hover:bg-amber-100 border border-amber-300 rounded-md inline-flex items-center gap-1 cursor-pointer transition-colors"
+                                          title="Criar nova tentativa de reciclagem preservando o histórico anterior"
+                                        >
+                                          <RotateCcw className="w-3 h-3 text-amber-700" />
+                                          <span>Solicitar Reciclagem</span>
                                         </button>
                                       )}
                                     </div>
@@ -1081,6 +1163,17 @@ export const CollaboratorTrackBuilder: React.FC<CollaboratorTrackBuilderProps> =
                                           <span>Ver Avaliação</span>
                                         </button>
                                       )}
+                                      {isChecklist && canRecycleSteps && (
+                                        <button
+                                          type="button"
+                                          onClick={() => handleOpenRecycleModal(step)}
+                                          className="px-2.5 py-1 text-[11px] font-bold text-amber-900 bg-amber-50 hover:bg-amber-100 border border-amber-300 rounded-md inline-flex items-center gap-1 cursor-pointer transition-colors"
+                                          title="Criar nova tentativa de reciclagem preservando o histórico anterior"
+                                        >
+                                          <RotateCcw className="w-3 h-3 text-amber-700" />
+                                          <span>Solicitar Reciclagem</span>
+                                        </button>
+                                      )}
                                     </div>
                                   )
                                 )}
@@ -1119,34 +1212,45 @@ export const CollaboratorTrackBuilder: React.FC<CollaboratorTrackBuilderProps> =
 
                                   {isNotesExpanded && (
                                     <div className="mt-2 bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-2 text-xs">
-                                      {criteriaWithEvaluatorNotes.map((crit, cIdx) => (
-                                        <div
-                                          key={crit.criterionId || cIdx}
-                                          className={`p-2.5 rounded-lg border space-y-1 ${
-                                            crit.checked
-                                              ? 'bg-emerald-50/50 border-emerald-200'
-                                              : 'bg-amber-50/60 border-amber-200'
-                                          }`}
-                                        >
-                                          <div className="flex items-center justify-between gap-2">
-                                            <span className="font-bold text-slate-900 text-[11px]">
-                                              {crit.name}
-                                            </span>
-                                            <span
-                                              className={`text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 ${
-                                                crit.checked
-                                                  ? 'bg-emerald-100 text-emerald-800'
-                                                  : 'bg-red-100 text-red-700'
-                                              }`}
-                                            >
-                                              {crit.checked ? 'Atendido' : 'Não Atendido'}
-                                            </span>
+                                      {criteriaWithEvaluatorNotes.map((crit, cIdx) => {
+                                        const cStatus = getCriterionAnswerStatus(crit);
+                                        return (
+                                          <div
+                                            key={crit.criterionId || cIdx}
+                                            className={`p-2.5 rounded-lg border space-y-1 ${
+                                              cStatus === 'atendido'
+                                                ? 'bg-emerald-50/50 border-emerald-200'
+                                                : cStatus === 'na'
+                                                ? 'bg-slate-100/80 border-slate-200'
+                                                : 'bg-amber-50/60 border-amber-200'
+                                            }`}
+                                          >
+                                            <div className="flex items-center justify-between gap-2">
+                                              <span className="font-bold text-slate-900 text-[11px]">
+                                                {crit.name}
+                                              </span>
+                                              <span
+                                                className={`text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 ${
+                                                  cStatus === 'atendido'
+                                                    ? 'bg-emerald-100 text-emerald-800'
+                                                    : cStatus === 'na'
+                                                    ? 'bg-slate-200 text-slate-700'
+                                                    : 'bg-red-100 text-red-700'
+                                                }`}
+                                              >
+                                                {cStatus === 'atendido'
+                                                  ? 'Atendido'
+                                                  : cStatus === 'na'
+                                                  ? 'N/A'
+                                                  : 'Não Atendido'}
+                                              </span>
+                                            </div>
+                                            <p className="text-[11px] text-slate-700 leading-relaxed italic">
+                                              &ldquo;{crit.notes?.trim()}&rdquo;
+                                            </p>
                                           </div>
-                                          <p className="text-[11px] text-slate-700 leading-relaxed italic">
-                                            &ldquo;{crit.notes?.trim()}&rdquo;
-                                          </p>
-                                        </div>
-                                      ))}
+                                        );
+                                      })}
 
                                       {generalObsPreview && (
                                         <div className="p-2.5 rounded-lg bg-white border border-slate-200 space-y-0.5">
@@ -1158,6 +1262,69 @@ export const CollaboratorTrackBuilder: React.FC<CollaboratorTrackBuilderProps> =
                                           </p>
                                         </div>
                                       )}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+
+                              {/* Diário de Aprendizado do Colaborador ("O que você aprendeu") */}
+                              {canViewThisStep && stepReflections.length > 0 && (
+                                <div className="pt-2 border-t border-slate-100">
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setExpandedDiaryStepIds((prev) => ({
+                                        ...prev,
+                                        [step.id]: !prev[step.id],
+                                      }))
+                                    }
+                                    className="inline-flex items-center gap-1.5 text-[11px] font-bold text-teal-900 hover:text-teal-950 bg-teal-50/80 hover:bg-teal-100/80 border border-teal-200 px-2.5 py-1 rounded-lg transition-colors cursor-pointer"
+                                  >
+                                    <Lightbulb className="w-3.5 h-3.5 text-teal-700" />
+                                    <span>
+                                      Diário de Aprendizado do Colaborador ({stepReflections.length}{' '}
+                                      {stepReflections.length === 1 ? 'anotação' : 'anotações'})
+                                    </span>
+                                    {isDiaryExpanded ? (
+                                      <ChevronUp className="w-3.5 h-3.5" />
+                                    ) : (
+                                      <ChevronDown className="w-3.5 h-3.5" />
+                                    )}
+                                  </button>
+
+                                  {isDiaryExpanded && (
+                                    <div className="mt-2 bg-teal-50/40 border border-teal-200/80 rounded-xl p-3 space-y-2.5 text-xs">
+                                      {stepReflections.map((refItem) => (
+                                        <div
+                                          key={`${refItem.stepId}-${refItem.exerciseId}`}
+                                          className="p-2.5 rounded-lg bg-white border border-teal-200/70 space-y-1.5"
+                                        >
+                                          <div className="flex items-center justify-between gap-2 flex-wrap">
+                                            <span className="font-bold text-slate-900 text-[11px]">
+                                              {refItem.exerciseTitle}
+                                            </span>
+                                            {refItem.updatedAt && (
+                                              <span className="text-[10px] text-slate-400">
+                                                {new Date(refItem.updatedAt).toLocaleString('pt-BR', {
+                                                  dateStyle: 'short',
+                                                  timeStyle: 'short',
+                                                })}
+                                              </span>
+                                            )}
+                                          </div>
+                                          {refItem.learningObjective && (
+                                            <p className="text-[10px] text-teal-900 bg-teal-50/60 px-2 py-1 rounded border border-teal-100">
+                                              <strong>Objetivo:</strong> {refItem.learningObjective}
+                                            </p>
+                                          )}
+                                          <div className="text-[11px] text-slate-700 leading-relaxed whitespace-pre-line">
+                                            <span className="font-semibold text-slate-600">
+                                              O que aprendeu:{' '}
+                                            </span>
+                                            &ldquo;{refItem.note}&rdquo;
+                                          </div>
+                                        </div>
+                                      ))}
                                     </div>
                                   )}
                                 </div>
@@ -1721,6 +1888,88 @@ export const CollaboratorTrackBuilder: React.FC<CollaboratorTrackBuilderProps> =
                   {isAddingSingleStep
                     ? 'Adicionando...'
                     : `Adicionar em ${resolvedSingleStageName}`}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* MODAL 3: SOLICITAR RECICLAGEM DIRETA DE CHECKLIST */}
+      {/* ========================================================= */}
+      {recycleModalStep && (
+        <div
+          className="fixed inset-0 z-60 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4"
+          onClick={() => !isRecyclingStep && setRecycleModalStep(null)}
+        >
+          <div
+            className="bg-white rounded-2xl shadow-2xl max-w-md w-full border border-slate-200 overflow-hidden animate-in fade-in zoom-in-95 duration-150"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-5 py-4 bg-[#0f3e2e] text-white flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-amber-400/20 border border-amber-300/40 flex items-center justify-center">
+                  <RotateCcw className="w-4 h-4 text-amber-300" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-white">Solicitar Reciclagem</h3>
+                  <p className="text-[11px] text-emerald-200">
+                    Nova tentativa preservando o histórico anterior
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                disabled={isRecyclingStep}
+                onClick={() => setRecycleModalStep(null)}
+                className="text-emerald-200 hover:text-white p-1 rounded-lg hover:bg-white/10 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleConfirmRecycleStep} className="p-5 space-y-4 text-xs">
+              <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-amber-950 space-y-1 leading-relaxed">
+                <div className="font-bold">
+                  Checklist: {recycleModalStep.title.replace(/\s*\(Reciclagem\)\s*$/i, '')}
+                </div>
+                <p className="text-[11px] text-amber-900">
+                  A avaliação original (nota, data e snapshot congelado) permanecerá 100% intacta. Uma nova etapa <strong>(Reciclagem)</strong> será inserida logo abaixo na mesma etapa/semana.
+                  {isFinalized &&
+                    ' Como a trilha está finalizada, ela será reaberta automaticamente.'}
+                </p>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="block font-bold text-slate-800">
+                  Motivo da Reciclagem <span className="text-slate-400 font-normal">(opcional)</span>
+                </label>
+                <textarea
+                  rows={3}
+                  value={recycleReasonInput}
+                  onChange={(e) => setRecycleReasonInput(e.target.value)}
+                  placeholder="Ex: Reforçar confirmação de dados da carteirinha e fluxo de autorização..."
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500 text-slate-900 placeholder-slate-400 leading-relaxed resize-none"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  disabled={isRecyclingStep}
+                  onClick={() => setRecycleModalStep(null)}
+                  className="px-4 py-2 font-semibold text-slate-600 hover:bg-slate-100 rounded-xl transition-colors cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={isRecyclingStep}
+                  className="px-5 py-2 font-bold text-white bg-[#0f3e2e] hover:bg-emerald-900 rounded-xl transition-colors shadow-sm inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>{isRecyclingStep ? 'Criando...' : 'Confirmar Reciclagem'}</span>
                 </button>
               </div>
             </form>

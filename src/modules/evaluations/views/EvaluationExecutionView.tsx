@@ -9,23 +9,31 @@ import {
   CheckSquare,
   CheckCheck,
   Check,
+  X,
+  MinusCircle,
   Building2,
   Lock,
   Save,
   MessageSquareText,
 } from 'lucide-react';
-import { usePortalStore } from '../../../context/PortalStoreContext';
+import {
+  calculateWeightedScore,
+  getApplicableCriteriaStats,
+  usePortalStore,
+} from '../../../context/PortalStoreContext';
 import { useToast } from '../../../context/ToastContext';
 import {
   canSeeFinalVerdict,
   canViewRestrictedItem,
   CollaboratorStatus,
   CriteriaAnswerSnapshot,
+  CriterionAnswerStatus,
   Character,
   Exercise,
   OfficialCell,
   OFFICIAL_CELLS,
   getCharacterGuides,
+  getCriterionAnswerStatus,
   getExerciseAttachments,
   normalizePhrases,
 } from '../../../types/portal';
@@ -40,23 +48,6 @@ import { downloadGuidePdf, downloadMultipleGuidesPdf } from '../../../lib/downlo
 interface EvaluationExecutionViewProps {
   assignmentId: string;
   onBack: (collaboratorId?: string) => void;
-}
-
-function calculateWeightedScore(criteria: CriteriaAnswerSnapshot[]): number {
-  if (criteria.length === 0) return 10;
-  let totalPossibleWeight = 0;
-  let earnedWeight = 0;
-
-  criteria.forEach((item) => {
-    const w = item.weight || 1;
-    totalPossibleWeight += w;
-    if (item.checked) {
-      earnedWeight += w;
-    }
-  });
-
-  if (totalPossibleWeight === 0) return 10;
-  return Math.round((earnedWeight / totalPossibleWeight) * 100) / 10;
 }
 
 export const EvaluationExecutionView: React.FC<EvaluationExecutionViewProps> = ({
@@ -297,7 +288,7 @@ export const EvaluationExecutionView: React.FC<EvaluationExecutionViewProps> = (
       autoSaveTimerRef.current = null;
     }
 
-    const baseCriteria: CriteriaAnswerSnapshot[] =
+    const rawBaseCriteria: CriteriaAnswerSnapshot[] =
       activeSnapshot?.criteriaAnswers && activeSnapshot.criteriaAnswers.length > 0
         ? activeSnapshot.criteriaAnswers
         : assignment && assignment.criteriaAnswers && assignment.criteriaAnswers.length > 0
@@ -308,9 +299,19 @@ export const EvaluationExecutionView: React.FC<EvaluationExecutionViewProps> = (
             name: c.name,
             weight: c.weight,
             checked: false,
+            status: 'nao_atendido' as CriterionAnswerStatus,
             notes: '',
           }))
         : [];
+
+    const baseCriteria: CriteriaAnswerSnapshot[] = rawBaseCriteria.map((item) => {
+      const normalizedStatus = getCriterionAnswerStatus(item);
+      return {
+        ...item,
+        status: normalizedStatus,
+        checked: normalizedStatus === 'atendido',
+      };
+    });
 
     let restoredCriteria = baseCriteria;
     let restoredObservations = assignment?.generalObservations || '';
@@ -339,9 +340,11 @@ export const EvaluationExecutionView: React.FC<EvaluationExecutionViewProps> = (
             restoredCriteria = baseCriteria.map((item) => {
               const matched = draftMap.get(item.criterionId);
               if (!matched) return item;
+              const restoredStatus = getCriterionAnswerStatus(matched);
               return {
                 ...item,
-                checked: Boolean(matched.checked),
+                status: restoredStatus,
+                checked: restoredStatus === 'atendido',
                 notes: typeof matched.notes === 'string' ? matched.notes : item.notes || '',
               };
             });
@@ -385,15 +388,23 @@ export const EvaluationExecutionView: React.FC<EvaluationExecutionViewProps> = (
     };
   }, []);
 
-  // Cálculo da nota ponderada em tempo real (0 a 10)
-  const currentScore = useMemo(() => calculateWeightedScore(criteriaState), [criteriaState]);
+  // Cálculo da nota ponderada em tempo real (0 a 10), desconsiderando critérios N/A
+  const criteriaStats = useMemo(() => getApplicableCriteriaStats(criteriaState), [criteriaState]);
+  const allCriteriaMarkedNA = criteriaState.length > 0 && criteriaStats.applicableCount === 0;
+  const currentScore = useMemo(() => {
+    if (criteriaState.length === 0) return 10;
+    if (allCriteriaMarkedNA) return 0;
+    return criteriaStats.score;
+  }, [criteriaState.length, allCriteriaMarkedNA, criteriaStats.score]);
 
   const allCriteriaChecked = useMemo(
-    () => criteriaState.length > 0 && criteriaState.every((c) => c.checked),
+    () =>
+      criteriaState.length > 0 &&
+      criteriaState.every((c) => getCriterionAnswerStatus(c) === 'atendido'),
     [criteriaState]
   );
 
-  // Ciclo de vida dinâmico: sugere automaticamente status baseado na pontuação (>= 7.0: Aprovado, < 7.0: Validação da liderança)
+  // Ciclo de vida dinâmico: sugere automaticamente status baseado na pontuação (>= 7.0: Apto para Operação, < 7.0: Necessita Acompanhamento)
   useEffect(() => {
     setSelectedResultStatus(currentScore >= 7.0 ? 'aprovado' : 'necessita_reforco');
   }, [currentScore]);
@@ -511,10 +522,12 @@ export const EvaluationExecutionView: React.FC<EvaluationExecutionViewProps> = (
     }, 450);
   };
 
-  const handleToggleCheck = (criterionId: string) => {
+  const handleSetCriterionStatus = (criterionId: string, status: CriterionAnswerStatus) => {
     if (!canEditEvaluation) return;
     const nextCriteria = criteriaState.map((item) =>
-      item.criterionId === criterionId ? { ...item, checked: !item.checked } : item
+      item.criterionId === criterionId
+        ? { ...item, status, checked: status === 'atendido' }
+        : item
     );
     setCriteriaState(nextCriteria);
     persistProgressNow(nextCriteria, latestObservationsRef.current);
@@ -522,8 +535,12 @@ export const EvaluationExecutionView: React.FC<EvaluationExecutionViewProps> = (
 
   const handleToggleAllCriteria = () => {
     if (!canEditEvaluation || criteriaState.length === 0) return;
-    const targetChecked = !allCriteriaChecked;
-    const nextCriteria = criteriaState.map((item) => ({ ...item, checked: targetChecked }));
+    const nextStatus: CriterionAnswerStatus = allCriteriaChecked ? 'nao_atendido' : 'atendido';
+    const nextCriteria = criteriaState.map((item) => ({
+      ...item,
+      status: nextStatus,
+      checked: nextStatus === 'atendido',
+    }));
     setCriteriaState(nextCriteria);
     persistProgressNow(nextCriteria, latestObservationsRef.current);
   };
@@ -549,6 +566,14 @@ export const EvaluationExecutionView: React.FC<EvaluationExecutionViewProps> = (
         isTrackLocked
           ? 'Esta trilha já foi finalizada e não permite alterações.'
           : 'Você não possui permissão para finalizar avaliações.',
+        'error'
+      );
+      return;
+    }
+
+    if (allCriteriaMarkedNA) {
+      showToast(
+        'Avalie pelo menos um critério como Atendeu ou Não Atendeu antes de finalizar.',
         'error'
       );
       return;
@@ -646,10 +671,16 @@ export const EvaluationExecutionView: React.FC<EvaluationExecutionViewProps> = (
               {isReadOnlyCompleted ? 'Nota Registrada' : 'Nota Calculada'}
             </div>
             <div className="text-4xl font-black font-mono tracking-tight text-white">
-              {currentScore.toFixed(1)}
+              {allCriteriaMarkedNA ? '—' : currentScore.toFixed(1)}
             </div>
             <div className="text-[10px] text-emerald-200">
-              {isReadOnlyCompleted ? 'histórico salvo' : 'em tempo real'}
+              {allCriteriaMarkedNA
+                ? 'todos os critérios N/A'
+                : criteriaStats.naCount > 0
+                ? `${criteriaStats.applicableCount} aplicável(is) · ${criteriaStats.naCount} N/A`
+                : isReadOnlyCompleted
+                ? 'histórico salvo'
+                : 'em tempo real'}
             </div>
           </div>
           <div className="h-10 w-px bg-emerald-800" />
@@ -657,12 +688,18 @@ export const EvaluationExecutionView: React.FC<EvaluationExecutionViewProps> = (
             <span className="text-[10px] uppercase font-bold text-emerald-300 block">Status</span>
             <span
               className={`text-xs font-bold px-2 py-0.5 rounded-md inline-block mt-0.5 ${
-                currentScore >= 7
+                allCriteriaMarkedNA
+                  ? 'bg-slate-700 text-slate-200'
+                  : currentScore >= 7
                   ? 'bg-emerald-800/80 text-emerald-100'
                   : 'bg-amber-800/80 text-amber-100'
               }`}
             >
-              {currentScore >= 7 ? 'Pontuação Apta' : 'Abaixo da Média'}
+              {allCriteriaMarkedNA
+                ? 'Aguardando Critério'
+                : currentScore >= 7
+                ? 'Apto para Operação'
+                : 'Necessita Acompanhamento'}
             </span>
           </div>
         </div>
@@ -1078,48 +1115,49 @@ export const EvaluationExecutionView: React.FC<EvaluationExecutionViewProps> = (
               )}
 
               <span className="text-xs font-mono font-bold text-emerald-800 bg-emerald-50 px-2.5 py-1.5 rounded-lg border border-emerald-200/70">
-                {criteriaState.filter((c) => c.checked).length} / {criteriaState.length} Concluídos
+                {criteriaStats.attendedCount} / {criteriaStats.applicableCount} Atendidos
+                {criteriaStats.naCount > 0 ? ` · ${criteriaStats.naCount} N/A` : ''}
               </span>
             </div>
           </div>
 
           <div className="space-y-3">
-            {criteriaState.map((crit) => (
-              <div
-                key={crit.criterionId}
-                onClick={() => {
-                  if (canEditEvaluation) {
-                    handleToggleCheck(crit.criterionId);
-                  }
-                }}
-                className={`p-4 rounded-xl border transition-all ${
-                  canEditEvaluation ? 'cursor-pointer' : 'cursor-default'
-                } ${
-                  crit.checked
-                    ? 'bg-emerald-50/60 border-emerald-300 shadow-2xs'
-                    : 'bg-slate-50/70 border-slate-200 hover:border-slate-300'
-                }`}
-              >
-                <div className="flex items-start gap-3">
-                  <div className="pt-0.5">
-                    {crit.checked ? (
-                      <div className="w-5 h-5 rounded-md bg-emerald-600 text-white flex items-center justify-center shadow-xs">
-                        <Check className="w-3.5 h-3.5 stroke-[3]" />
-                      </div>
-                    ) : (
-                      <div className="w-5 h-5 rounded-md border-2 border-slate-300 bg-white" />
-                    )}
-                  </div>
+            {criteriaState.map((crit) => {
+              const critStatus = getCriterionAnswerStatus(crit);
+              const isAtendido = critStatus === 'atendido';
+              const isNA = critStatus === 'na';
 
-                  <div className="flex-1 min-w-0">
+              return (
+                <div
+                  key={crit.criterionId}
+                  className={`p-4 rounded-xl border transition-all ${
+                    isAtendido
+                      ? 'bg-emerald-50/60 border-emerald-300 shadow-2xs'
+                      : isNA
+                      ? 'bg-slate-100/80 border-slate-300 border-dashed'
+                      : 'bg-slate-50/70 border-slate-200 hover:border-slate-300'
+                  }`}
+                >
+                  <div className="space-y-3">
+                    {/* Título do Critério + Peso */}
                     <div className="flex items-start justify-between gap-2.5">
-                      <span className="font-bold text-xs text-slate-900 leading-snug">
+                      <span
+                        className={`font-bold text-xs leading-snug ${
+                          isNA ? 'text-slate-500 line-through decoration-slate-400/70' : 'text-slate-900'
+                        }`}
+                      >
                         {crit.name}
                       </span>
                       <span
-                        title={`Critério com Peso ${crit.weight || 1} na pontuação final`}
+                        title={
+                          isNA
+                            ? 'Marcado como N/A — desconsiderado do cálculo da nota'
+                            : `Critério com Peso ${crit.weight || 1} na pontuação final`
+                        }
                         className={`text-[11px] font-bold px-2.5 py-0.5 rounded-md border font-mono shrink-0 ${
-                          (crit.weight || 1) >= 3
+                          isNA
+                            ? 'bg-slate-200 text-slate-500 border-slate-300 line-through'
+                            : (crit.weight || 1) >= 3
                             ? 'bg-[#0f3e2e] text-white border-[#0f3e2e] shadow-2xs'
                             : (crit.weight || 1) === 2
                             ? 'bg-emerald-100 text-emerald-950 border-emerald-300'
@@ -1130,11 +1168,68 @@ export const EvaluationExecutionView: React.FC<EvaluationExecutionViewProps> = (
                       </span>
                     </div>
 
-                    {/* Observação do Avaliador por Critério (sempre visível para atendidos e não atendidos) */}
-                    <div
-                      className="mt-2.5 pt-2.5 border-t border-slate-200/70 space-y-1"
-                      onClick={(e) => e.stopPropagation()}
-                    >
+                    {/* Seletor Rápido de 3 Estados: Atendeu | Não Atendeu | N/A */}
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="inline-flex items-center gap-1.5 flex-wrap">
+                        <button
+                          type="button"
+                          disabled={!canEditEvaluation}
+                          onClick={() => handleSetCriterionStatus(crit.criterionId, 'atendido')}
+                          className={`px-3 py-1.5 rounded-lg text-[11px] font-bold border inline-flex items-center gap-1.5 transition-all ${
+                            canEditEvaluation ? 'cursor-pointer' : 'cursor-default'
+                          } ${
+                            isAtendido
+                              ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs'
+                              : 'bg-white text-slate-600 border-slate-200 hover:border-emerald-300 hover:text-emerald-800 disabled:hover:border-slate-200 disabled:hover:text-slate-600'
+                          }`}
+                        >
+                          <Check className="w-3.5 h-3.5 stroke-[2.5]" />
+                          <span>Atendeu</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          disabled={!canEditEvaluation}
+                          onClick={() => handleSetCriterionStatus(crit.criterionId, 'nao_atendido')}
+                          className={`px-3 py-1.5 rounded-lg text-[11px] font-bold border inline-flex items-center gap-1.5 transition-all ${
+                            canEditEvaluation ? 'cursor-pointer' : 'cursor-default'
+                          } ${
+                            critStatus === 'nao_atendido'
+                              ? 'bg-red-600 text-white border-red-600 shadow-xs'
+                              : 'bg-white text-slate-600 border-slate-200 hover:border-red-300 hover:text-red-700 disabled:hover:border-slate-200 disabled:hover:text-slate-600'
+                          }`}
+                        >
+                          <X className="w-3.5 h-3.5 stroke-[2.5]" />
+                          <span>Não Atendeu</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          disabled={!canEditEvaluation}
+                          onClick={() => handleSetCriterionStatus(crit.criterionId, 'na')}
+                          title="Não se Aplica — critério desconsiderado do cálculo proporcional da nota"
+                          className={`px-3 py-1.5 rounded-lg text-[11px] font-bold border inline-flex items-center gap-1.5 transition-all ${
+                            canEditEvaluation ? 'cursor-pointer' : 'cursor-default'
+                          } ${
+                            isNA
+                              ? 'bg-slate-600 text-white border-slate-600 shadow-xs'
+                              : 'bg-white text-slate-600 border-slate-200 hover:border-slate-400 hover:text-slate-800 disabled:hover:border-slate-200 disabled:hover:text-slate-600'
+                          }`}
+                        >
+                          <MinusCircle className="w-3.5 h-3.5" />
+                          <span>N/A</span>
+                        </button>
+                      </div>
+
+                      {isNA && (
+                        <span className="text-[10px] font-semibold text-slate-500 bg-white border border-slate-200 px-2 py-0.5 rounded-md">
+                          Não entra no cálculo da nota
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Observação do Avaliador por Critério */}
+                    <div className="pt-2.5 border-t border-slate-200/70 space-y-1">
                       <div className="flex items-center justify-between gap-2">
                         <label
                           htmlFor={`crit-obs-${crit.criterionId}`}
@@ -1171,8 +1266,10 @@ export const EvaluationExecutionView: React.FC<EvaluationExecutionViewProps> = (
                       ) : crit.notes?.trim() ? (
                         <div
                           className={`text-xs px-3 py-2 rounded-lg border leading-relaxed ${
-                            crit.checked
+                            isAtendido
                               ? 'bg-emerald-50/70 border-emerald-200 text-emerald-950'
+                              : isNA
+                              ? 'bg-slate-100 border-slate-200 text-slate-700'
                               : 'bg-amber-50/80 border-amber-200 text-amber-950'
                           }`}
                         >
@@ -1186,8 +1283,8 @@ export const EvaluationExecutionView: React.FC<EvaluationExecutionViewProps> = (
                     </div>
                   </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
 
           {/* Seção de Conclusão da Avaliação */}
@@ -1237,8 +1334,8 @@ export const EvaluationExecutionView: React.FC<EvaluationExecutionViewProps> = (
                         : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-100'
                     }`}
                   >
-                    <div>✓ Aprovado na Etapa</div>
-                    {currentScore >= 7.0 && (
+                    <div>✓ Apto para Operação</div>
+                    {!allCriteriaMarkedNA && currentScore >= 7.0 && (
                       <div className="text-[10px] font-medium opacity-90 mt-0.5">
                         (Sugerido por pontuação ≥ 70%)
                       </div>
@@ -1250,18 +1347,27 @@ export const EvaluationExecutionView: React.FC<EvaluationExecutionViewProps> = (
                     onClick={() => setSelectedResultStatus('necessita_reforco')}
                     className={`p-3 rounded-xl border text-center font-bold cursor-pointer transition-all disabled:opacity-60 ${
                       selectedResultStatus === 'necessita_reforco'
-                        ? 'bg-red-600 text-white border-red-600 shadow-sm'
+                        ? 'bg-amber-600 text-white border-amber-600 shadow-sm'
                         : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-100'
                     }`}
                   >
-                    <div>⚠ Validação da liderança</div>
-                    {currentScore < 7.0 && (
+                    <div>⚠ Necessita Acompanhamento</div>
+                    {!allCriteriaMarkedNA && currentScore < 7.0 && (
                       <div className="text-[10px] font-medium opacity-90 mt-0.5">
                         (Sugerido por pontuação &lt; 70%)
                       </div>
                     )}
                   </button>
                 </div>
+              </div>
+            )}
+
+            {!isReadOnlyCompleted && allCriteriaMarkedNA && (
+              <div className="p-3.5 bg-amber-50 border border-amber-300 rounded-xl text-xs text-amber-900 font-semibold flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                <span>
+                  Avalie pelo menos um critério como <strong>Atendeu</strong> ou <strong>Não Atendeu</strong> para calcular a pontuação e concluir a avaliação.
+                </span>
               </div>
             )}
 
@@ -1296,9 +1402,9 @@ export const EvaluationExecutionView: React.FC<EvaluationExecutionViewProps> = (
             ) : (
               <button
                 type="button"
-                disabled={isFinishing || !canEditEvaluation}
+                disabled={isFinishing || !canEditEvaluation || allCriteriaMarkedNA}
                 onClick={handleFinishEvaluation}
-                className="w-full py-3.5 bg-[#0f3e2e] hover:bg-emerald-900 text-white font-bold rounded-xl transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 text-sm"
+                className="w-full py-3.5 bg-[#0f3e2e] hover:bg-emerald-900 text-white font-bold rounded-xl transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed text-sm"
               >
                 <CheckCircle2 className="w-5 h-5" />
                 <span>{isFinishing ? 'Gravando Resultado...' : 'Finalizar e Registrar Avaliação'}</span>

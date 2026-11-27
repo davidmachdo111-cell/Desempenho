@@ -367,7 +367,8 @@ export interface Exercise {
   difficulty: ExerciseDifficulty; // Classificação de Dificuldade
   categoryId?: string; // FK categories (opcional/legado)
   categoryName?: string; // Denormalizado para exibição
-  scenarioInstructions: string; // orientações do caso
+  scenarioInstructions: string; // orientações do caso (interno — avaliador/ator)
+  learningObjective?: string; // objetivo de aprendizado visível ao colaborador
   characterIds: string[]; // Vínculo N:M - até 4 clientes por exercício
   createdAt: string;
   updatedAt?: string;
@@ -427,6 +428,7 @@ export interface Checklist {
   title: string;
   cell: ChecklistCell; // Célula do Checklist (GERAL, LAB, IMG, CONSULTA, TERAPIA, OPERADORA)
   description: string;
+  learningObjective?: string; // Orientação / Objetivo de Aprendizado visível ao colaborador
   categoryId?: string;
   categoryName?: string;
   visibility?: VisibilityLevel; // 'padrao' (todos os gestores) | 'restrito' (Guardião Anfitrião / Admin)
@@ -458,6 +460,9 @@ export interface CollaboratorTrackStep {
   finalScore?: number | null; // se checklist avaliado
   collaboratorChecklistId?: string | null; // vínculo se criado em collaborator_checklists
   surveyResponseId?: string | null; // vínculo se resposta enviada
+  isRecycle?: boolean; // etapa gerada por reciclagem direta de checklist concluído
+  recycleReason?: string; // motivo opcional da reciclagem
+  recycledFromStepId?: string; // id da etapa original que originou a reciclagem
 }
 
 export type TrackStep = CollaboratorTrackStep;
@@ -489,6 +494,16 @@ export interface TrackTemplate {
   updatedAt?: string;
 }
 
+export interface ExerciseReflectionItem {
+  stepId: string;
+  checklistId?: string;
+  exerciseId: string;
+  exerciseTitle: string;
+  learningObjective?: string;
+  note: string;
+  updatedAt: string;
+}
+
 export interface Collaborator {
   id: string;
   fullName: string;
@@ -498,6 +513,7 @@ export interface Collaborator {
   registrationCode?: string;
   learningTrackId?: string; // vínculo opcional/legado com trilha de aprendizagem
   track?: CollaboratorTrackStep[]; // Trilha de aprendizagem individual e sequencial do colaborador
+  exerciseReflections?: Record<string, ExerciseReflectionItem>; // Diário de aprendizado por `${stepId}::${exerciseId}`
   status: CollaboratorStatus;
   isTrackFinalized?: boolean;
   guardianVerdict?: 'aprovado' | 'necessita_reforco';
@@ -511,11 +527,24 @@ export interface Collaborator {
 // 6. collaborator_checklists: Atribuição e Resultados das Avaliações
 export type CollaboratorChecklistStatus = 'pendente' | 'em_andamento' | 'concluido';
 
+export type CriterionAnswerStatus = 'atendido' | 'nao_atendido' | 'na';
+
+export function getCriterionAnswerStatus(item: {
+  checked?: boolean;
+  status?: CriterionAnswerStatus;
+}): CriterionAnswerStatus {
+  if (item.status === 'atendido' || item.status === 'nao_atendido' || item.status === 'na') {
+    return item.status;
+  }
+  return item.checked ? 'atendido' : 'nao_atendido';
+}
+
 export interface CriteriaAnswerSnapshot {
   criterionId: string;
   name: string;
   weight: number;
   checked: boolean;
+  status?: CriterionAnswerStatus;
   notes?: string;
 }
 
@@ -558,6 +587,7 @@ export interface FrozenSnapshotExercise {
   difficulty?: ExerciseDifficulty;
   categoryName?: string;
   scenarioInstructions: string;
+  learningObjective?: string;
   attachments?: Array<{
     id?: string;
     name: string;
@@ -572,6 +602,7 @@ export interface EvaluationFrozenSnapshot {
   checklistTitle: string;
   checklistCategoryName?: string;
   checklistDescription?: string;
+  checklistLearningObjective?: string;
   criteriaAnswers?: CriteriaAnswerSnapshot[];
   exercises: FrozenSnapshotExercise[];
 }
@@ -721,7 +752,7 @@ export function getScorePerformanceMeta(
   if (score < 5.0) {
     return {
       tier: 'low',
-      label: 'Crítico / Reprovado',
+      label: 'Necessita Acompanhamento',
       badgeClass: 'bg-red-50 text-red-700 border-red-200',
       borderClass: 'border-red-300',
       textClass: 'text-red-700',
@@ -731,7 +762,7 @@ export function getScorePerformanceMeta(
   if (score < 7.0) {
     return {
       tier: 'medium',
-      label: 'Atenção / Reforço',
+      label: 'Necessita Acompanhamento',
       badgeClass: 'bg-amber-50 text-amber-800 border-amber-300',
       borderClass: 'border-amber-300',
       textClass: 'text-amber-800',
@@ -740,7 +771,7 @@ export function getScorePerformanceMeta(
 
   return {
     tier: 'high',
-    label: 'Aprovado',
+    label: 'Apto para Operação',
     badgeClass: 'bg-emerald-50 text-emerald-800 border-emerald-200',
     borderClass: 'border-emerald-300',
     textClass: 'text-emerald-800',

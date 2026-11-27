@@ -551,7 +551,13 @@ export function downloadReportPdf(reportData: {
   evaluatedAt: string;
   evaluatorName: string;
   notes?: string;
-  items: Array<{ name: string; weight: number; checked: boolean; notes?: string }>;
+  items: Array<{
+    name: string;
+    weight: number;
+    checked: boolean;
+    status?: 'atendido' | 'nao_atendido' | 'na';
+    notes?: string;
+  }>;
   generatedBy?: PdfGeneratedBy;
 }): void {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
@@ -620,21 +626,21 @@ export function downloadReportPdf(reportData: {
   } =
     rawScore >= 7.0
       ? {
-          label: 'APROVADO',
+          label: 'APTO PARA OPERAÇÃO',
           desc: 'Apto para o fluxo operacional padrão.',
           fill: [236, 253, 245],
           color: [4, 120, 87],
         }
       : rawScore >= 5.0
       ? {
-          label: 'VALIDAÇÃO DA LIDERANÇA',
-          desc: 'Verificar a continuidade com a liderança do colaborador.',
+          label: 'NECESSITA ACOMPANHAMENTO',
+          desc: 'Acompanhamento direcionado junto à liderança do colaborador.',
           fill: [255, 251, 235],
           color: [180, 83, 9],
         }
       : {
-          label: 'REPROVADO',
-          desc: 'Abaixo do padrão mínimo exigido; necessária reciclagem e reavaliação.',
+          label: 'NECESSITA ACOMPANHAMENTO',
+          desc: 'Abaixo do padrão mínimo exigido; necessário acompanhamento e reciclagem.',
           fill: [254, 242, 242],
           color: [185, 28, 28],
         };
@@ -645,19 +651,20 @@ export function downloadReportPdf(reportData: {
   doc.text(verdict.desc, leftMargin + 4, currentY + 19);
 
   // Box Nota Final (escala 0 a 10)
-  const scoreBoxX = leftMargin + 130;
+  const scoreBoxW = 56;
+  const scoreBoxX = leftMargin + contentWidth - scoreBoxW - 4;
   doc.setFillColor(...verdict.fill);
   doc.setDrawColor(...verdict.color);
-  doc.roundedRect(scoreBoxX, currentY + 3, 48, 16, 1.5, 1.5, 'FD');
+  doc.roundedRect(scoreBoxX, currentY + 3, scoreBoxW, 16, 1.5, 1.5, 'FD');
 
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(verdict.label.length > 16 ? 5.6 : 6.5);
+  doc.setFontSize(verdict.label.length > 18 ? 5.2 : 6.0);
   doc.setTextColor(...verdict.color);
-  doc.text(verdict.label, scoreBoxX + 24, currentY + 7.5, { align: 'center' });
+  doc.text(verdict.label, scoreBoxX + scoreBoxW / 2, currentY + 7.5, { align: 'center' });
 
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(11);
-  doc.text(`${rawScore.toFixed(1)} / 10`, scoreBoxX + 24, currentY + 14, { align: 'center' });
+  doc.text(`${rawScore.toFixed(1)} / 10`, scoreBoxX + scoreBoxW / 2, currentY + 14, { align: 'center' });
 
   currentY += 26;
 
@@ -741,9 +748,13 @@ export function downloadReportPdf(reportData: {
     doc.setFont('helvetica', 'bold');
     doc.text(`${item.weight} pt${item.weight > 1 ? 's' : ''}`, leftMargin + 145, currentY + 4.3);
 
-    if (item.checked) {
+    const itemStatus = item.status ?? (item.checked ? 'atendido' : 'nao_atendido');
+    if (itemStatus === 'atendido') {
       doc.setTextColor(4, 120, 87);
       doc.text('CONFORME', leftMargin + 162, currentY + 4.3);
+    } else if (itemStatus === 'na') {
+      doc.setTextColor(100, 116, 139);
+      doc.text('N/A', leftMargin + 162, currentY + 4.3);
     } else {
       doc.setTextColor(220, 38, 38);
       doc.text('NÃO CONFORME', leftMargin + 162, currentY + 4.3);
@@ -752,8 +763,18 @@ export function downloadReportPdf(reportData: {
     currentY += baseRowHeight;
 
     if (trimmedNote) {
-      const noteFill: [number, number, number] = item.checked ? [240, 253, 244] : [255, 251, 235];
-      const noteAccent: [number, number, number] = item.checked ? [6, 78, 59] : [180, 83, 9];
+      const noteFill: [number, number, number] =
+        itemStatus === 'atendido'
+          ? [240, 253, 244]
+          : itemStatus === 'na'
+          ? [241, 245, 249]
+          : [255, 251, 235];
+      const noteAccent: [number, number, number] =
+        itemStatus === 'atendido'
+          ? [6, 78, 59]
+          : itemStatus === 'na'
+          ? [100, 116, 139]
+          : [180, 83, 9];
       doc.setFillColor(...noteFill);
       doc.setDrawColor(...slateBorder);
       doc.rect(leftMargin + 12, currentY + 0.5, contentWidth - 12, noteBoxHeight, 'FD');
@@ -804,10 +825,25 @@ export function downloadReportTxt(reportData: {
   evaluatedAt: string;
   evaluatorName: string;
   notes?: string;
-  items: Array<{ name: string; weight: number; checked: boolean; notes?: string }>;
+  items: Array<{
+    name: string;
+    weight: number;
+    checked: boolean;
+    status?: 'atendido' | 'nao_atendido' | 'na';
+    notes?: string;
+  }>;
   generatedBy?: PdfGeneratedBy;
 }): void {
   downloadReportPdf(reportData);
+}
+
+export interface DossierLearningReflectionItem {
+  stageName?: string;
+  stepTitle: string;
+  exerciseTitle: string;
+  learningObjective?: string;
+  note: string;
+  updatedAt?: string;
 }
 
 export interface DossierEvaluationHistoryItem {
@@ -820,9 +856,12 @@ export interface DossierEvaluationHistoryItem {
   completedAt: string;
   observations?: string;
   isRestricted?: boolean;
+  isRecycle?: boolean;
+  recycleReason?: string;
   criteriaAnswers?: Array<{
     name: string;
     checked: boolean;
+    status?: 'atendido' | 'nao_atendido' | 'na';
     weight: number;
     notes?: string;
   }>;
@@ -857,6 +896,7 @@ export interface DossierStageChapter {
   trackSteps: DossierTrackItem[];
   evaluations: DossierEvaluationHistoryItem[];
   surveys: DossierSurveySummaryItem[];
+  learningReflections?: DossierLearningReflectionItem[];
 }
 
 export interface StageDossierData {
@@ -872,6 +912,7 @@ export interface StageDossierData {
   trackSteps: DossierTrackItem[];
   evaluations: DossierEvaluationHistoryItem[];
   surveys: DossierSurveySummaryItem[];
+  learningReflections?: DossierLearningReflectionItem[];
   generatedBy?: PdfGeneratedBy;
   generatedAt: string;
 }
@@ -891,6 +932,7 @@ export interface CollaboratorDossierData {
   trackSteps: DossierTrackItem[];
   evaluationHistory: DossierEvaluationHistoryItem[];
   surveyResponsesSummary?: DossierSurveySummaryItem[];
+  learningReflections?: DossierLearningReflectionItem[];
   stages?: DossierStageChapter[];
   guardianFinalization?: {
     isFinalized: boolean;
@@ -1015,12 +1057,24 @@ function drawDetailedEvaluationBlock(
   let currentY = startY;
 
   const cardTextMaxWidth = contentWidth - 42;
-  const titleLabel = `${idx + 1}. ${evalItem.isRestricted ? '[RESTRITO] ' : ''}${evalItem.checklistTitle}`;
+  const cleanTitle = evalItem.isRecycle
+    ? evalItem.checklistTitle.replace(/\s*\(Reciclagem\)\s*$/i, '')
+    : evalItem.checklistTitle;
+  const titleLabel = `${idx + 1}. ${evalItem.isRestricted ? '[RESTRITO] ' : ''}${
+    evalItem.isRecycle ? '[RECICLAGEM] ' : ''
+  }${cleanTitle}`;
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(7.5);
   const titleLines = doc.splitTextToSize(titleLabel, cardTextMaxWidth);
 
   const metaLine = `Data: ${evalItem.completedAt}   ·   Avaliador: ${evalItem.evaluatorName}`;
+  const trimmedRecycleReason = evalItem.recycleReason?.trim() || '';
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(6.3);
+  const recycleReasonLines = trimmedRecycleReason
+    ? doc.splitTextToSize(`Motivo da Reciclagem: ${trimmedRecycleReason}`, cardTextMaxWidth)
+    : [];
+
   const hasScenario = Boolean(evalItem.exerciseTitle || evalItem.characterName);
   const scenarioText = `Cenário: ${evalItem.exerciseTitle || 'Padrão'}   ·   Cliente: ${evalItem.characterName || 'N/A'}`;
   doc.setFont('helvetica', 'normal');
@@ -1035,6 +1089,7 @@ function drawDetailedEvaluationBlock(
   const textHeight =
     titleLines.length * 3.8 +
     4.2 +
+    (recycleReasonLines.length > 0 ? recycleReasonLines.length * 3.5 + 1.2 : 0) +
     (scenarioLines.length > 0 ? scenarioLines.length * 3.6 + 1 : 0) +
     obsLines.length * 3.6 +
     6;
@@ -1062,7 +1117,18 @@ function drawDetailedEvaluationBlock(
   doc.text(metaLine, leftMargin + 4, lineY);
   lineY += 4.0;
 
+  if (recycleReasonLines.length > 0) {
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(6.3);
+    doc.setTextColor(180, 83, 9);
+    doc.text(recycleReasonLines, leftMargin + 4, lineY);
+    lineY += recycleReasonLines.length * 3.5 + 1.0;
+  }
+
   if (scenarioLines.length > 0) {
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(6.5);
+    doc.setTextColor(...slateMuted);
     doc.text(scenarioLines, leftMargin + 4, lineY);
     lineY += scenarioLines.length * 3.6 + 0.8;
   }
@@ -1115,14 +1181,14 @@ function drawDetailedEvaluationBlock(
     doc.setFontSize(5.9);
     doc.setTextColor(...slateDark);
     doc.text('CRITÉRIO AVALIADO', leftMargin + 4.5, currentY + 3.7);
-    doc.text('PESO', leftMargin + 135, currentY + 3.7);
-    doc.text('RESULTADO', leftMargin + 152, currentY + 3.7);
+    doc.text('PESO', leftMargin + 131, currentY + 3.7);
+    doc.text('RESULTADO', leftMargin + 146, currentY + 3.7);
     currentY += 5.8;
 
     evalItem.criteriaAnswers.forEach((crit, cIdx) => {
       doc.setFont('helvetica', 'normal');
       doc.setFontSize(6.1);
-      const critNameLines = doc.splitTextToSize(`${cIdx + 1}. ${crit.name}`, 126);
+      const critNameLines = doc.splitTextToSize(`${cIdx + 1}. ${crit.name}`, 122);
       const baseRowHeight = Math.max(5.8, critNameLines.length * 3.2 + 2.4);
 
       const trimmedNote = crit.notes?.trim() || '';
@@ -1156,23 +1222,42 @@ function drawDetailedEvaluationBlock(
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(5.9);
       doc.setTextColor(...slateMuted);
-      doc.text(`Peso ${crit.weight}`, leftMargin + 135, currentY + 3.7);
+      doc.text(`Peso ${crit.weight}`, leftMargin + 131, currentY + 3.7);
 
-      if (crit.checked) {
+      const critStatus = crit.status ?? (crit.checked ? 'atendido' : 'nao_atendido');
+      if (critStatus === 'atendido') {
         doc.setTextColor(4, 120, 87);
-        doc.text('Atendido', leftMargin + 152, currentY + 3.7);
+        doc.text('Atendido', leftMargin + 146, currentY + 3.7);
+      } else if (critStatus === 'na') {
+        doc.setTextColor(100, 116, 139);
+        doc.text('N/A (Não se Aplica)', leftMargin + 146, currentY + 3.7);
       } else {
         doc.setTextColor(185, 28, 28);
-        doc.text('Não Atendido', leftMargin + 152, currentY + 3.7);
+        doc.text('Não Atendido', leftMargin + 146, currentY + 3.7);
       }
 
       currentY += baseRowHeight;
 
       // Sub-bloco dedicado para Observação do Avaliador diretamente abaixo do critério
       if (trimmedNote) {
-        const noteBg: [number, number, number] = crit.checked ? [240, 253, 244] : [255, 251, 235];
-        const noteBorder: [number, number, number] = crit.checked ? [167, 243, 208] : [253, 230, 138];
-        const noteAccent: [number, number, number] = crit.checked ? [6, 78, 59] : [180, 83, 9];
+        const noteBg: [number, number, number] =
+          critStatus === 'atendido'
+            ? [240, 253, 244]
+            : critStatus === 'na'
+            ? [241, 245, 249]
+            : [255, 251, 235];
+        const noteBorder: [number, number, number] =
+          critStatus === 'atendido'
+            ? [167, 243, 208]
+            : critStatus === 'na'
+            ? [203, 213, 225]
+            : [253, 230, 138];
+        const noteAccent: [number, number, number] =
+          critStatus === 'atendido'
+            ? [6, 78, 59]
+            : critStatus === 'na'
+            ? [100, 116, 139]
+            : [180, 83, 9];
 
         doc.setFillColor(noteBg[0], noteBg[1], noteBg[2]);
         doc.setDrawColor(noteBorder[0], noteBorder[1], noteBorder[2]);
@@ -1273,6 +1358,116 @@ function drawDetailedSurveyBlock(
   });
 
   return currentY + srvCardHeight + 3.5;
+}
+
+/**
+ * Helper interno para desenhar o Diário de Aprendizado do Colaborador ("O que você aprendeu")
+ */
+function drawLearningReflectionsSection(
+  doc: jsPDF,
+  reflections: DossierLearningReflectionItem[],
+  heading: string,
+  startY: number,
+  leftMargin: number,
+  contentWidth: number,
+  headingFontSize = 8.5
+): number {
+  if (!reflections || reflections.length === 0) return startY;
+
+  const primaryEmerald = [6, 78, 59] as const;
+  const slateDark = [15, 23, 42] as const;
+  const slateMuted = [100, 116, 139] as const;
+  let currentY = startY;
+
+  if (currentY > 240) {
+    doc.addPage();
+    currentY = 15;
+  } else {
+    currentY += 2.5;
+  }
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(headingFontSize);
+  doc.setTextColor(...primaryEmerald);
+  doc.text(heading, leftMargin, currentY + 3);
+  currentY += 6;
+
+  reflections.forEach((refItem) => {
+    const innerWidth = contentWidth - 10;
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(6.8);
+    const sameTitle =
+      refItem.exerciseTitle.trim().toLowerCase() === refItem.stepTitle.trim().toLowerCase();
+    const combinedHeading = sameTitle
+      ? refItem.stepTitle
+      : `${refItem.exerciseTitle}  ·  ${refItem.stepTitle}`;
+    const titleLines = doc.splitTextToSize(combinedHeading, innerWidth - 22);
+
+    const trimmedObj = refItem.learningObjective?.trim() || '';
+    doc.setFont('helvetica', 'italic');
+    doc.setFontSize(6.0);
+    const objLines = trimmedObj
+      ? doc.splitTextToSize(`Objetivo de Aprendizado: ${trimmedObj}`, innerWidth)
+      : [];
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(6.3);
+    const noteLines = doc.splitTextToSize(`Registro do Colaborador: ${refItem.note.trim()}`, innerWidth);
+
+    const cardHeight =
+      6.5 +
+      titleLines.length * 3.4 +
+      (objLines.length > 0 ? objLines.length * 3.1 + 1.5 : 0) +
+      noteLines.length * 3.3 +
+      3.5;
+
+    if (currentY + cardHeight > 272) {
+      doc.addPage();
+      currentY = 15;
+    }
+
+    doc.setFillColor(240, 253, 244);
+    doc.setDrawColor(167, 243, 208);
+    doc.roundedRect(leftMargin, currentY, contentWidth, cardHeight, 1.4, 1.4, 'FD');
+
+    doc.setFillColor(...primaryEmerald);
+    doc.rect(leftMargin, currentY, 1.6, cardHeight, 'F');
+
+    let lineY = currentY + 4.8;
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(6.8);
+    doc.setTextColor(...slateDark);
+    doc.text(titleLines, leftMargin + 4.5, lineY);
+
+    if (refItem.updatedAt) {
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(5.8);
+      doc.setTextColor(...slateMuted);
+      doc.text(refItem.updatedAt, leftMargin + contentWidth - 3.5, currentY + 4.8, {
+        align: 'right',
+      });
+    }
+
+    lineY += titleLines.length * 3.4 + 0.8;
+
+    if (objLines.length > 0) {
+      doc.setFont('helvetica', 'italic');
+      doc.setFontSize(6.0);
+      doc.setTextColor(4, 120, 87);
+      doc.text(objLines, leftMargin + 4.5, lineY);
+      lineY += objLines.length * 3.1 + 1.5;
+    }
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(6.3);
+    doc.setTextColor(30, 41, 59);
+    doc.text(noteLines, leftMargin + 4.5, lineY);
+
+    currentY += cardHeight + 2.5;
+  });
+
+  return currentY + 1;
 }
 
 /**
@@ -1443,6 +1638,20 @@ export function downloadStageDossierPdf(stageData: StageDossierData): void {
     });
   }
 
+  // 7. Diário de Aprendizado do Colaborador ("O que você aprendeu")
+  if (stageData.learningReflections && stageData.learningReflections.length > 0) {
+    const learningSectionNum = stageData.surveys.length > 0 ? 4 : 3;
+    currentY = drawLearningReflectionsSection(
+      doc,
+      stageData.learningReflections,
+      `${learningSectionNum}. DIÁRIO DE APRENDIZADO DO COLABORADOR`,
+      currentY,
+      leftMargin,
+      contentWidth,
+      8.5
+    );
+  }
+
   applyPdfTraceabilityFooter(doc, stageData.generatedBy);
 
   const safeStageName = stageData.stageName.replace(/[^a-zA-Z0-9_\u00C0-\u017F]+/g, '_');
@@ -1539,17 +1748,23 @@ export function downloadCollaboratorDossierPdf(dossier: CollaboratorDossierData)
   const statusColor =
     stLower === 'finalizado'
       ? [100, 116, 139]
-      : stLower.includes('aprovado') || stLower.includes('conclu')
+      : stLower.includes('apto') || stLower.includes('aprovado') || stLower.includes('conclu')
       ? [16, 185, 129]
-      : stLower.includes('validação') || stLower.includes('validacao') || stLower.includes('treinamento')
+      : stLower.includes('acompanhamento') ||
+        stLower.includes('validação') ||
+        stLower.includes('validacao') ||
+        stLower.includes('treinamento')
       ? [217, 119, 6]
       : [100, 116, 139];
-  const statusBadgeW = dossier.status.length > 16 ? 48 : 38;
+  const statusBadgeW =
+    dossier.status.length > 20 ? 58 : dossier.status.length > 16 ? 48 : 38;
   const statusBadgeX = leftMargin + contentWidth - statusBadgeW - 4;
   doc.setFillColor(statusColor[0], statusColor[1], statusColor[2]);
   doc.roundedRect(statusBadgeX, currentY + 4, statusBadgeW, 6, 1, 1, 'F');
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(dossier.status.length > 16 ? 5.6 : 6.5);
+  doc.setFontSize(
+    dossier.status.length > 20 ? 5.2 : dossier.status.length > 16 ? 5.6 : 6.5
+  );
   doc.setTextColor(...white);
   doc.text(dossier.status.toUpperCase(), statusBadgeX + statusBadgeW / 2, currentY + 8, { align: 'center' });
 
@@ -1632,14 +1847,14 @@ export function downloadCollaboratorDossierPdf(dossier: CollaboratorDossierData)
     doc.setLineWidth(0.4);
     doc.roundedRect(leftMargin, currentY, contentWidth, opinionCardHeight, 2, 2, 'FD');
 
-    const verdictBadgeW = isApproved ? 34 : 52;
+    const verdictBadgeW = isApproved ? 44 : 58;
     doc.setFillColor(isApproved ? 4 : 180, isApproved ? 120 : 83, isApproved ? 87 : 9);
     doc.roundedRect(leftMargin + 4, currentY + 4, verdictBadgeW, 5.5, 1, 1, 'F');
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(6.3);
+    doc.setFontSize(isApproved ? 6.0 : 5.6);
     doc.setTextColor(...white);
     doc.text(
-      isApproved ? 'APROVADO' : 'VALIDAÇÃO DA LIDERANÇA',
+      isApproved ? 'APTO PARA OPERAÇÃO' : 'NECESSITA ACOMPANHAMENTO',
       leftMargin + 4 + verdictBadgeW / 2,
       currentY + 7.8,
       { align: 'center' }
@@ -1660,7 +1875,7 @@ export function downloadCollaboratorDossierPdf(dossier: CollaboratorDossierData)
       doc.setFontSize(6.8);
       doc.setTextColor(180, 83, 9);
       doc.text(
-        'Verificar a continuidade com a liderança do colaborador.',
+        'Acompanhamento direcionado junto à liderança e plano de desenvolvimento contínuo.',
         leftMargin + 4,
         currentY + 13.5
       );
@@ -1790,6 +2005,18 @@ export function downloadCollaboratorDossierPdf(dossier: CollaboratorDossierData)
         });
       }
 
+      if (chapter.learningReflections && chapter.learningReflections.length > 0) {
+        currentY = drawLearningReflectionsSection(
+          doc,
+          chapter.learningReflections,
+          `Diário de Aprendizado do Colaborador — ${chapter.stageName}`,
+          currentY,
+          leftMargin,
+          contentWidth,
+          7.5
+        );
+      }
+
       currentY += 4;
     });
   } else {
@@ -1846,7 +2073,23 @@ export function downloadCollaboratorDossierPdf(dossier: CollaboratorDossierData)
       });
     }
 
-    const opinionSectionNum = hasSurveys ? 4 : 3;
+    const hasReflections = Boolean(
+      dossier.learningReflections && dossier.learningReflections.length > 0
+    );
+    if (hasReflections && dossier.learningReflections) {
+      const reflectionSectionNum = hasSurveys ? 4 : 3;
+      currentY = drawLearningReflectionsSection(
+        doc,
+        dossier.learningReflections,
+        `${reflectionSectionNum}. DIÁRIO DE APRENDIZADO DO COLABORADOR`,
+        currentY,
+        leftMargin,
+        contentWidth,
+        8.5
+      );
+    }
+
+    const opinionSectionNum = (hasSurveys ? 4 : 3) + (hasReflections ? 1 : 0);
     renderGuardianVerdictSection(`${opinionSectionNum}. PARECER OFICIAL DO GUARDIÃO ANFITRIÃO`);
   }
 

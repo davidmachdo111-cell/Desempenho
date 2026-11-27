@@ -87,8 +87,8 @@ export function getCollaboratorProgressStatus(
     | 'A Realizar'
     | 'Em Treinamento'
     | 'Concluído'
-    | 'Aprovado'
-    | 'Validação da liderança'
+    | 'Apto para Operação'
+    | 'Necessita Acompanhamento'
     | 'Finalizado';
   subtitle?: string;
   badgeStyle: string;
@@ -117,8 +117,8 @@ export function getCollaboratorProgressStatus(
     if (col.guardianVerdict === 'necessita_reforco') {
       return {
         key: 'finalizado_validacao',
-        label: 'Validação da liderança',
-        subtitle: 'Verificar a continuidade com a liderança do colaborador',
+        label: 'Necessita Acompanhamento',
+        subtitle: 'Acompanhamento contínuo e direcionamento junto à liderança',
         badgeStyle: 'bg-amber-50 text-amber-900 border border-amber-300',
         totalSteps,
         completedSteps,
@@ -128,7 +128,7 @@ export function getCollaboratorProgressStatus(
 
     return {
       key: 'finalizado_aprovado',
-      label: 'Aprovado',
+      label: 'Apto para Operação',
       badgeStyle: 'bg-emerald-50 text-emerald-800 border border-emerald-300',
       totalSteps,
       completedSteps,
@@ -785,13 +785,13 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
                         }`}
                       >
                         {activeCollaborator.guardianVerdict === 'necessita_reforco'
-                          ? 'Validação da liderança'
-                          : 'Aprovado'}
+                          ? 'Necessita Acompanhamento'
+                          : 'Apto para Operação'}
                       </span>
                     </div>
                     {activeCollaborator.guardianVerdict === 'necessita_reforco' && (
                       <p className="text-[11px] font-semibold text-amber-900 mt-0.5">
-                        Verificar a continuidade com a liderança do colaborador.
+                        Acompanhamento direcionado junto à liderança e plano de desenvolvimento contínuo.
                       </p>
                     )}
                     <p className="text-[11px] text-slate-600 mt-0.5">
@@ -1450,7 +1450,7 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
                 ? [
                     {
                       key: 'finalizado_aprovado',
-                      label: 'Aprovado',
+                      label: 'Apto para Operação',
                       count: statusSummaryCounts.finalizado_aprovado,
                       accent: 'border-emerald-300 bg-emerald-50/70 text-emerald-950 hover:border-emerald-600',
                       active: 'border-[#0f3e2e] bg-[#0f3e2e] text-white shadow-sm',
@@ -1458,7 +1458,7 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
                     },
                     {
                       key: 'finalizado_validacao',
-                      label: 'Validação da liderança',
+                      label: 'Necessita Acompanhamento',
                       count: statusSummaryCounts.finalizado_validacao,
                       accent: 'border-amber-300 bg-amber-50/70 text-amber-950 hover:border-amber-500',
                       active: 'border-amber-700 bg-amber-700 text-white shadow-sm',
@@ -2225,8 +2225,8 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
                   >
                     <option value="novo">Novo</option>
                     <option value="em_treinamento">Em Treinamento</option>
-                    <option value="aprovado">Aprovado</option>
-                    <option value="necessita_reforco">Validação da liderança</option>
+                    <option value="aprovado">Apto para Operação</option>
+                    <option value="necessita_reforco">Necessita Acompanhamento</option>
                   </select>
                 </div>
               </div>
@@ -2395,10 +2395,10 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
                     >
                       <div className="font-bold text-xs flex items-center gap-1.5">
                         <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                        <span>Aprovado</span>
+                        <span>Apto para Operação</span>
                       </div>
                       <p className="text-[10px] text-slate-500 mt-1">
-                        Apto para atuar no fluxo operacional padrão.
+                        Apto para atuar no fluxo operacional padrão com autonomia.
                       </p>
                     </button>
 
@@ -2413,10 +2413,10 @@ export const CollaboratorsView: React.FC<CollaboratorsViewProps> = ({
                     >
                       <div className="font-bold text-xs flex items-center gap-1.5">
                         <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
-                        <span>Validação da liderança</span>
+                        <span>Necessita Acompanhamento</span>
                       </div>
                       <p className="text-[10px] text-slate-500 mt-1">
-                        Verificar a continuidade com a liderança do colaborador.
+                        Requer acompanhamento próximo e reforço junto à liderança.
                       </p>
                     </button>
                   </div>

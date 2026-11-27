@@ -8,6 +8,7 @@ import {
   CollaboratorTrackStep,
   Exercise,
   getCellName,
+  getCriterionAnswerStatus,
   normalizeStageName,
   Survey,
   SurveyResponse,
@@ -16,6 +17,7 @@ import {
 import {
   CollaboratorDossierData,
   DossierEvaluationHistoryItem,
+  DossierLearningReflectionItem,
   DossierStageChapter,
   DossierSurveySummaryItem,
   DossierTrackItem,
@@ -75,6 +77,7 @@ function buildChaptersInternal(ctx: BuildDossierContext): {
   allVisibleTrackItems: DossierTrackItem[];
   allVisibleEvaluations: DossierEvaluationHistoryItem[];
   allVisibleSurveys: DossierSurveySummaryItem[];
+  allVisibleReflections: DossierLearningReflectionItem[];
 } {
   const {
     collaborator,
@@ -112,11 +115,14 @@ function buildChaptersInternal(ctx: BuildDossierContext): {
   const allVisibleTrackItems: DossierTrackItem[] = [];
   const allVisibleEvaluations: DossierEvaluationHistoryItem[] = [];
   const allVisibleSurveys: DossierSurveySummaryItem[] = [];
+  const allVisibleReflections: DossierLearningReflectionItem[] = [];
+  const allReflectionsList = Object.values(collaborator.exerciseReflections || {});
 
   const chapters: DossierStageChapter[] = stageGroups.map((group) => {
     const trackSteps: DossierTrackItem[] = [];
     const evaluations: DossierEvaluationHistoryItem[] = [];
     const stageSurveys: DossierSurveySummaryItem[] = [];
+    const stageReflections: DossierLearningReflectionItem[] = [];
     const stageScores: number[] = [];
 
     group.entries.forEach(({ step }, localIdx) => {
@@ -138,12 +144,16 @@ function buildChaptersInternal(ctx: BuildDossierContext): {
 
         const frozenSnapshot =
           assignment?.status === 'concluido' ? assignment.frozenSnapshot : undefined;
-        const resolvedTitle: string =
+        const baseTitle: string =
           frozenSnapshot?.checklistTitle ||
           (step.status === 'concluido'
             ? step.title || chk?.title
             : chk?.title || step.title) ||
           'Checklist de Avaliação';
+        const resolvedTitle: string =
+          step.isRecycle && !/\(Reciclagem\)\s*$/i.test(baseTitle)
+            ? `${baseTitle} (Reciclagem)`
+            : baseTitle;
 
         const effectiveScore =
           typeof step.finalScore === 'number'
@@ -172,6 +182,28 @@ function buildChaptersInternal(ctx: BuildDossierContext): {
         };
         trackSteps.push(item);
         allVisibleTrackItems.push(item);
+
+        // Coleta registros do Diário de Aprendizado vinculados a esta etapa
+        const stepReflections = allReflectionsList.filter(
+          (r) => r.stepId === step.id && r.note?.trim()
+        );
+        stepReflections.forEach((r) => {
+          const refRecord: DossierLearningReflectionItem = {
+            stageName: group.stageName,
+            stepTitle: resolvedTitle,
+            exerciseTitle: r.exerciseTitle || resolvedTitle,
+            learningObjective:
+              r.learningObjective ||
+              frozenSnapshot?.checklistLearningObjective ||
+              chk?.learningObjective,
+            note: r.note.trim(),
+            updatedAt: r.updatedAt
+              ? new Date(r.updatedAt).toLocaleDateString('pt-BR')
+              : undefined,
+          };
+          stageReflections.push(refRecord);
+          allVisibleReflections.push(refRecord);
+        });
 
         if (
           (assignment && assignment.status === 'concluido' && typeof assignment.finalScore === 'number') ||
@@ -229,15 +261,20 @@ function buildChaptersInternal(ctx: BuildDossierContext): {
 
           const criteriaAnswers =
             sourceCriteriaAnswers && sourceCriteriaAnswers.length > 0
-              ? sourceCriteriaAnswers.map((ca) => ({
-                  name: ca.name,
-                  checked: ca.checked,
-                  weight: ca.weight,
-                  notes: ca.notes,
-                }))
+              ? sourceCriteriaAnswers.map((ca) => {
+                  const status = getCriterionAnswerStatus(ca);
+                  return {
+                    name: ca.name,
+                    checked: status === 'atendido',
+                    status,
+                    weight: ca.weight,
+                    notes: ca.notes,
+                  };
+                })
               : (chk?.criteria || []).map((c) => ({
                   name: c.name,
                   checked: false,
+                  status: 'nao_atendido' as const,
                   weight: c.weight,
                   notes: undefined,
                 }));
@@ -261,6 +298,8 @@ function buildChaptersInternal(ctx: BuildDossierContext): {
               : 'Data não informada',
             observations: assignment?.generalObservations || undefined,
             isRestricted,
+            isRecycle: Boolean(step.isRecycle),
+            recycleReason: step.recycleReason || undefined,
             criteriaAnswers,
           };
           evaluations.push(evalRecord);
@@ -339,6 +378,7 @@ function buildChaptersInternal(ctx: BuildDossierContext): {
       trackSteps,
       evaluations,
       surveys: stageSurveys,
+      learningReflections: stageReflections,
     };
   });
 
@@ -410,12 +450,16 @@ function buildChaptersInternal(ctx: BuildDossierContext): {
         snap?.criteriaAnswers && snap.criteriaAnswers.length > 0
           ? snap.criteriaAnswers
           : a.criteriaAnswers || []
-      ).map((ca) => ({
-        name: ca.name,
-        checked: ca.checked,
-        weight: ca.weight,
-        notes: ca.notes,
-      })),
+      ).map((ca) => {
+        const status = getCriterionAnswerStatus(ca);
+        return {
+          name: ca.name,
+          checked: status === 'atendido',
+          status,
+          weight: ca.weight,
+          notes: ca.notes,
+        };
+      }),
     });
   });
 
@@ -425,6 +469,7 @@ function buildChaptersInternal(ctx: BuildDossierContext): {
     allVisibleTrackItems,
     allVisibleEvaluations,
     allVisibleSurveys,
+    allVisibleReflections,
   };
 }
 
@@ -452,6 +497,7 @@ export function buildStageDossierData(
     trackSteps: targetChapter.trackSteps,
     evaluations: targetChapter.evaluations,
     surveys: targetChapter.surveys,
+    learningReflections: targetChapter.learningReflections,
     generatedBy,
     generatedAt: new Date().toLocaleDateString('pt-BR', {
       day: '2-digit',
@@ -474,6 +520,7 @@ export function buildFullConsolidatedDossierData(
     allVisibleTrackItems,
     allVisibleEvaluations,
     allVisibleSurveys,
+    allVisibleReflections,
   } = buildChaptersInternal(ctx);
 
   const visibleCompletedCount = visibleSteps.filter((s) => s.status === 'concluido').length;
@@ -510,6 +557,7 @@ export function buildFullConsolidatedDossierData(
     trackSteps: allVisibleTrackItems,
     evaluationHistory: allVisibleEvaluations,
     surveyResponsesSummary: allVisibleSurveys,
+    learningReflections: allVisibleReflections,
     stages: chapters,
     isTrackFinalized: Boolean(collaborator.isTrackFinalized),
     isTrackComplete:
